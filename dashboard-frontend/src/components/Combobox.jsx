@@ -5,12 +5,17 @@ import { ChevronDown, X } from "lucide-react";
  * A searchable dropdown. `options` is [{id, name, ...}]. `value` is an id
  * string (or ""). Falls back gracefully to showing the raw id if it's not
  * found in `options` (e.g. a role from a channel type the picker excluded,
- * or one that no longer exists) — never silently drops the stored value.
+ * or one that no longer exists), never silently drops the stored value.
+ *
+ * Closes immediately on selection, and briefly flashes the trigger so the
+ * change is obvious even though the panel disappears right away.
  */
 export default function Combobox({ options, value, onChange, placeholder = "Search…", allowClear = true }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [flash, setFlash] = useState(false);
   const rootRef = useRef(null);
+  const isFirstRender = useRef(true);
 
   useEffect(() => {
     function onClickOutside(e) {
@@ -20,6 +25,22 @@ export default function Combobox({ options, value, onChange, placeholder = "Sear
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    setFlash(true);
+    const t = setTimeout(() => setFlash(false), 500);
+    return () => clearTimeout(t);
+  }, [value]);
+
+  function selectOption(id) {
+    onChange(id);
+    setOpen(false);
+    setQuery("");
+  }
+
   const selected = options.find((o) => o.id === value);
   const filtered = query.trim()
     ? options.filter((o) => o.name.toLowerCase().includes(query.trim().toLowerCase()))
@@ -27,7 +48,11 @@ export default function Combobox({ options, value, onChange, placeholder = "Sear
 
   return (
     <div className="combobox" ref={rootRef}>
-      <button type="button" className="combobox-trigger" onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className={`combobox-trigger ${flash ? "combobox-trigger-flash" : ""}`}
+        onClick={() => setOpen((v) => !v)}
+      >
         <span className={selected ? "" : "muted"}>
           {selected ? selected.name : value ? `Unknown (${value})` : placeholder}
         </span>
@@ -63,11 +88,7 @@ export default function Combobox({ options, value, onChange, placeholder = "Sear
                 type="button"
                 key={o.id}
                 className={`combobox-option ${o.id === value ? "selected" : ""}`}
-                onClick={() => {
-                  onChange(o.id);
-                  setOpen(false);
-                  setQuery("");
-                }}
+                onClick={() => selectOption(o.id)}
               >
                 {o.color !== undefined && o.color !== null && o.color !== 0 && (
                   <span className="combobox-swatch" style={{ background: `#${o.color.toString(16).padStart(6, "0")}` }} />

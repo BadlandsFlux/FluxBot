@@ -4,13 +4,15 @@ import { api } from "../api";
 import { useFlash } from "./Flash";
 import Spinner from "./Spinner";
 import Combobox from "./Combobox";
+import EmojiPicker from "./EmojiPicker";
 
 export default function ReactionRoleBuilder({ guildId, roles, channels, onCreated }) {
   const flash = useFlash();
   const [channelId, setChannelId] = useState("");
   const [title, setTitle] = useState("Pick your roles");
   const [description, setDescription] = useState("");
-  const [rows, setRows] = useState([{ emoji: "", role_id: "" }]);
+  const [color, setColor] = useState("#5865f2");
+  const [rows, setRows] = useState([{ emoji: "", label: "", role_id: "" }]);
   const [submitting, setSubmitting] = useState(false);
 
   function updateRow(index, field, value) {
@@ -18,7 +20,7 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
   }
 
   function addRow() {
-    setRows((prev) => [...prev, { emoji: "", role_id: "" }]);
+    setRows((prev) => [...prev, { emoji: "", label: "", role_id: "" }]);
   }
 
   function removeRow(index) {
@@ -27,7 +29,7 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const pairs = rows.filter((r) => r.emoji.trim() && r.role_id);
+    const pairs = rows.filter((r) => r.emoji && r.role_id);
     if (!channelId || pairs.length === 0) {
       flash("Pick a channel and at least one emoji + role pair.", "error");
       return;
@@ -38,13 +40,22 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
         channel_id: channelId,
         title,
         description,
+        color: color.replace("#", ""),
         pairs,
       });
       flash(`Sent the reaction-role embed with ${pairs.length} role(s).`);
+      if (result.failed_reactions?.length) {
+        flash(
+          `Heads up: couldn't auto-react with ${result.failed_reactions.join(" ")}. The mapping is saved, ` +
+            "you may need to react manually with those.",
+          "error"
+        );
+      }
       setChannelId("");
       setTitle("Pick your roles");
       setDescription("");
-      setRows([{ emoji: "", role_id: "" }]);
+      setColor("#5865f2");
+      setRows([{ emoji: "", label: "", role_id: "" }]);
       onCreated(result.reaction_roles);
     } catch (err) {
       flash(err.message, "error");
@@ -59,10 +70,16 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
         Channel
         <Combobox options={channels} value={channelId} onChange={setChannelId} placeholder="Pick a channel" />
       </label>
-      <label>
-        Embed title
-        <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Pick your roles" />
-      </label>
+      <div className="form-row form-row-title-color">
+        <label>
+          Embed title
+          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Pick your roles" />
+        </label>
+        <label>
+          Color
+          <input type="color" className="color-input" value={color} onChange={(e) => setColor(e.target.value)} />
+        </label>
+      </div>
       <label>
         Embed description (optional)
         <input
@@ -74,14 +91,20 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
       </label>
 
       <div className="rr-rows">
+        <div className="rr-row-header">
+          <span>Emoji</span>
+          <span>Label</span>
+          <span>Role</span>
+          <span></span>
+        </div>
         {rows.map((row, i) => (
           <div className="rr-row" key={i}>
+            <EmojiPicker value={row.emoji} onChange={(v) => updateRow(i, "emoji", v)} />
             <input
               type="text"
-              value={row.emoji}
-              onChange={(e) => updateRow(i, "emoji", e.target.value)}
-              placeholder="Emoji, e.g. 🎉"
-              required
+              value={row.label}
+              onChange={(e) => updateRow(i, "label", e.target.value)}
+              placeholder="e.g. VIP Access"
             />
             <Combobox options={roles} value={row.role_id} onChange={(v) => updateRow(i, "role_id", v)}
                       placeholder="Pick a role" />

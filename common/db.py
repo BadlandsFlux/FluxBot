@@ -155,14 +155,15 @@ async def list_actions(guild_id: str, limit: int = 100) -> list[asyncpg.Record]:
 
 
 # -------------------------------------------------------- reaction roles --
-async def add_reaction_role(guild_id: str, channel_id: str, message_id: str, emoji: str, role_id: str) -> None:
+async def add_reaction_role(guild_id: str, channel_id: str, message_id: str, emoji: str, role_id: str,
+                             label: str = "") -> None:
     await pool().execute(
         """
-        INSERT INTO reaction_roles (guild_id, channel_id, message_id, emoji, role_id)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id
+        INSERT INTO reaction_roles (guild_id, channel_id, message_id, emoji, role_id, label)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id, label = EXCLUDED.label
         """,
-        guild_id, channel_id, message_id, emoji, role_id,
+        guild_id, channel_id, message_id, emoji, role_id, label,
     )
 
 
@@ -178,8 +179,20 @@ async def list_reaction_roles(guild_id: str) -> list[asyncpg.Record]:
     )
 
 
+async def get_reaction_roles_by_message(message_id: str) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM reaction_roles WHERE message_id=$1", message_id,
+    )
+
+
 async def remove_reaction_role(row_id: int) -> None:
     await pool().execute("DELETE FROM reaction_roles WHERE id=$1", row_id)
+
+
+async def remove_reaction_roles_by_message(message_id: str) -> int:
+    result = await pool().execute("DELETE FROM reaction_roles WHERE message_id=$1", message_id)
+    return int(result.split()[-1])
+
 
 
 # -------------------------------------------------------------- autoroles --

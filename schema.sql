@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS reaction_roles (
     message_id  TEXT NOT NULL,
     emoji       TEXT NOT NULL,
     role_id     TEXT NOT NULL,
+    label       TEXT NOT NULL DEFAULT '',
     UNIQUE(message_id, emoji)
 );
 
@@ -74,3 +75,6 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS command_prefix TEXT NOT NULL DEFAULT
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS welcome_channel_id TEXT;
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS welcome_message TEXT NOT NULL DEFAULT
     'Welcome {user} to {server}! 👋';
+
+-- Migration for databases created before reaction role labels existed.
+ALTER TABLE reaction_roles ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT '';

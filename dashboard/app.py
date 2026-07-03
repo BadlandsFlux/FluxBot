@@ -232,7 +232,7 @@ def _action_to_json(row) -> dict:
 def _reaction_role_to_json(row) -> dict:
     return {
         "id": row["id"], "channel_id": row["channel_id"], "message_id": row["message_id"],
-        "emoji": row["emoji"], "role_id": row["role_id"],
+        "emoji": row["emoji"], "role_id": row["role_id"], "label": row["label"],
     }
 
 
@@ -332,6 +332,7 @@ async def api_remove_autorole(request: Request, guild_id: str, role_id: str):
 
 class ReactionRolePair(BaseModel):
     emoji: str
+    label: str = ""
     role_id: str
 
 
@@ -339,47 +340,83 @@ class ReactionRoleCreatePayload(BaseModel):
     channel_id: str
     title: str = "Pick your roles"
     description: str = ""
+    color: str = "5865F2"
     pairs: list[ReactionRolePair]
+
+
+def _parse_embed_color(color: str) -> int:
+    try:
+        return int(color.lstrip("#"), 16)
+    except (ValueError, AttributeError):
+        return 0x5865F2
 
 
 @app.post("/api/guilds/{guild_id}/reactionroles")
 async def api_create_reaction_role(request: Request, guild_id: str, payload: ReactionRoleCreatePayload):
     await _require_manage(request, guild_id)
     channel_id = payload.channel_id.strip()
-    pairs = [(p.emoji.strip(), p.role_id.strip()) for p in payload.pairs if p.emoji.strip() and p.role_id.strip()]
+    pairs = [
+        (p.emoji.strip(), p.label.strip(), p.role_id.strip())
+        for p in payload.pairs if p.emoji.strip() and p.role_id.strip()
+    ]
     if not channel_id.isdigit() or not pairs:
         raise _ApiError(400, "Give a channel ID and at least one emoji + role pair.")
 
-    lines = "\n".join(f"{emoji} — <@&{role}>" for emoji, role in pairs)
+    def _line(emoji: str, label: str, role: str) -> str:
+        return f"{emoji} **{label}** — <@&{role}>" if label else f"{emoji} — <@&{role}>"
+
+    lines = "\n".join(_line(emoji, label, role) for emoji, label, role in pairs)
     embed = {
         "title": payload.title or "Pick your roles",
         "description": (payload.description + "\n\n" if payload.description else "") + lines,
-        "color": 0x5865F2,
+        "color": _parse_embed_color(payload.color),
     }
 
+    failed_reactions: list[str] = []
     try:
         sent = await bot_rest.send_message(channel_id, embeds=[embed])
         message_id = str(sent["id"])
-        for emoji, role_id in pairs:
+        for emoji, label, role_id in pairs:
             try:
                 await bot_rest.add_reaction(channel_id, message_id, emoji)
             except FluxerAPIError:
                 # Emoji format the instance expects may differ (unicode vs
                 # custom emoji id) — the mapping is still stored below so
-                # reactions added manually will still grant the role.
-                pass
-            await db.add_reaction_role(guild_id, channel_id, message_id, emoji, role_id)
+                # reactions added manually will still grant the role. We
+                # surface this back to the dashboard instead of hiding it.
+                failed_reactions.append(emoji)
+            await db.add_reaction_role(guild_id, channel_id, message_id, emoji, role_id, label)
     except FluxerAPIError as e:
         log.warning("Failed to send reaction-role embed: %s", e)
         raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}) — check the bot can post in that channel.")
 
-    return {"reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)]}
+    return {
+        "reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)],
+        "failed_reactions": failed_reactions,
+    }
 
 
 @app.delete("/api/guilds/{guild_id}/reactionroles/{mapping_id}")
 async def api_remove_reaction_role(request: Request, guild_id: str, mapping_id: int):
     await _require_manage(request, guild_id)
     await db.remove_reaction_role(mapping_id)
+    return {"reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)]}
+
+
+@app.delete("/api/guilds/{guild_id}/reactionroles/message/{message_id}")
+async def api_remove_reaction_role_message(request: Request, guild_id: str, message_id: str):
+    """Delete an entire reaction-role setup: all its emoji/role mappings,
+    plus a best-effort attempt to delete the actual Fluxer message so
+    members don't keep reacting to a dead setup."""
+    await _require_manage(request, guild_id)
+    rows = await db.get_reaction_roles_by_message(message_id)
+    if rows:
+        channel_id = rows[0]["channel_id"]
+        try:
+            await bot_rest.delete_message(channel_id, message_id, reason="Reaction-role setup removed via dashboard")
+        except FluxerAPIError:
+            pass  # message may already be gone; mapping cleanup still proceeds
+    await db.remove_reaction_roles_by_message(message_id)
     return {"reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)]}
 
 

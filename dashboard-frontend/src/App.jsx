@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import TopBar from "./components/TopBar";
 import { FlashProvider } from "./components/Flash";
 import Spinner from "./components/Spinner";
+import { GuildsProvider } from "./context/GuildsContext";
 import Login from "./pages/Login";
 import GuildPicker from "./pages/GuildPicker";
 import GuildDetail from "./pages/GuildDetail";
@@ -32,15 +33,18 @@ export default function App() {
   return (
     <BrowserRouter>
       <FlashProvider>
-        <TopBar user={me.user} botName={botName} onLoggedOut={() => setMe({ user: null, bot_name: botName })} />
-        <main className="content">
-          <Routes>
-            <Route path="/" element={me.user ? <GuildPicker /> : <Login botName={botName} />} />
-            <Route path="/guild/:id" element={me.user ? <GuildDetail /> : <Login botName={botName} />} />
-            <Route path="/commands" element={<Commands />} />
-          </Routes>
-        </main>
+        <GuildsProvider enabled={!!me.user}>
+          <TopBar user={me.user} botName={botName} onLoggedOut={() => setMe({ user: null, bot_name: botName })} />
+          <main className="content">
+            <Routes>
+              <Route path="/" element={me.user ? <GuildPicker /> : <Login botName={botName} />} />
+              <Route path="/guild/:id" element={me.user ? <GuildDetail /> : <Login botName={botName} />} />
+              <Route path="/commands" element={<Commands />} />
+            </Routes>
+          </main>
+        </GuildsProvider>
       </FlashProvider>
     </BrowserRouter>
   );
 }
+

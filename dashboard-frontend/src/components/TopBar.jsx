@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Zap } from "lucide-react";
 import { api } from "../api";
+import GuildSwitcher from "./GuildSwitcher";
 
 export default function TopBar({ user, botName, onLoggedOut }) {
   async function handleLogout() {
@@ -15,8 +16,9 @@ export default function TopBar({ user, botName, onLoggedOut }) {
           <span className="brand-mark">
             <Zap size={16} strokeWidth={2.5} />
           </span>
-          <span>{botName}</span>
+          <span className="brand-text">{botName}</span>
         </Link>
+        {user && <GuildSwitcher />}
         <nav className="topbar-nav">
           <Link to="/commands" className="topbar-link">
             Commands

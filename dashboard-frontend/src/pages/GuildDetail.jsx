@@ -8,6 +8,7 @@ import { useFlash } from "../components/Flash";
 import Spinner from "../components/Spinner";
 import ReactionRoleBuilder from "../components/ReactionRoleBuilder";
 import Combobox from "../components/Combobox";
+import Switch from "../components/Switch";
 import MembersTab from "../components/MembersTab";
 import TagsTab from "../components/TagsTab";
 import useRolesChannels from "../hooks/useRolesChannels";
@@ -116,13 +117,7 @@ export default function GuildDetail() {
         )}
       </div>
 
-      <nav
-        className="tabs-nav"
-        onWheel={(e) => {
-          if (e.deltaY === 0) return;
-          e.currentTarget.scrollLeft += e.deltaY;
-        }}
-      >
+      <nav className="tabs-nav">
         {TABS.map((t) => {
           const Icon = t.icon;
           const count =
@@ -220,10 +215,16 @@ function OverviewTab({ guild, actions, autoroles, reactionRoles, tags, activeWar
 function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
   const flash = useFlash();
   const [form, setForm] = useState(guild);
+  const [welcomeOn, setWelcomeOn] = useState(!!guild.welcome_channel_id);
   const [saving, setSaving] = useState(false);
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
+  }
+
+  function toggleWelcome(next) {
+    setWelcomeOn(next);
+    if (!next) set("welcome_channel_id", "");
   }
 
   async function handleSubmit(e) {
@@ -234,13 +235,14 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
         log_channel_id: form.log_channel_id || "",
         mute_role_id: form.mute_role_id || "",
         command_prefix: form.command_prefix || "!",
-        welcome_channel_id: form.welcome_channel_id || "",
+        welcome_channel_id: welcomeOn ? form.welcome_channel_id || "" : "",
         welcome_message: form.welcome_message || "Welcome {user} to {server}! 👋",
         warn_timeout_at: Number(form.warn_timeout_at),
         warn_kick_at: Number(form.warn_kick_at),
         warn_timeout_minutes: Number(form.warn_timeout_minutes),
       });
       onSaved(result.guild);
+      setWelcomeOn(!!result.guild.welcome_channel_id);
       flash("Settings saved.");
     } catch (err) {
       flash(err.message, "error");
@@ -284,17 +286,25 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
         </div>
 
         <h2 className="section-divider">Welcome messages</h2>
-        <label>
-          Welcome channel
-          <Combobox options={channels} value={form.welcome_channel_id || ""}
-                    onChange={(v) => set("welcome_channel_id", v)} placeholder="Welcome messages off" />
-        </label>
-        <label>
-          Message — <code>{"{user}"}</code> mentions them, <code>{"{username}"}</code>, <code>{"{server}"}</code>,{" "}
-          <code>{"{membercount}"}</code> also work
-          <input type="text" value={form.welcome_message || ""} onChange={(e) => set("welcome_message", e.target.value)}
-                 placeholder="Welcome {user} to {server}! 👋" />
-        </label>
+        <Switch checked={welcomeOn} onChange={toggleWelcome} label="Send a welcome message when someone joins" />
+        {welcomeOn && (
+          <div className="switch-panel">
+            <label>
+              Welcome channel
+              <Combobox options={channels} value={form.welcome_channel_id || ""}
+                        onChange={(v) => set("welcome_channel_id", v)} placeholder="Pick a channel" />
+            </label>
+            <label>
+              Message — <code>{"{user}"}</code> mentions them, <code>{"{username}"}</code>, <code>{"{server}"}</code>,{" "}
+              <code>{"{membercount}"}</code> also work
+              <input type="text" value={form.welcome_message || ""} onChange={(e) => set("welcome_message", e.target.value)}
+                     placeholder="Welcome {user} to {server}! 👋" />
+            </label>
+            {!form.welcome_channel_id && (
+              <p className="muted small">Pick a channel above to finish turning this on.</p>
+            )}
+          </div>
+        )}
 
         <button className="btn btn-primary" type="submit" disabled={saving}>
           {saving ? <Spinner size={14} /> : null}
@@ -451,16 +461,31 @@ function AutorolesTab({ guildId, autoroles, roles, onChange }) {
 
 function ReactionRolesTab({ guildId, reactionRoles, roles, channels, onChange }) {
   const flash = useFlash();
+  const [deletingId, setDeletingId] = useState(null);
   const roleNameById = Object.fromEntries(roles.map((r) => [r.id, r.name]));
   const channelNameById = Object.fromEntries(channels.map((c) => [c.id, c.name]));
 
-  async function handleRemove(mappingId) {
+  const messages = [];
+  const byMessage = new Map();
+  for (const rr of reactionRoles) {
+    if (!byMessage.has(rr.message_id)) {
+      const group = { message_id: rr.message_id, channel_id: rr.channel_id, entries: [] };
+      byMessage.set(rr.message_id, group);
+      messages.push(group);
+    }
+    byMessage.get(rr.message_id).entries.push(rr);
+  }
+
+  async function handleDeleteMessage(messageId) {
+    setDeletingId(messageId);
     try {
-      const result = await api.removeReactionRole(guildId, mappingId);
+      const result = await api.removeReactionRoleMessage(guildId, messageId);
       onChange(result.reaction_roles);
-      flash("Removed that reaction role mapping.");
+      flash("Deleted that reaction-role message and all its mappings.");
     } catch (err) {
       flash(err.message, "error");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -475,29 +500,43 @@ function ReactionRolesTab({ guildId, reactionRoles, roles, channels, onChange })
         <ReactionRoleBuilder guildId={guildId} roles={roles} channels={channels} onCreated={onChange} />
       </div>
       <div className="card">
-        <h2>Existing mappings</h2>
-        {reactionRoles.length ? (
-          <table className="table">
-            <thead>
-              <tr><th>Emoji</th><th>Role</th><th>Channel</th><th></th></tr>
-            </thead>
-            <tbody>
-              {reactionRoles.map((rr) => (
-                <tr key={rr.id}>
-                  <td>{rr.emoji}</td>
-                  <td>{roleNameById[rr.role_id] || <code>{rr.role_id}</code>}</td>
-                  <td>{channelNameById[rr.channel_id] || <code>{rr.channel_id}</code>}</td>
-                  <td>
-                    <button className="btn btn-ghost btn-small" onClick={() => handleRemove(rr.id)}>
-                      Remove
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <h2>Existing reaction-role messages</h2>
+        {messages.length ? (
+          <div className="rr-message-list">
+            {messages.map((group) => (
+              <div className="rr-message-card" key={group.message_id}>
+                <div className="rr-message-head">
+                  <div>
+                    <div className="rr-message-channel">
+                      #{channelNameById[group.channel_id] || group.channel_id}
+                    </div>
+                    <div className="muted small">
+                      Message <code>{group.message_id}</code>
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-ghost btn-small"
+                    onClick={() => handleDeleteMessage(group.message_id)}
+                    disabled={deletingId === group.message_id}
+                  >
+                    {deletingId === group.message_id ? <Spinner size={12} /> : <Trash2 size={13} />}
+                    Delete
+                  </button>
+                </div>
+                <div className="rr-message-entries">
+                  {group.entries.map((rr) => (
+                    <div className="rr-message-entry" key={rr.id}>
+                      <span className="rr-entry-emoji">{rr.emoji}</span>
+                      {rr.label && <span className="rr-entry-label">{rr.label}</span>}
+                      <span className="muted small">→ {roleNameById[rr.role_id] || rr.role_id}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
-          <p className="muted">None set yet — build one above.</p>
+          <p className="muted">None set yet, build one above.</p>
         )}
       </div>
     </>

@@ -224,37 +224,29 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
 /* ------------------------------------------------------------------ tabs */
 .tabs-nav {
   display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 22px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
 }
-.tabs-nav::-webkit-scrollbar { height: 6px; }
-.tabs-nav::-webkit-scrollbar-track { background: transparent; }
-.tabs-nav::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
-.tabs-nav::-webkit-scrollbar-thumb:hover { background: #3a415a; }
 .tab-btn {
-  background: none;
-  border: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  padding: 10px 14px;
+  padding: 8px 14px;
+  border-radius: 999px;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
   white-space: nowrap;
-  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: color 0.12s ease, border-color 0.12s ease;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
 }
-.tab-btn:hover { color: var(--text); }
-.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-btn:hover { color: var(--text); border-color: #3a415a; }
+.tab-btn.active { color: white; background: var(--accent); border-color: var(--accent); }
 .tab-count { background: var(--panel-hover); color: var(--muted); border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 700; }
-.tab-btn.active .tab-count { background: var(--accent-soft); color: var(--accent); }
+.tab-btn.active .tab-count { background: rgba(255, 255, 255, 0.25); color: white; }
 
 /* -------------------------------------------------------------- stat grid */
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 18px; }
@@ -279,7 +271,15 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
 .settings-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .form-row { display: grid; gap: 12px; }
 .form-row-3 { grid-template-columns: 1fr 1fr 1fr; }
+.form-row-title-color { grid-template-columns: 1fr auto; align-items: end; }
 .form-spacer { height: 6px; }
+
+.color-input {
+  padding: 3px !important;
+  width: 60px;
+  height: 40px;
+  cursor: pointer;
+}
 
 .inline-form { display: flex; gap: 10px; margin-top: 14px; }
 .inline-form input {
@@ -295,7 +295,18 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
 .inline-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 .rr-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-.rr-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; }
+.rr-row-header {
+  display: grid;
+  grid-template-columns: 90px 1fr 1fr auto;
+  gap: 8px;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+.rr-row { display: grid; grid-template-columns: 90px 1fr 1fr auto; gap: 8px; align-items: center; }
 .rr-row input {
   padding: 10px 12px;
   border-radius: var(--radius-sm);
@@ -306,6 +317,25 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
   font-family: inherit;
 }
 .rr-row input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+@media (max-width: 640px) {
+  .rr-row-header { display: none; }
+  .rr-row { grid-template-columns: 1fr; }
+}
+
+/* --------------------------------------------------------- reaction role groups */
+.rr-message-list { display: flex; flex-direction: column; gap: 12px; }
+.rr-message-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  background: var(--bg-elevated);
+}
+.rr-message-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.rr-message-channel { font-weight: 700; font-size: 14px; }
+.rr-message-entries { display: flex; flex-direction: column; gap: 6px; }
+.rr-message-entry { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.rr-entry-emoji { font-size: 16px; }
+.rr-entry-label { font-weight: 600; }
 
 /* ------------------------------------------------------------- search box */
 .search-box {
@@ -409,6 +439,11 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
   text-align: left;
 }
 .combobox-trigger:hover { border-color: #3a415a; }
+.combobox-trigger-flash { animation: combobox-flash 0.5s ease; }
+@keyframes combobox-flash {
+  0% { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--accent-soft); }
+  100% { border-color: var(--border); box-shadow: none; background: var(--bg-elevated); }
+}
 .combobox-trigger-icons { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .combobox-clear { display: flex; align-items: center; border-radius: 999px; padding: 2px; }
 .combobox-clear:hover { background: rgba(241, 101, 101, 0.15); color: var(--danger); }
@@ -495,4 +530,194 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
   color: var(--text);
   font-size: 13px;
   font-family: inherit;
+}
+
+/* --------------------------------------------------------- guild switcher */
+.brand-text { display: inline; }
+.guild-switcher { position: relative; }
+.guild-switcher-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 220px;
+}
+.guild-switcher-trigger:hover { border-color: #3a415a; }
+.guild-switcher-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.guild-switcher-icon {
+  width: 20px; height: 20px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.guild-switcher-icon-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+}
+.guild-switcher-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 280px;
+  z-index: 30;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+.guild-switcher-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--muted);
+}
+.guild-switcher-search input {
+  border: none;
+  background: none;
+  outline: none;
+  color: var(--text);
+  font-size: 13px;
+  width: 100%;
+  font-family: inherit;
+}
+.guild-switcher-list { max-height: 280px; overflow-y: auto; }
+.guild-switcher-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.guild-switcher-option:hover { background: var(--panel-hover); }
+.guild-switcher-option.selected { color: var(--accent); font-weight: 700; }
+
+/* -------------------------------------------------------------- switch */
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.switch-label { font-size: 14px; font-weight: 500; }
+.switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.switch.on { background: var(--accent); border-color: var(--accent); }
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: white;
+  transition: transform 0.15s ease;
+}
+.switch.on .switch-thumb { transform: translateX(18px); }
+.switch-panel {
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+.switch-panel label:last-child { margin-bottom: 0; }
+
+/* ---------------------------------------------------------- emoji picker */
+.emoji-picker { position: relative; }
+.emoji-picker-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 10px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 16px;
+  cursor: pointer;
+  text-align: left;
+}
+.emoji-picker-trigger:hover { border-color: #3a415a; }
+.emoji-picker-value { font-size: 18px; }
+.emoji-picker-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 25;
+  width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  padding: 10px;
+}
+.emoji-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.emoji-picker-cell {
+  background: none;
+  border: none;
+  border-radius: 6px;
+  font-size: 17px;
+  padding: 4px;
+  cursor: pointer;
+  line-height: 1;
+}
+.emoji-picker-cell:hover { background: var(--panel-hover); }
+.emoji-picker-cell.selected { background: var(--accent-soft); }
+.emoji-picker-custom {
+  display: flex;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.emoji-picker-custom input {
+  flex: 1;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  min-width: 0;
 }

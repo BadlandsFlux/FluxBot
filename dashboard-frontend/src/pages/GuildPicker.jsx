@@ -1,28 +1,11 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { useGuilds } from "../context/GuildsContext";
 import Spinner from "../components/Spinner";
 
 export default function GuildPicker() {
-  const [guilds, setGuilds] = useState(null);
-  const [error, setError] = useState(null);
+  const { guilds, loading } = useGuilds();
 
-  useEffect(() => {
-    api
-      .guilds()
-      .then((d) => setGuilds(d.guilds))
-      .catch((e) => setError(e.message));
-  }, []);
-
-  if (error) {
-    return (
-      <div className="card empty-state">
-        <p className="error">{error}</p>
-      </div>
-    );
-  }
-
-  if (guilds === null) {
+  if (loading) {
     return (
       <div className="loading-row">
         <Spinner />

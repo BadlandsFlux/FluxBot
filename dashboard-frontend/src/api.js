@@ -32,6 +32,8 @@ export const api = {
   createReactionRole: (id, payload) => request(`/api/guilds/${id}/reactionroles`, { method: "POST", body: payload }),
   removeReactionRole: (id, mappingId) =>
     request(`/api/guilds/${id}/reactionroles/${mappingId}`, { method: "DELETE" }),
+  removeReactionRoleMessage: (id, messageId) =>
+    request(`/api/guilds/${id}/reactionroles/message/${messageId}`, { method: "DELETE" }),
   roles: (id) => request(`/api/guilds/${id}/roles`),
   channels: (id) => request(`/api/guilds/${id}/channels`),
   members: (id, q = "") => request(`/api/guilds/${id}/members${q ? `?q=${encodeURIComponent(q)}` : ""}`),
