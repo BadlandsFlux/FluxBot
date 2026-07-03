@@ -1,6 +1,6 @@
 # FluxBot Dashboard API Reference
 
-Complete list of every HTTP endpoint the React frontend (`dashboard-frontend/`) calls. Generated directly from `dashboard/app.py` and `dashboard-frontend/src/api.js`, so it reflects the real contract, not a description of intent.
+Complete list of every HTTP endpoint the React frontend (`dashboard-frontend/`) calls. Generated directly from `dashboard/app.py` and `dashboard-frontend/src/api.js`.
 
 Useful as the porting checklist for a backend rewrite (e.g. to C#/ASP.NET): if a rewritten backend implements every route below with matching request/response shapes, the existing React frontend needs zero changes.
 
