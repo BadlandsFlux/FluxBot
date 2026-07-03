@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Log in — Fluxer Mod Bot{% endblock %}
+{% block content %}
+<div class="card center-card">
+  <h1>Sign in</h1>
+  <p class="muted">Manage moderation settings for servers where the bot is installed.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <a class="btn btn-primary" href="/login">Login with Fluxer</a>
+</div>
+{% endblock %}

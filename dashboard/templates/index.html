@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Your servers — Fluxer Mod Bot{% endblock %}
+{% block content %}
+<h1>Your servers</h1>
+{% if guilds %}
+<div class="grid">
+  {% for g in guilds %}
+  <a class="card guild-card" href="/guild/{{ g.id }}">
+    <div class="guild-name">{{ g.name }}</div>
+    <div class="muted">Manage settings →</div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card">
+  <p>No manageable servers found. Either the bot isn't in any of your servers yet, or you don't have
+  "Manage Server" permissions there.</p>
+</div>
+{% endif %}
+{% endblock %}
