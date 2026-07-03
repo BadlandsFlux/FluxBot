@@ -1,21 +1,12 @@
 # FluxBot
 
-A Python moderation bot for [Fluxer](https://fluxer.app) with a FastAPI web
-dashboard. Works against the official instance or a self-hosted one — just
-change `FLUXER_API_BASE`.
+A Python moderation bot for [Fluxer](https://fluxer.app) with a FastAPI web dashboard. Works against the official instance or a self-hosted one, just change `FLUXER_API_BASE`.
 
-- **Bot**: kick / ban / unban / timeout / purge, a warning system with
-  auto-escalation (warn → auto-timeout → auto-kick), mod-action logging to a
-  channel, autoroles, reaction roles, and a few fun commands (dice, coinflip,
-  wheel spin).
-- **Dashboard**: FastAPI app, "Login with Fluxer" via OAuth2, per-server
-  settings, warning history, and a mod-action audit log.
-- **Storage**: Postgres, shared by both processes over a real connection pool
-  (not a shared SQLite file) — `asyncpg`.
+- **Bot**: kick / ban / unban / timeout / purge, a warning system with auto-escalation (warn → auto-timeout → auto-kick), mod-action logging to a channel, autoroles, reaction roles, and a few fun commands (dice, coinflip, wheel spin).
+- **Dashboard**: FastAPI app, "Login with Fluxer" via OAuth2, per-server settings, warning history, and a mod-action audit log.
+- **Storage**: Postgres, shared by both processes over a real connection pool `asyncpg`.
 
-Both the bot and the dashboard talk to the Fluxer REST API directly (raw
-`aiohttp`/gateway handshake) rather than depending on a third-party wrapper's
-undocumented internals, so self-hosting support is just config.
+Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohttp`/gateway handshake) rather than depending on a third-party wrapper's undocumented internals, so self-hosting support is just config.
 
 ## Project layout
 
@@ -50,8 +41,7 @@ run_bot.py / run_dashboard.py
    psql fluxerbot -c "GRANT ALL PRIVILEGES ON DATABASE fluxerbot TO fluxerbot;"
    psql fluxerbot -c "GRANT ALL ON SCHEMA public TO fluxerbot;"
    ```
-   (Any Postgres works — a managed service, Docker, etc. Just point
-   `DATABASE_URL` at it.)
+   (Any Postgres works — a managed service, Docker, etc. Just point `DATABASE_URL` at it.)
 
 2. **Env.**
    ```bash
@@ -71,8 +61,7 @@ run_bot.py / run_dashboard.py
    pip install -r requirements.txt
    ```
 
-4. **Apply the schema** (optional — both processes also do this
-   automatically on startup):
+4. **Apply the schema** (optional — both processes also do this automatically on startup):
    ```bash
    python -m common.db
    ```
@@ -86,8 +75,7 @@ run_bot.py / run_dashboard.py
 
 ## Self-hosting a Fluxer instance
 
-Point these three at your instance and everything else (REST calls, the
-gateway connection, OAuth login) follows automatically:
+Point these three at your instance and everything else (REST calls, the gateway connection, OAuth login) follows automatically:
 
 ```
 FLUXER_API_BASE=https://your-domain.com/api/v1
@@ -97,30 +85,17 @@ FLUXER_GATEWAY_URL=wss://your-domain.com/gateway   # only if GET /gateway/bot is
 
 ## Setting up "Login with Fluxer"
 
-The dashboard needs an OAuth2 application registered against your Fluxer
-instance (`POST /oauth2/applications`, authenticated as a user account —
-consult your instance's admin/API docs for the exact flow, since this isn't
-fully standardized yet). Set the redirect URI there to match
-`FLUXER_OAUTH_REDIRECT_URI` exactly, then copy the client ID/secret into
-`.env`.
+The dashboard needs an OAuth2 application registered against your Fluxer instance (`POST /oauth2/applications`, authenticated as a user account — consult your instance's admin/API docs for the exact flow, since this isn't fully standardized yet). Set the redirect URI there to match `FLUXER_OAUTH_REDIRECT_URI` exactly, then copy the client ID/secret into `.env`.
 
 ## ⚠️ On API completeness
 
-Fluxer's public API reference is still being filled in (as of mid-2026), and
-some routes here — particularly the exact moderation endpoints
-(`ban`/`timeout`/`purge`) and the OAuth2 guild-list response shape — are
-implemented following the Discord-like conventions Fluxer is modeled on,
-since that's the best information available. Everything funnels through a
-small number of methods:
+Fluxer's public API reference is still being filled in (as of mid-2026), and some routes here, particularly the exact moderation endpoints (`ban`/`timeout`/`purge`) and the OAuth2 guild-list response shape, are implemented following the Discord-like conventions Fluxer is modeled on, since that's the best information available. Everything funnels through a small number of methods:
 
 - REST calls: `bot/rest.py`
 - Permission bit values: `bot/permissions.py`
 - OAuth2 guild permission check: `dashboard/oauth.py::can_manage`
 
-If your instance's OpenAPI spec (usually at `<api_base>/openapi.json`, or
-your instance's own `/api-reference` page) disagrees with a path or bit
-value here, that's the source of truth — the fix is a one-line change in one
-of those three files, not a rewrite.
+If your instance's OpenAPI spec (usually at `<api_base>/openapi.json`, or your instance's own `/api-reference` page) disagrees with a path or bit value here, try changing bit vaules in those files. I haven't had any issues
 
 ## Commands
 
