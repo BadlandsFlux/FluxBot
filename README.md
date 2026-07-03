@@ -13,8 +13,8 @@ Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohtt
 ```
 common/            config + the shared Postgres data layer (used by both processes)
 bot/
-  rest.py          REST client (self-host aware — base URL from config)
-  client.py        gateway (WebSocket) client — handshake, heartbeats, reconnect
+  rest.py          REST client (self-host aware - base URL from config)
+  client.py        gateway (WebSocket) client - handshake, heartbeats, reconnect
   commands.py       tiny prefix-command framework + dispatcher
   permissions.py    role/permission bit checks
   modules/
@@ -28,7 +28,7 @@ dashboard/
   app.py            FastAPI app + routes
   oauth.py          OAuth2 "Login with Fluxer" flow
   templates/, static/
-schema.sql          Postgres schema (idempotent — CREATE TABLE IF NOT EXISTS)
+schema.sql          Postgres schema (idempotent - CREATE TABLE IF NOT EXISTS)
 run_bot.py / run_dashboard.py
 ```
 
@@ -41,27 +41,27 @@ run_bot.py / run_dashboard.py
    psql fluxerbot -c "GRANT ALL PRIVILEGES ON DATABASE fluxerbot TO fluxerbot;"
    psql fluxerbot -c "GRANT ALL ON SCHEMA public TO fluxerbot;"
    ```
-   (Any Postgres works — a managed service, Docker, etc. Just point `DATABASE_URL` at it.)
+   (Any Postgres works - a managed service, Docker, etc. Just point `DATABASE_URL` at it.)
 
 2. **Env.**
    ```bash
    cp .env.example .env
    ```
    Fill in:
-   - `FLUXER_BOT_TOKEN` — your bot's token.
-   - `FLUXER_API_BASE` / `FLUXER_WEB_BASE` / `FLUXER_GATEWAY_URL` — leave as
+   - `FLUXER_BOT_TOKEN` - your bot's token.
+   - `FLUXER_API_BASE` / `FLUXER_WEB_BASE` / `FLUXER_GATEWAY_URL` - leave as
      the official instance, or point at your self-hosted domain (see below).
-   - `DATABASE_URL` — your Postgres connection string.
-   - `FLUXER_OAUTH_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` — for the
+   - `DATABASE_URL` - your Postgres connection string.
+   - `FLUXER_OAUTH_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` - for the
      dashboard's "Login with Fluxer" button (see OAuth section below).
-   - `DASHBOARD_SESSION_SECRET` — any long random string.
+   - `DASHBOARD_SESSION_SECRET` - any long random string.
 
 3. **Install deps.**
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Apply the schema** (optional — both processes also do this automatically on startup):
+4. **Apply the schema** (optional - both processes also do this automatically on startup):
    ```bash
    python -m common.db
    ```
@@ -85,7 +85,7 @@ FLUXER_GATEWAY_URL=wss://your-domain.com/gateway   # only if GET /gateway/bot is
 
 ## Setting up "Login with Fluxer"
 
-The dashboard needs an OAuth2 application registered against your Fluxer instance (`POST /oauth2/applications`, authenticated as a user account — consult your instance's admin/API docs for the exact flow, since this isn't fully standardized yet). Set the redirect URI there to match `FLUXER_OAUTH_REDIRECT_URI` exactly, then copy the client ID/secret into `.env`.
+The dashboard needs an OAuth2 application registered against your Fluxer instance (`POST /oauth2/applications`, authenticated as a user account - consult your instance's admin/API docs for the exact flow, since this isn't fully standardized yet). Set the redirect URI there to match `FLUXER_OAUTH_REDIRECT_URI` exactly, then copy the client ID/secret into `.env`.
 
 ## ⚠️ On API completeness
 
@@ -110,12 +110,12 @@ Run `!help` in Fluxer once the bot is running for the live list. Summary:
 | `!untimeout @user [reason]` | Moderate Members | Remove a timeout |
 | `!purge <count>` | Manage Messages | Bulk delete recent messages |
 | `!warn @user [reason]` | Kick Members | Warn (auto-escalates per guild settings) |
-| `!warnings @user` | — | List a member's warnings |
+| `!warnings @user` | - | List a member's warnings |
 | `!clearwarnings @user` | Kick Members | Clear active warnings |
 | `!modlog #channel` | Manage Guild | Set the mod-log channel |
 | `!autorole add/remove/list @role` | Manage Guild | Roles auto-given on join |
 | `!reactionrole add/remove/list ...` | Manage Guild | Reaction → role mapping |
-| `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | — | Fun stuff |
+| `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | - | Fun stuff |
 
 Warning escalation thresholds (`warn_timeout_at`, `warn_kick_at`,
 `warn_timeout_minutes`) are per-guild and editable from the dashboard.
