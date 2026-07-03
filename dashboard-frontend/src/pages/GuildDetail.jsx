@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
-  LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users, Tag as TagIcon,
+  LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users,
+  Tag as TagIcon, TrendingUp, Megaphone,
 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "../components/Flash";
@@ -11,6 +12,9 @@ import Combobox from "../components/Combobox";
 import Switch from "../components/Switch";
 import MembersTab from "../components/MembersTab";
 import TagsTab from "../components/TagsTab";
+import LevelsTab from "../components/LevelsTab";
+import AnnouncementBuilder from "../components/AnnouncementBuilder";
+import BarChart from "../components/BarChart";
 import useRolesChannels from "../hooks/useRolesChannels";
 import usePolling from "../hooks/usePolling";
 
@@ -22,7 +26,9 @@ const TABS = [
   { id: "modlog", label: "Mod Log", icon: ScrollText },
   { id: "autoroles", label: "Autoroles", icon: UserPlus },
   { id: "reactionroles", label: "Reaction Roles", icon: Smile },
+  { id: "levels", label: "Levels", icon: TrendingUp },
   { id: "tags", label: "Tags", icon: TagIcon },
+  { id: "announce", label: "Announce", icon: Megaphone },
 ];
 
 const ACTION_TAG_CLASS = {
@@ -137,7 +143,7 @@ export default function GuildDetail() {
       </nav>
 
       {tab === "overview" && (
-        <OverviewTab guild={guild} actions={actions} autoroles={autoroles} reactionRoles={reactionRoles}
+        <OverviewTab guildId={id} guild={guild} actions={actions} autoroles={autoroles} reactionRoles={reactionRoles}
                      tags={tags} activeWarningCount={activeWarningCount} />
       )}
       {tab === "settings" && (
@@ -162,6 +168,14 @@ export default function GuildDetail() {
         <TagsTab guildId={id} tags={tags} prefix={guild.command_prefix || "!"}
                  onChange={(t) => setData((d) => ({ ...d, tags: t }))} />
       )}
+      {tab === "levels" && <LevelsTab guildId={id} roles={roles} />}
+      {tab === "announce" && (
+        <div className="card">
+          <h2>Send an announcement</h2>
+          <p className="muted small">Compose a rich embed and post it to any channel.</p>
+          <AnnouncementBuilder guildId={id} channels={channels} />
+        </div>
+      )}
     </>
   );
 }
@@ -175,7 +189,13 @@ function StatCard({ value, label }) {
   );
 }
 
-function OverviewTab({ guild, actions, autoroles, reactionRoles, tags, activeWarningCount }) {
+function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, activeWarningCount }) {
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    api.stats(guildId, 14).then(setStats).catch(() => {});
+  }, [guildId]);
+
   return (
     <>
       <div className="stat-grid">
@@ -186,6 +206,69 @@ function OverviewTab({ guild, actions, autoroles, reactionRoles, tags, activeWar
         <StatCard value={reactionRoles.length} label="Reaction role mappings" />
         <StatCard value={tags.length} label="Tags" />
       </div>
+
+      {stats && (
+        <div className="card">
+          <h2>Message activity — last 14 days</h2>
+          <div className="stat-grid" style={{ marginBottom: 16 }}>
+            <StatCard value={stats.total_messages_30d} label="Messages (30d)" />
+          </div>
+          {stats.daily.some((d) => d.count > 0) ? (
+            <BarChart
+              data={stats.daily.map((d) => ({ label: d.date, value: d.count }))}
+              formatLabel={(d) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+            />
+          ) : (
+            <p className="muted small">No message activity recorded yet.</p>
+          )}
+          {stats.top_members.length > 0 && (
+            <>
+              <h2 className="section-divider">Most active in chat</h2>
+              <div className="top-members-list">
+                {stats.top_members.map((m, i) => (
+                  <div className="top-member-row" key={m.user_id}>
+                    <span className="muted">#{i + 1}</span>
+                    <span className="top-member-name">{m.username}</span>
+                    <span className="muted small">{m.count} messages</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {stats && (
+        <div className="card">
+          <h2>Voice activity — last 14 days</h2>
+          <p className="muted small">
+            Only counts time with 2+ people connected and not self-deafened — solo/AFK time doesn't count.
+          </p>
+          {stats.daily.some((d) => d.voice_minutes > 0) ? (
+            <BarChart
+              data={stats.daily.map((d) => ({ label: d.date, value: d.voice_minutes }))}
+              formatLabel={(d) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+            />
+          ) : (
+            <p className="muted small">No qualifying voice activity recorded yet.</p>
+          )}
+          {stats.top_voice_members.length > 0 && (
+            <>
+              <h2 className="section-divider">Most active in voice</h2>
+              <div className="top-members-list">
+                {stats.top_voice_members.map((m, i) => (
+                  <div className="top-member-row" key={m.user_id}>
+                    <span className="muted">#{i + 1}</span>
+                    <span className="top-member-name">{m.username}</span>
+                    <span className="muted small">{m.minutes} min</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="card">
         <h2>Recent activity</h2>
         {actions.length ? (
@@ -216,6 +299,8 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
   const flash = useFlash();
   const [form, setForm] = useState(guild);
   const [welcomeOn, setWelcomeOn] = useState(!!guild.welcome_channel_id);
+  const [goodbyeOn, setGoodbyeOn] = useState(!!guild.goodbye_channel_id);
+  const [levelingOn, setLevelingOn] = useState(!!guild.leveling_enabled);
   const [saving, setSaving] = useState(false);
 
   function set(field, value) {
@@ -225,6 +310,11 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
   function toggleWelcome(next) {
     setWelcomeOn(next);
     if (!next) set("welcome_channel_id", "");
+  }
+
+  function toggleGoodbye(next) {
+    setGoodbyeOn(next);
+    if (!next) set("goodbye_channel_id", "");
   }
 
   async function handleSubmit(e) {
@@ -237,12 +327,19 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
         command_prefix: form.command_prefix || "!",
         welcome_channel_id: welcomeOn ? form.welcome_channel_id || "" : "",
         welcome_message: form.welcome_message || "Welcome {user} to {server}! 👋",
+        goodbye_channel_id: goodbyeOn ? form.goodbye_channel_id || "" : "",
+        goodbye_message: form.goodbye_message || "{username} left {server}. 👋",
+        leveling_enabled: levelingOn,
+        level_up_channel_id: form.level_up_channel_id || "",
+        level_up_message: form.level_up_message || "GG {user}, you reached level {level}! 🎉",
         warn_timeout_at: Number(form.warn_timeout_at),
         warn_kick_at: Number(form.warn_kick_at),
         warn_timeout_minutes: Number(form.warn_timeout_minutes),
       });
       onSaved(result.guild);
       setWelcomeOn(!!result.guild.welcome_channel_id);
+      setGoodbyeOn(!!result.guild.goodbye_channel_id);
+      setLevelingOn(!!result.guild.leveling_enabled);
       flash("Settings saved.");
     } catch (err) {
       flash(err.message, "error");
@@ -303,6 +400,45 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
             {!form.welcome_channel_id && (
               <p className="muted small">Pick a channel above to finish turning this on.</p>
             )}
+          </div>
+        )}
+
+        <h2 className="section-divider">Goodbye messages</h2>
+        <Switch checked={goodbyeOn} onChange={toggleGoodbye} label="Send a message when someone leaves" />
+        {goodbyeOn && (
+          <div className="switch-panel">
+            <label>
+              Goodbye channel
+              <Combobox options={channels} value={form.goodbye_channel_id || ""}
+                        onChange={(v) => set("goodbye_channel_id", v)} placeholder="Pick a channel" />
+            </label>
+            <label>
+              Message — <code>{"{username}"}</code>, <code>{"{server}"}</code>, <code>{"{membercount}"}</code> work
+              (no <code>{"{user}"}</code> mention since they've already left)
+              <input type="text" value={form.goodbye_message || ""} onChange={(e) => set("goodbye_message", e.target.value)}
+                     placeholder="{username} left {server}. 👋" />
+            </label>
+            {!form.goodbye_channel_id && (
+              <p className="muted small">Pick a channel above to finish turning this on.</p>
+            )}
+          </div>
+        )}
+
+        <h2 className="section-divider">Leveling</h2>
+        <Switch checked={levelingOn} onChange={setLevelingOn} label="Members earn XP for chatting" />
+        {levelingOn && (
+          <div className="switch-panel">
+            <label>
+              Level-up announcement channel
+              <Combobox options={channels} value={form.level_up_channel_id || ""}
+                        onChange={(v) => set("level_up_channel_id", v)}
+                        placeholder="Announce in the channel they leveled up in" />
+            </label>
+            <label>
+              Message — <code>{"{user}"}</code>, <code>{"{username}"}</code>, <code>{"{level}"}</code> work
+              <input type="text" value={form.level_up_message || ""} onChange={(e) => set("level_up_message", e.target.value)}
+                     placeholder="GG {user}, you reached level {level}! 🎉" />
+            </label>
           </div>
         )}
 

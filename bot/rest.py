@@ -176,5 +176,8 @@ class FluxerREST:
             params["before"] = before
         return await self.request("GET", f"/channels/{channel_id}/messages", params=params)
 
+    async def get_message(self, channel_id: str, message_id: str) -> dict:
+        return await self.request("GET", f"/channels/{channel_id}/messages/{message_id}")
+
     async def add_reaction(self, channel_id: str, message_id: str, emoji: str) -> None:
         await self.request("PUT", f"/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/@me")

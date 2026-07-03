@@ -49,4 +49,10 @@ export const api = {
     request(`/api/guilds/${id}/members/${userId}/warn`, { method: "POST", body: { reason } }),
   addTag: (id, name, content) => request(`/api/guilds/${id}/tags`, { method: "POST", body: { name, content } }),
   removeTag: (id, name) => request(`/api/guilds/${id}/tags/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  stats: (id, days = 14) => request(`/api/guilds/${id}/stats?days=${days}`),
+  levels: (id) => request(`/api/guilds/${id}/levels`),
+  addLevelRole: (id, level, role_id) =>
+    request(`/api/guilds/${id}/level-roles`, { method: "POST", body: { level, role_id } }),
+  removeLevelRole: (id, level) => request(`/api/guilds/${id}/level-roles/${level}`, { method: "DELETE" }),
+  announce: (id, payload) => request(`/api/guilds/${id}/announce`, { method: "POST", body: payload }),
 };

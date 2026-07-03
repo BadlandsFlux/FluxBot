@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from bot import moderation_actions
 from bot.commands import Bot as BotFramework
-from bot.modules import fun, info as info_module, moderation, roles, tags, utility
+from bot.modules import fun, info as info_module, leveling, moderation, reminders, roles, tags, utility
 from bot.permissions import permission_name
 from bot.rest import FluxerAPIError, FluxerREST
 from common import db
@@ -48,6 +49,8 @@ def _build_command_catalog() -> list:
     utility.register(catalog_bot)
     info_module.register(catalog_bot)
     tags.register(catalog_bot)
+    reminders.register(catalog_bot)
+    leveling.register(catalog_bot)
     seen = set()
     commands = []
     for cmd in catalog_bot.commands.values():
@@ -207,6 +210,11 @@ def _guild_to_json(row) -> dict:
         "command_prefix": row["command_prefix"],
         "welcome_channel_id": row["welcome_channel_id"],
         "welcome_message": row["welcome_message"],
+        "goodbye_channel_id": row["goodbye_channel_id"],
+        "goodbye_message": row["goodbye_message"],
+        "leveling_enabled": row["leveling_enabled"],
+        "level_up_channel_id": row["level_up_channel_id"],
+        "level_up_message": row["level_up_message"],
         "warn_timeout_at": row["warn_timeout_at"],
         "warn_kick_at": row["warn_kick_at"],
         "warn_timeout_minutes": row["warn_timeout_minutes"],
@@ -273,6 +281,11 @@ class SettingsPayload(BaseModel):
     command_prefix: str = "!"
     welcome_channel_id: str = ""
     welcome_message: str = "Welcome {user} to {server}! 👋"
+    goodbye_channel_id: str = ""
+    goodbye_message: str = "{username} left {server}. 👋"
+    leveling_enabled: bool = True
+    level_up_channel_id: str = ""
+    level_up_message: str = "GG {user}, you reached level {level}! 🎉"
     warn_timeout_at: int = 3
     warn_kick_at: int = 5
     warn_timeout_minutes: int = 60
@@ -289,6 +302,11 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
         command_prefix=prefix,
         welcome_channel_id=payload.welcome_channel_id or None,
         welcome_message=payload.welcome_message or "Welcome {user} to {server}! 👋",
+        goodbye_channel_id=payload.goodbye_channel_id or None,
+        goodbye_message=payload.goodbye_message or "{username} left {server}. 👋",
+        leveling_enabled=payload.leveling_enabled,
+        level_up_channel_id=payload.level_up_channel_id or None,
+        level_up_message=payload.level_up_message or "GG {user}, you reached level {level}! 🎉",
         warn_timeout_at=payload.warn_timeout_at,
         warn_kick_at=payload.warn_kick_at,
         warn_timeout_minutes=payload.warn_timeout_minutes,
@@ -602,6 +620,133 @@ async def api_remove_tag(request: Request, guild_id: str, tag_name: str):
     await _require_manage(request, guild_id)
     await db.remove_tag(guild_id, tag_name)
     return {"tags": [_tag_to_json(t) for t in await db.list_tags(guild_id)]}
+
+
+# --------------------------------------------------------------------- stats --
+async def _resolve_usernames(guild_id: str, user_ids: list[str]) -> dict[str, str]:
+    """Best-effort user_id -> username lookup via the bot's own REST
+    connection, so lists show names instead of raw snowflakes. Falls back
+    to the raw ID per-user if that lookup fails (e.g. they left the
+    server) rather than failing the whole request."""
+    async def _one(uid: str) -> tuple[str, str]:
+        try:
+            member = await bot_rest.get_guild_member(guild_id, uid)
+            return uid, member.get("user", member).get("username", uid)
+        except FluxerAPIError:
+            return uid, uid
+
+    results = await asyncio.gather(*(_one(uid) for uid in user_ids))
+    return dict(results)
+
+
+@app.get("/api/guilds/{guild_id}/stats")
+async def api_guild_stats(request: Request, guild_id: str, days: int = 14):
+    await _require_manage(request, guild_id)
+    days = max(1, min(90, days))
+    daily = await db.get_daily_stats(guild_id, days)
+    top_members = await db.get_top_members(guild_id, 5)
+    top_voice_members = await db.get_top_voice_members(guild_id, 5)
+    total = await db.get_total_messages(guild_id, 30)
+
+    all_ids = list({r["user_id"] for r in top_members} | {r["user_id"] for r in top_voice_members})
+    names = await _resolve_usernames(guild_id, all_ids)
+
+    return {
+        "daily": [
+            {"date": r["day"].isoformat(), "count": r["message_count"], "voice_minutes": round(float(r["voice_minutes"]))}
+            for r in daily
+        ],
+        "top_members": [
+            {"user_id": r["user_id"], "username": names.get(r["user_id"], r["user_id"]), "count": r["message_count"]}
+            for r in top_members
+        ],
+        "top_voice_members": [
+            {"user_id": r["user_id"], "username": names.get(r["user_id"], r["user_id"]),
+             "minutes": round(float(r["minutes"]))}
+            for r in top_voice_members
+        ],
+        "total_messages_30d": total,
+    }
+
+
+# ----------------------------------------------------------------- leveling --
+def _level_to_json(row, username: str) -> dict:
+    return {"user_id": row["user_id"], "username": username, "xp": row["xp"], "level": row["level"]}
+
+
+def _level_role_to_json(row) -> dict:
+    return {"id": row["id"], "level": row["level"], "role_id": row["role_id"]}
+
+
+@app.get("/api/guilds/{guild_id}/levels")
+async def api_guild_levels(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
+    leaderboard = await db.get_leaderboard(guild_id, 20)
+    level_roles_list = await db.list_level_roles(guild_id)
+    names = await _resolve_usernames(guild_id, [r["user_id"] for r in leaderboard])
+    return {
+        "leaderboard": [_level_to_json(r, names.get(r["user_id"], r["user_id"])) for r in leaderboard],
+        "level_roles": [_level_role_to_json(r) for r in level_roles_list],
+    }
+
+
+class LevelRolePayload(BaseModel):
+    level: int
+    role_id: str
+
+
+@app.post("/api/guilds/{guild_id}/level-roles")
+async def api_add_level_role(request: Request, guild_id: str, payload: LevelRolePayload):
+    await _require_manage(request, guild_id)
+    if payload.level < 1:
+        raise _ApiError(400, "Level must be 1 or higher.")
+    await db.add_level_role(guild_id, payload.level, payload.role_id)
+    return {"level_roles": [_level_role_to_json(r) for r in await db.list_level_roles(guild_id)]}
+
+
+@app.delete("/api/guilds/{guild_id}/level-roles/{level}")
+async def api_remove_level_role(request: Request, guild_id: str, level: int):
+    await _require_manage(request, guild_id)
+    await db.remove_level_role(guild_id, level)
+    return {"level_roles": [_level_role_to_json(r) for r in await db.list_level_roles(guild_id)]}
+
+
+# ------------------------------------------------------------------ announce --
+class AnnouncePayload(BaseModel):
+    channel_id: str
+    title: str = ""
+    description: str = ""
+    color: str = "5865F2"
+    image_url: str = ""
+    footer: str = ""
+
+
+@app.post("/api/guilds/{guild_id}/announce")
+async def api_announce(request: Request, guild_id: str, payload: AnnouncePayload):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    channel_id = payload.channel_id.strip()
+    if not channel_id.isdigit() or not (payload.title.strip() or payload.description.strip()):
+        raise _ApiError(400, "Give a channel and at least a title or description.")
+
+    embed: dict = {"color": _parse_embed_color(payload.color)}
+    if payload.title.strip():
+        embed["title"] = payload.title.strip()
+    if payload.description.strip():
+        embed["description"] = payload.description.strip()
+    if payload.image_url.strip():
+        embed["image"] = {"url": payload.image_url.strip()}
+    if payload.footer.strip():
+        embed["footer"] = {"text": payload.footer.strip()}
+
+    try:
+        await bot_rest.send_message(channel_id, embeds=[embed])
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}) — check the bot can post in that channel.")
+
+    await db.log_action(guild_id, "announce", moderator_id=str(user.get("id")),
+                         reason=f"Sent an announcement to <#{channel_id}>")
+    return {"ok": True}
 
 
 # ------------------------------------------------------ serve the frontend --

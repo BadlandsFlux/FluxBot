@@ -4,7 +4,9 @@ import asyncio
 import logging
 
 from bot.commands import Bot
-from bot.modules import fun, info, logging_mod, moderation, roles, tags, utility
+from bot.modules import activity, fun, info, leveling, logging_mod, moderation, reminders, roles, tags, utility
+from bot.scheduler import run_scheduler
+from bot import voice_tracker
 from common import db
 from common.config import config
 
@@ -31,6 +33,10 @@ async def main() -> None:
     utility.register(bot)
     info.register(bot)
     tags.register(bot)
+    reminders.register(bot)
+    leveling.register(bot)
+    activity.register(bot)
+    voice_tracker.register(bot)
 
     @bot.on("GUILD_CREATE")
     async def on_guild_create(data: dict) -> None:
@@ -46,9 +52,11 @@ async def main() -> None:
         bot.invalidate_guild(guild_id)
 
     log.info("Starting gateway connection to %s ...", config.api_base)
+    scheduler_task = asyncio.create_task(run_scheduler(bot))
     try:
         await bot.start()
     finally:
+        scheduler_task.cancel()
         await bot.close()
         await db.close_pool()
 

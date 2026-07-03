@@ -23,12 +23,11 @@ from bot import moderation_actions as actions
 from bot.commands import Bot, Context
 from bot.modules.logging_mod import log_and_notify
 from bot.permissions import PERM_BAN_MEMBERS, PERM_KICK_MEMBERS, PERM_MANAGE_GUILD, PERM_MANAGE_MESSAGES, PERM_MODERATE_MEMBERS
+from bot.timeutil import parse_duration_seconds
 from common import db
 
 MENTION_RE = re.compile(r"^<@!?(\d+)>$")
 CHANNEL_MENTION_RE = re.compile(r"^<#(\d+)>$")
-DURATION_RE = re.compile(r"^(\d+)([smhdw])$")
-DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
 
 def parse_id(token: str) -> str | None:
@@ -47,14 +46,6 @@ def parse_channel_id(token: str) -> str | None:
     if token.isdigit():
         return token
     return None
-
-
-def parse_duration_seconds(token: str) -> int | None:
-    m = DURATION_RE.match(token.lower())
-    if not m:
-        return None
-    value, unit = m.groups()
-    return int(value) * DURATION_UNITS[unit]
 
 
 async def _resolve_target(ctx: Context) -> tuple[dict | None, list[str]]:

@@ -137,6 +137,32 @@ def register(bot: Bot) -> None:
             except Exception:
                 pass
 
+    @bot.on("GUILD_MEMBER_REMOVE")
+    async def on_member_remove(data: dict) -> None:
+        guild_id = str(data.get("guild_id"))
+        user = data.get("user", {})
+        user_id = user.get("id")
+        if not user_id:
+            return
+        guild_cfg = await db.get_guild(guild_id)
+        if not (guild_cfg and guild_cfg["goodbye_channel_id"] and guild_cfg["goodbye_message"]):
+            return
+        try:
+            guild = await bot.get_guild(guild_id)
+        except Exception:
+            guild = {}
+        # No {user} mention here on purpose — the member has already left, so
+        # a mention would just render as an unresolved/greyed-out user.
+        text = (guild_cfg["goodbye_message"]
+                .replace("{user}", user.get("username", "Someone"))
+                .replace("{username}", user.get("username", "Someone"))
+                .replace("{server}", guild.get("name", "the server"))
+                .replace("{membercount}", str(guild.get("member_count", ""))))
+        try:
+            await bot.rest.send_message(guild_cfg["goodbye_channel_id"], content=text)
+        except Exception:
+            pass
+
     @bot.on("MESSAGE_REACTION_ADD")
     async def on_reaction_add(data: dict) -> None:
         message_id = str(data.get("message_id"))

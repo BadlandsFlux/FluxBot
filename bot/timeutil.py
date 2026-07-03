@@ -11,10 +11,24 @@ find the real value (e.g. via a self-hosted instance's source).
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
 FLUXER_EPOCH_MS = 1_420_070_400_000  # best-effort guess, see module docstring
+
+DURATION_RE = re.compile(r"^(\d+)([smhdw])$", re.IGNORECASE)
+DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def parse_duration_seconds(token: str) -> Optional[int]:
+    """Parse a duration like '10m', '2h', '1d', '1w' into seconds. Returns
+    None if the token doesn't match."""
+    m = DURATION_RE.match(token.lower())
+    if not m:
+        return None
+    value, unit = m.groups()
+    return int(value) * DURATION_UNITS[unit]
 
 
 def snowflake_to_datetime(snowflake_id: str) -> Optional[datetime]:

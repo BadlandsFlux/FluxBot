@@ -63,10 +63,78 @@ CREATE TABLE IF NOT EXISTS tags (
     UNIQUE(guild_id, name)
 );
 
+CREATE TABLE IF NOT EXISTS reminders (
+    id            BIGSERIAL PRIMARY KEY,
+    guild_id      TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    channel_id    TEXT NOT NULL,
+    user_id       TEXT NOT NULL,
+    content       TEXT NOT NULL,
+    remind_at     TIMESTAMPTZ NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    delivered     BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS polls (
+    id            BIGSERIAL PRIMARY KEY,
+    guild_id      TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    channel_id    TEXT NOT NULL,
+    message_id    TEXT NOT NULL,
+    question      TEXT NOT NULL,
+    options       JSONB NOT NULL,   -- ["Option A", "Option B", ...] in emoji order
+    close_at      TIMESTAMPTZ,      -- NULL = never auto-closes
+    closed        BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS levels (
+    guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id         TEXT NOT NULL,
+    xp              BIGINT NOT NULL DEFAULT 0,
+    level           INTEGER NOT NULL DEFAULT 0,
+    last_xp_at      TIMESTAMPTZ,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS level_roles (
+    id          BIGSERIAL PRIMARY KEY,
+    guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    level       INTEGER NOT NULL,
+    role_id     TEXT NOT NULL,
+    UNIQUE(guild_id, level)
+);
+
+CREATE TABLE IF NOT EXISTS guild_daily_stats (
+    guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    day             DATE NOT NULL,
+    message_count   BIGINT NOT NULL DEFAULT 0,
+    voice_minutes   BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS member_message_counts (
+    guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id         TEXT NOT NULL,
+    message_count   BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS member_voice_minutes (
+    guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id         TEXT NOT NULL,
+    minutes         BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings(guild_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_mod_actions_guild   ON mod_actions(guild_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reaction_roles_msg  ON reaction_roles(message_id);
 CREATE INDEX IF NOT EXISTS idx_tags_guild          ON tags(guild_id);
+CREATE INDEX IF NOT EXISTS idx_reminders_due        ON reminders(remind_at) WHERE NOT delivered;
+CREATE INDEX IF NOT EXISTS idx_polls_due            ON polls(close_at) WHERE NOT closed;
+CREATE INDEX IF NOT EXISTS idx_levels_guild_xp      ON levels(guild_id, xp DESC);
+CREATE INDEX IF NOT EXISTS idx_guild_daily_stats    ON guild_daily_stats(guild_id, day);
+CREATE INDEX IF NOT EXISTS idx_member_msg_counts    ON member_message_counts(guild_id, message_count DESC);
+CREATE INDEX IF NOT EXISTS idx_member_voice_minutes ON member_voice_minutes(guild_id, minutes DESC);
 
 -- Migration for databases created before command_prefix existed.
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS command_prefix TEXT NOT NULL DEFAULT '!';
@@ -78,3 +146,17 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS welcome_message TEXT NOT NULL DEFAUL
 
 -- Migration for databases created before reaction role labels existed.
 ALTER TABLE reaction_roles ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT '';
+
+-- Migration for databases created before goodbye messages existed.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS goodbye_channel_id TEXT;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS goodbye_message TEXT NOT NULL DEFAULT
+    '{username} left {server}. 👋';
+
+-- Migration for databases created before leveling existed.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS leveling_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS level_up_channel_id TEXT;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS level_up_message TEXT NOT NULL DEFAULT
+    'GG {user}, you reached level {level}! 🎉';
+
+-- Migration for databases created before voice activity tracking existed.
+ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS voice_minutes BIGINT NOT NULL DEFAULT 0;

@@ -256,7 +256,8 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
 
 /* --------------------------------------------------------------- forms */
 .settings-form label { display: block; margin-bottom: 14px; font-size: 13px; color: var(--muted); font-weight: 500; }
-.settings-form input {
+.settings-form input,
+.settings-form textarea {
   display: block;
   margin-top: 6px;
   width: 100%;
@@ -267,8 +268,10 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
   color: var(--text);
   font-size: 14px;
   font-family: inherit;
+  resize: vertical;
 }
-.settings-form input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.settings-form input:focus,
+.settings-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .form-row { display: grid; gap: 12px; }
 .form-row-3 { grid-template-columns: 1fr 1fr 1fr; }
 .form-row-title-color { grid-template-columns: 1fr auto; align-items: end; }
@@ -721,3 +724,29 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
   font-family: inherit;
   min-width: 0;
 }
+
+/* ------------------------------------------------------------- bar chart */
+.bar-chart { display: flex; flex-direction: column; }
+.bar-chart-svg { width: 100%; flex: 1; }
+.bar-chart-bar { fill: var(--accent); opacity: 0.85; }
+.bar-chart-bar:hover { opacity: 1; }
+.bar-chart-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+/* -------------------------------------------------------- top members */
+.top-members-list { display: flex; flex-direction: column; gap: 6px; }
+.top-member-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.top-member-row:last-child { border-bottom: none; }
+.top-member-name { flex: 1; font-weight: 600; }
