@@ -110,7 +110,7 @@ run_bot.py / run_dashboard.py
 Point these three at your instance and everything else (REST calls, the gateway connection, OAuth login) follows automatically:
 
 ```
-FLUXER_API_BASE=https://your-domain.com/v1
+FLUXER_API_BASE=https://your-domain.com/api/v1
 FLUXER_WEB_BASE=https://your-domain.com
 FLUXER_GATEWAY_URL=wss://your-domain.com/gateway   # only if GET /gateway/bot isn't available on your instance
 ```
