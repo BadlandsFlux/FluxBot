@@ -2,11 +2,26 @@
 
 A Python moderation bot for [Fluxer](https://fluxer.app) with a FastAPI web dashboard. Works against the official instance or a self-hosted one, just change `FLUXER_API_BASE`.
 
+> **AI Disclosure:** This bot was written with help from AI. I don't have the time to really dig into the API structure and build a proper bot at this moment. This is just a stopgap until a properly featured bot comes out (if ever). Continued support is "best effort" and at will, I promise no commitment.
+
 - **Bot**: kick / ban / unban / timeout / purge, a warning system with auto-escalation (warn to auto-timeout to auto-kick), mod-action logging to a channel, autoroles, reaction roles, welcome **and goodbye** messages, custom tags (`!tagname` shortcuts), per-server command prefixes, info commands (`!avatar`, `!serverinfo`, `!userinfo`, owner-only `!info`), reminders (`!remind`), a leveling/XP system covering **both text and voice activity** (chat XP with a cooldown, plus voice-time XP at a lower rate that only counts when 2+ people are connected, no one's self-deafened, and it's not the AFK channel) with level-up announcements and level-role rewards (`!rank`, `!leaderboard`), timed polls that auto-close with a results tally (`!poll ... 1h`), `!ping` with real gateway/API/DB latency and uptime stats, and fun commands (dice, coinflip, wheel spin). A background scheduler delivers due reminders, closes due polls, and periodically flushes in-progress voice sessions, all independent of the gateway connection. Moderation logic (REST calls, logging, warn escalation) lives in one shared module (`bot/moderation_actions.py`) used by both chat commands and the dashboard's Members tab, so behavior can't drift between the two.
 - **Dashboard**: a React SPA (Vite) served by FastAPI as static files, talking to a JSON API (`/api/*`), with real client-side routing, no full-page reloads, live search on the commands page, and a quiet 8-second poll on each server's page so kicks/bans/warnings from chat show up without a manual refresh. A top-bar server switcher shows the current server's name/icon and lets you jump between manageable servers without going back to the picker. Tabbed per-server UI (Overview, Settings, Members, Warnings, Mod Log, Autoroles, Reaction Roles, **Levels**, Tags, **Announce**) with searchable role/channel pickers everywhere instead of raw ID text boxes, real server icons in the picker, a Members tab to search and kick/ban/timeout/warn directly from the browser, welcome/goodbye message configuration behind toggle switches, a leveling tab (leaderboard + level-role reward setup), a custom embed/announcement builder, a reaction-role builder (emoji picker, per-choice label, role picker, embed color) that posts the embed, reacts to it, and starts listening for you, and an Overview tab with **separate 14-day charts for message and voice activity** plus most-active-members lists for each. A public `/commands` page lists every command, always in sync with the bot since it's generated from the same code. Access is via "Login with Fluxer" OAuth2, see "Dashboard access" below.
 - **Storage**: Postgres, shared by both processes over a real connection pool (not a shared SQLite file), via `asyncpg`.
 
 Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohttp`/gateway handshake) rather than depending on a third-party wrapper's undocumented internals, so self-hosting support is just config.
+
+## Table of contents
+
+- [Project layout](#project-layout)
+- [Setup](#setup)
+- [Updating](#updating)
+- [Running at startup on Ubuntu (systemd)](#running-at-startup-on-ubuntu-systemd)
+- [Creating the bot application on Fluxer](#creating-the-bot-application-on-fluxer)
+- [Self-hosting a Fluxer instance](#self-hosting-a-fluxer-instance)
+- [Dashboard access](#dashboard-access)
+- [On API completeness](#on-api-completeness)
+- [Commands](#commands)
+- [What's editable from the dashboard vs. chat-only](#whats-editable-from-the-dashboard-vs-chat-only)
 
 ## Project layout
 
@@ -65,11 +80,18 @@ dashboard-frontend/      React SPA (Vite)
 schema.sql              Postgres schema (idempotent, CREATE TABLE IF NOT EXISTS,
                         plus ALTER TABLE ADD COLUMN IF NOT EXISTS migrations)
 run_bot.py / run_dashboard.py
+deploy/                systemd unit files for running both processes at boot on Ubuntu
 ```
 
 ## Setup
 
-1. **Postgres.** Create a database and user:
+1. **Get the code.**
+   ```bash
+   git clone https://github.com/BadlandsFlux/FluxBot.git
+   cd FluxBot
+   ```
+
+2. **Postgres.** Create a database and user:
    ```bash
    createdb fluxerbot
    psql fluxerbot -c "CREATE USER fluxerbot WITH PASSWORD 'fluxerbot';"
@@ -78,29 +100,29 @@ run_bot.py / run_dashboard.py
    ```
    (Any Postgres works, a managed service, Docker, etc. Just point `DATABASE_URL` at it.)
 
-2. **Env.**
+3. **Env.**
    ```bash
    cp .env.example .env
    ```
    Fill in:
-   - `FLUXER_BOT_TOKEN`, your bot's token.
+   - `FLUXER_BOT_TOKEN`, your bot's token (see "Creating the bot application on Fluxer" below if you don't have one yet).
    - `BOT_OWNER_ID`, your own Fluxer user ID, gates the owner-only `!info` command.
    - `FLUXER_API_BASE` / `FLUXER_WEB_BASE` / `FLUXER_GATEWAY_URL`, leave as the official instance, or point at your self-hosted domain (see below).
    - `DATABASE_URL`, your Postgres connection string.
-   - `FLUXER_OAUTH_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI`, for the dashboard's "Login with Fluxer" button (see OAuth section below).
+   - `FLUXER_OAUTH_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI`, for the dashboard's "Login with Fluxer" button (see "Creating the bot application on Fluxer" below).
    - `DASHBOARD_SESSION_SECRET`, any long random string.
 
-3. **Install deps.**
+4. **Install deps.**
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Apply the schema** (optional, both processes also do this automatically on startup):
+5. **Apply the schema** (optional, both processes also do this automatically on startup):
    ```bash
    python -m common.db
    ```
 
-5. **Build the frontend** (one time, it's a static React build, not a server, so this doesn't need repeating unless you change frontend code):
+6. **Build the frontend** (one time, it's a static React build, not a server, so this doesn't need repeating unless you change frontend code):
    ```bash
    cd dashboard-frontend
    npm install
@@ -109,7 +131,7 @@ run_bot.py / run_dashboard.py
    ```
    If `dist/` doesn't exist yet, the dashboard will say so at `/` instead of erroring, so it's obvious if you skip this step.
 
-6. **Run.**
+7. **Run.**
    ```bash
    python run_bot.py          # in one terminal
    python run_dashboard.py    # in another
@@ -117,6 +139,91 @@ run_bot.py / run_dashboard.py
    Dashboard defaults to `http://localhost:8000`, one process serves both the API and the built frontend, no Node server needed at runtime.
 
    **Iterating on the frontend?** Run `npm run dev` in `dashboard-frontend/` (Vite on `:5173`, proxying `/api`, `/login`, `/auth` to the FastAPI backend on `:8000`, see `vite.config.js`) alongside `python run_dashboard.py` in another terminal for hot reload, instead of rebuilding on every change. Run `npm run build` again when you're done to update what gets served in production.
+
+## Updating
+
+```bash
+git pull
+pip install -r requirements.txt          # pick up any new/changed Python deps
+python -m common.db                      # apply any new schema migrations (idempotent, safe to always run)
+cd dashboard-frontend && npm install && npm run build && cd ..   # rebuild the frontend
+```
+
+Then restart both processes, however you're running them, `Ctrl+C` and re-run `python run_bot.py`/`python run_dashboard.py` if running manually, or see the systemd section below for `systemctl restart` if running as a service. There's no harm in running all four commands above even if a given update didn't touch that part (e.g. no new npm deps), they're all safe no-ops in that case.
+
+If you're on the `deploy/` systemd services, run the `git pull`/`pip install`/`python -m common.db`/`npm run build` sequence as whichever user can write to `/opt/fluxbot` (or `sudo -u fluxbot ...` each command), then restart:
+```bash
+sudo systemctl restart fluxbot-bot.service fluxbot-dashboard.service
+```
+
+## Running at startup on Ubuntu (systemd)
+
+`python run_bot.py` and `python run_dashboard.py` running in a terminal stop when you log out. For a real deployment, run both as `systemd` services, they'll start on boot and restart automatically if either crashes.
+
+1. **Put the project somewhere systemd-friendly and create a dedicated user:**
+   ```bash
+   sudo useradd --system --home /opt/fluxbot --shell /usr/sbin/nologin fluxbot
+   sudo mkdir -p /opt/fluxbot
+   sudo cp -r . /opt/fluxbot        # from your project directory
+   sudo chown -R fluxbot:fluxbot /opt/fluxbot
+   ```
+
+2. **Set up a virtualenv as that user** (keeps dependencies isolated from system Python):
+   ```bash
+   sudo -u fluxbot python3 -m venv /opt/fluxbot/venv
+   sudo -u fluxbot /opt/fluxbot/venv/bin/pip install -r /opt/fluxbot/requirements.txt
+   ```
+   Build the frontend once too (needs Node; see the Setup section above), `dist/` just needs to exist under `/opt/fluxbot/dashboard-frontend/`, it doesn't matter which user built it.
+
+3. **Make sure `/opt/fluxbot/.env` exists and is filled in** (copy from `.env.example`, same as regular setup). Since `fluxbot` is a system user, lock it down:
+   ```bash
+   sudo chmod 600 /opt/fluxbot/.env
+   sudo chown fluxbot:fluxbot /opt/fluxbot/.env
+   ```
+
+4. **Install the unit files** (included in this repo under `deploy/`):
+   ```bash
+   sudo cp deploy/fluxbot-bot.service deploy/fluxbot-dashboard.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   ```
+
+5. **Enable and start both:**
+   ```bash
+   sudo systemctl enable --now fluxbot-bot.service
+   sudo systemctl enable --now fluxbot-dashboard.service
+   ```
+
+6. **Check on them:**
+   ```bash
+   systemctl status fluxbot-bot.service
+   journalctl -u fluxbot-bot.service -f          # live logs
+   journalctl -u fluxbot-dashboard.service -f
+   ```
+
+7. **After pulling code changes**, see "Updating" above, then restart:
+   ```bash
+   sudo systemctl restart fluxbot-bot.service fluxbot-dashboard.service
+   ```
+
+If Postgres runs on this same machine, uncomment the `Requires=postgresql.service` line in both unit files before installing them, so they wait for the database on boot. Leave it commented out if Postgres is on a remote host, systemd can't depend on a service running on a different machine.
+
+## Creating the bot application on Fluxer
+
+One Fluxer "Application" gives you everything: the bot token, the OAuth2 client ID/secret for the dashboard's login, and the invite link. Steps, from the actual Fluxer web UI:
+
+1. **Enable Developer Mode** (lets you copy IDs anywhere by right-clicking): User Settings → Advanced → Developer → toggle **Developer Mode** on.
+
+2. **Create the application**: User Settings → Applications → **Create Application**, give it a name (e.g. `FluxBot`).
+
+3. **Get the bot token** for `.env`'s `FLUXER_BOT_TOKEN`: on the application page, under **Secrets & tokens** → **Bot token** → click **Regenerate**. Copy it immediately, it won't be shown again. Treat it like a password; regenerating later breaks anything still using the old one.
+
+4. **Get the OAuth2 credentials** for the dashboard's "Login with Fluxer": still on the application page, **Application ID** at the top is your `FLUXER_OAUTH_CLIENT_ID`; **Client secret** under Secrets & tokens (click Regenerate to reveal it) is your `FLUXER_OAUTH_CLIENT_SECRET`.
+
+5. **Add the dashboard's redirect URI**: under **Redirect URIs**, add exactly what you set as `FLUXER_OAUTH_REDIRECT_URI` in `.env` (e.g. `https://your-dashboard-domain/auth/callback`), then **Add redirect**. This has to match exactly, including scheme and trailing slashes, or the login flow will fail.
+
+6. **Invite the bot to your server**: scroll down to **OAuth2 URL builder**. Check the `bot` scope, then under **Bot permissions** check **Administrator** (simplest, guarantees every command works without fiddling with individual bits), copy the generated **Authorize URL**, and open it in a browser to add the bot to your server. The redirect URI dropdown there doesn't matter for this step, it's only relevant for identify/guilds-scope logins, not a plain bot invite.
+
+   If you'd rather not grant Administrator, the bot only actually needs: Kick Members, Ban Members, Moderate Members (timeout), Manage Roles, Manage Messages, Manage Guild, Send Messages, Embed Links, Add Reactions, View Channel, Read Message History.
 
 ## Self-hosting a Fluxer instance
 
@@ -128,10 +235,6 @@ FLUXER_WEB_BASE=https://your-domain.com
 FLUXER_GATEWAY_URL=wss://your-domain.com/gateway   # only if GET /gateway/bot isn't available on your instance
 ```
 
-## Setting up "Login with Fluxer"
-
-The dashboard needs an OAuth2 application registered against your Fluxer instance (`POST /oauth2/applications`, authenticated as a user account, consult your instance's admin/API docs for the exact flow, since this isn't fully standardized yet). Set the redirect URI there to match `FLUXER_OAUTH_REDIRECT_URI` exactly, then copy the client ID/secret into `.env`.
-
 ## Dashboard access
 
 Anyone can log in with "Login with Fluxer", that just proves who they are. What they can actually *do* is checked live, on every page load, against `GET /users/@me/guilds`:
@@ -142,7 +245,7 @@ Anyone can log in with "Login with Fluxer", that just proves who they are. What 
 
 If you want to restrict the dashboard further (e.g. only the bot owner, or an explicit allowlist of user IDs), that check lives in `_require_manage()` in `dashboard/app.py`, straightforward to tighten.
 
-## ⚠️ On API completeness
+## On API completeness
 
 Fluxer's public API reference is still being filled in (as of mid-2026), and some routes here, particularly the exact moderation endpoints (`ban`/`timeout`/`purge`), member-list pagination, and the OAuth2 guild-list response shape, are implemented following the Discord-like conventions Fluxer is modeled on, since that's the best information available. Everything funnels through a small number of methods:
 

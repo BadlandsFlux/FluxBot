@@ -1,0 +1,28 @@
+[Unit]
+Description=FluxBot - moderation bot for Fluxer
+After=network-online.target
+Wants=network-online.target
+# If Postgres runs on this same machine, uncomment the next line so the
+# bot waits for it on boot. Leave it out if Postgres is on a remote host.
+# Requires=postgresql.service
+
+[Service]
+Type=simple
+User=fluxbot
+Group=fluxbot
+WorkingDirectory=/opt/fluxbot
+ExecStart=/opt/fluxbot/venv/bin/python /opt/fluxbot/run_bot.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fluxbot-bot
+
+# Basic hardening — relax any of these if something legitimate breaks.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
