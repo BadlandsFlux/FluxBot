@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS guilds (
     icon                  TEXT,
     log_channel_id        TEXT,
     mute_role_id          TEXT,
+    command_prefix        TEXT NOT NULL DEFAULT '!',
     warn_timeout_at       INTEGER NOT NULL DEFAULT 3,   -- warn count that triggers auto-timeout
     warn_kick_at          INTEGER NOT NULL DEFAULT 5,   -- warn count that triggers auto-kick
     warn_timeout_minutes  INTEGER NOT NULL DEFAULT 60,
@@ -51,6 +52,25 @@ CREATE TABLE IF NOT EXISTS autoroles (
     UNIQUE(guild_id, role_id)
 );
 
+CREATE TABLE IF NOT EXISTS tags (
+    id           BIGSERIAL PRIMARY KEY,
+    guild_id     TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    name         TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    created_by   TEXT NOT NULL DEFAULT '',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(guild_id, name)
+);
+
 CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings(guild_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_mod_actions_guild   ON mod_actions(guild_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reaction_roles_msg  ON reaction_roles(message_id);
+CREATE INDEX IF NOT EXISTS idx_tags_guild          ON tags(guild_id);
+
+-- Migration for databases created before command_prefix existed.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS command_prefix TEXT NOT NULL DEFAULT '!';
+
+-- Migration for databases created before welcome messages existed.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS welcome_channel_id TEXT;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS welcome_message TEXT NOT NULL DEFAULT
+    'Welcome {user} to {server}! 👋';

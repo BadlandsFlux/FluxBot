@@ -31,6 +31,8 @@ class Config:
 
     # Bot
     bot_token: str = os.getenv("FLUXER_BOT_TOKEN", "")
+    bot_name: str = os.getenv("BOT_NAME", "FluxBot")
+    owner_id: str = os.getenv("BOT_OWNER_ID", "")
     command_prefix: str = os.getenv("COMMAND_PREFIX", "!")
     intents: int = int(os.getenv("FLUXER_INTENTS", "3243773"))
     gateway_version: int = int(os.getenv("FLUXER_GATEWAY_VERSION", "1"))

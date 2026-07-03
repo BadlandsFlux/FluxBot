@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import shlex
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
@@ -17,9 +18,10 @@ from bot.client import GatewayClient
 from bot.rest import FluxerREST, FluxerAPIError
 from common.config import config
 
-log = logging.getLogger("fluxerbot.commands")
+log = logging.getLogger("fluxbot.commands")
 
 CommandFunc = Callable[["Context"], Awaitable[None]]
+_PREFIX_CACHE_TTL = 30  # seconds
 
 
 @dataclass
@@ -52,6 +54,8 @@ class Command:
     aliases: list[str] = field(default_factory=list)
     required_permission: Optional[int] = None  # see bot.permissions
     help_text: str = ""
+    category: str = "General"
+    owner_only: bool = False
 
 
 class Bot:
@@ -61,17 +65,21 @@ class Bot:
         self.gateway = GatewayClient(self.rest, token, config.intents)
         self.commands: dict[str, Command] = {}
         self.prefix = config.command_prefix
+        self.started_at = time.monotonic()
         self._member_cache: dict[tuple[str, str], dict] = {}
         self._guild_cache: dict[str, dict] = {}
+        self._prefix_cache: dict[str, tuple[str, float]] = {}  # guild_id -> (prefix, fetched_at)
 
         self.gateway.on("MESSAGE_CREATE")(self._on_message)
 
     # ------------------------------------------------------------- API --
     def command(self, name: str, aliases: Optional[list[str]] = None,
-                required_permission: Optional[int] = None, help_text: str = ""):
+                required_permission: Optional[int] = None, help_text: str = "",
+                category: str = "General", owner_only: bool = False):
         def deco(fn: CommandFunc) -> CommandFunc:
             cmd = Command(name=name, func=fn, aliases=aliases or [],
-                           required_permission=required_permission, help_text=help_text)
+                           required_permission=required_permission, help_text=help_text,
+                           category=category, owner_only=owner_only)
             self.commands[name] = cmd
             for alias in cmd.aliases:
                 self.commands[alias] = cmd
@@ -95,19 +103,43 @@ class Bot:
     def invalidate_guild(self, guild_id: str) -> None:
         self._guild_cache.pop(guild_id, None)
 
+    @property
+    def uptime_seconds(self) -> float:
+        return time.monotonic() - self.started_at
+
+    async def guild_count(self) -> int:
+        from common import db
+        return len(await db.list_guilds())
+
+    async def get_prefix(self, guild_id: str) -> str:
+        """Per-guild prefix, cached briefly so we're not hitting the DB on
+        every message. Dashboard prefix changes take effect within
+        _PREFIX_CACHE_TTL seconds."""
+        cached = self._prefix_cache.get(guild_id)
+        now = time.monotonic()
+        if cached and (now - cached[1]) < _PREFIX_CACHE_TTL:
+            return cached[0]
+        from common import db
+        guild_cfg = await db.get_guild(guild_id)
+        prefix = guild_cfg["command_prefix"] if guild_cfg and guild_cfg["command_prefix"] else self.prefix
+        self._prefix_cache[guild_id] = (prefix, now)
+        return prefix
+
     # --------------------------------------------------------- internal --
     async def _on_message(self, data: dict) -> None:
         content: str = data.get("content", "") or ""
         author = data.get("author", {})
         if author.get("bot"):
             return
-        if not content.startswith(self.prefix):
-            return
         guild_id = data.get("guild_id")
         if not guild_id:
             return  # DMs not handled by a moderation bot
 
-        body = content[len(self.prefix):].strip()
+        prefix = await self.get_prefix(guild_id)
+        if not content.startswith(prefix):
+            return
+
+        body = content[len(prefix):].strip()
         if not body:
             return
         try:
@@ -118,14 +150,32 @@ class Bot:
             return
         name, args = parts[0].lower(), parts[1:]
         command = self.commands.get(name)
+        channel_id = data.get("channel_id")
         if not command:
+            from common import db
+            tag_row = await db.get_tag(guild_id, name)
+            if tag_row:
+                try:
+                    await self.rest.send_message(channel_id, content=tag_row["content"])
+                except Exception:
+                    log.warning("Failed to send tag %s in guild %s", name, guild_id)
             return
 
-        channel_id = data.get("channel_id")
         ctx = Context(
             bot=self, message=data, guild_id=guild_id, channel_id=channel_id,
             author=author, args=args, raw_args=body[len(parts[0]):].strip(),
         )
+
+        if command.owner_only:
+            if not config.owner_id or str(author.get("id")) != config.owner_id:
+                await ctx.reply("That command is restricted to the bot owner.")
+                return
+            try:
+                await command.func(ctx)
+            except Exception:
+                log.exception("Command %s raised an unexpected error", name)
+                await ctx.reply("Something went wrong running that command.")
+            return
 
         try:
             ctx.guild = await self.get_guild(guild_id)

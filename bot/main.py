@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from bot.commands import Bot
-from bot.modules import fun, logging_mod, moderation, roles, utility
+from bot.modules import fun, info, logging_mod, moderation, roles, tags, utility
 from common import db
 from common.config import config
 
@@ -12,7 +12,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
 )
-log = logging.getLogger("fluxerbot.main")
+log = logging.getLogger("fluxbot.main")
 
 
 async def main() -> None:
@@ -29,6 +29,8 @@ async def main() -> None:
     roles.register(bot)
     fun.register(bot)
     utility.register(bot)
+    info.register(bot)
+    tags.register(bot)
 
     @bot.on("GUILD_CREATE")
     async def on_guild_create(data: dict) -> None:

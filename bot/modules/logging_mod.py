@@ -33,9 +33,13 @@ def _user_tag(user: dict) -> str:
     return f"@{username}"
 
 
-async def log_and_notify(bot, guild_id: str, action: str, *, user: Optional[dict] = None,
+async def log_and_notify(rest, guild_id: str, action: str, *, user: Optional[dict] = None,
                           moderator: Optional[dict] = None, reason: str = "",
                           extra_fields: Optional[list[dict]] = None) -> None:
+    """`rest` is anything with an async `.send_message(channel_id, embeds=...)` —
+    either a bot's `Bot.rest` (chat commands) or the dashboard's standalone
+    `FluxerREST` instance (dashboard-initiated actions). This lets both paths
+    log identically instead of the dashboard needing its own copy."""
     user_id = str(user.get("id")) if user else ""
     mod_id = str(moderator.get("id")) if moderator else ""
 
@@ -62,7 +66,7 @@ async def log_and_notify(bot, guild_id: str, action: str, *, user: Optional[dict
         "timestamp": None,
     }
     try:
-        await bot.rest.send_message(log_channel_id, embeds=[embed])
+        await rest.send_message(log_channel_id, embeds=[embed])
     except Exception:
         # Log channel might have been deleted / bot kicked from it —
         # don't let logging failures break the underlying mod action.

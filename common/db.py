@@ -76,7 +76,8 @@ async def list_guilds() -> list[asyncpg.Record]:
 
 
 _ALLOWED_SETTINGS = {
-    "log_channel_id", "mute_role_id",
+    "log_channel_id", "mute_role_id", "command_prefix",
+    "welcome_channel_id", "welcome_message",
     "warn_timeout_at", "warn_kick_at", "warn_timeout_minutes",
 }
 
@@ -199,6 +200,37 @@ async def remove_autorole(guild_id: str, role_id: str) -> None:
 async def list_autoroles(guild_id: str) -> list[str]:
     rows = await pool().fetch("SELECT role_id FROM autoroles WHERE guild_id=$1", guild_id)
     return [r["role_id"] for r in rows]
+
+
+# --------------------------------------------------------------------- tags --
+async def add_tag(guild_id: str, name: str, content: str, created_by: str = "") -> None:
+    await pool().execute(
+        """
+        INSERT INTO tags (guild_id, name, content, created_by)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (guild_id, name) DO UPDATE SET content = EXCLUDED.content
+        """,
+        guild_id, name.lower(), content, created_by,
+    )
+
+
+async def get_tag(guild_id: str, name: str) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow(
+        "SELECT * FROM tags WHERE guild_id=$1 AND name=$2", guild_id, name.lower(),
+    )
+
+
+async def list_tags(guild_id: str) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM tags WHERE guild_id=$1 ORDER BY name", guild_id,
+    )
+
+
+async def remove_tag(guild_id: str, name: str) -> bool:
+    result = await pool().execute(
+        "DELETE FROM tags WHERE guild_id=$1 AND name=$2", guild_id, name.lower(),
+    )
+    return result.split()[-1] != "0"
 
 
 if __name__ == "__main__":

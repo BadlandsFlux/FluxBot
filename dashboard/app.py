@@ -3,38 +3,120 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 import httpx
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
+from bot import moderation_actions
+from bot.commands import Bot as BotFramework
+from bot.modules import fun, info as info_module, moderation, roles, tags, utility
+from bot.permissions import permission_name
+from bot.rest import FluxerAPIError, FluxerREST
 from common import db
 from common.config import config
+from common.discovery import get_media_base, guild_icon_url
 from dashboard import oauth
 
-log = logging.getLogger("fluxerbot.dashboard")
+log = logging.getLogger("fluxbot.dashboard")
 
 BASE_DIR = Path(__file__).resolve().parent
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+FRONTEND_DIST = BASE_DIR.parent / "dashboard-frontend" / "dist"
+
+# A REST client authenticated as the bot itself — used for dashboard actions
+# that need to act *as* the bot (sending the reaction-role embed message,
+# reacting to it). This talks to Fluxer over plain HTTP; it doesn't need the
+# bot's gateway connection, so it works whether or not the bot process is
+# currently running.
+bot_rest = FluxerREST(config.bot_token)
+
+
+def _build_command_catalog() -> list:
+    """Build the command list by actually registering every command module
+    against a throwaway Bot instance — so /api/commands can never drift from
+    what the bot really responds to. No network calls happen here; Bot() and
+    command registration are both purely in-memory."""
+    catalog_bot = BotFramework("catalog-builder-unused-token")
+    moderation.register(catalog_bot)
+    roles.register(catalog_bot)
+    fun.register(catalog_bot)
+    utility.register(catalog_bot)
+    info_module.register(catalog_bot)
+    tags.register(catalog_bot)
+    seen = set()
+    commands = []
+    for cmd in catalog_bot.commands.values():
+        if cmd.name in seen:
+            continue
+        seen.add(cmd.name)
+        commands.append(cmd)
+    return sorted(commands, key=lambda c: (c.category, c.name))
+
+
+COMMAND_CATALOG = _build_command_catalog()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_pool()
+    await bot_rest.start()
     yield
+    await bot_rest.close()
     await db.close_pool()
 
 
-app = FastAPI(title="Fluxer Mod Bot Dashboard", lifespan=lifespan)
+app = FastAPI(title=f"{config.bot_name} Dashboard", lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=config.session_secret, same_site="lax")
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+# The built frontend is served same-origin (see the catch-all route below),
+# so this CORS entry only matters if you run `npm run dev` (Vite on 5173)
+# against this API directly during frontend development.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-def current_user(request: Request) -> dict | None:
+def current_user(request: Request) -> Optional[dict]:
     return request.session.get("user")
+
+
+class _ApiError(Exception):
+    def __init__(self, status_code: int, detail: str):
+        self.status_code = status_code
+        self.detail = detail
+
+
+@app.exception_handler(_ApiError)
+async def _handle_api_error(request: Request, exc: _ApiError):
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+
+def require_login(request: Request) -> dict:
+    user = current_user(request)
+    if not user:
+        raise _ApiError(401, "Not logged in.")
+    return user
+
+
+async def _require_manage(request: Request, guild_id: str) -> None:
+    access_token = request.session.get("access_token")
+    if not access_token:
+        raise _ApiError(401, "Not logged in.")
+    try:
+        my_guilds = await oauth.fetch_my_guilds(access_token)
+    except httpx.HTTPStatusError:
+        raise _ApiError(502, "Couldn't verify your Fluxer permissions right now.")
+    entry = next((g for g in my_guilds if str(g.get("id")) == guild_id), None)
+    if not entry or not oauth.can_manage(entry):
+        raise _ApiError(403, "You don't have permission to manage this server.")
 
 
 # -------------------------------------------------------------------- auth --
@@ -46,42 +128,43 @@ async def login(request: Request):
 
 
 @app.get("/auth/callback")
-async def auth_callback(request: Request, code: str | None = None, state: str | None = None,
-                         error: str | None = None):
+async def auth_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None,
+                         error: Optional[str] = None):
     if error:
-        return templates.TemplateResponse(request, "login.html", {"error": error})
+        return RedirectResponse(f"/?login_error={error}")
     expected_state = request.session.pop("oauth_state", None)
     if not code or not state or state != expected_state:
-        return templates.TemplateResponse(
-            request, "login.html", {"error": "Login failed (state mismatch). Try again."}
-        )
+        return RedirectResponse("/?login_error=state_mismatch")
     try:
         token_data = await oauth.exchange_code(code)
         access_token = token_data["access_token"]
         me = await oauth.fetch_me(access_token)
     except httpx.HTTPStatusError as e:
         log.warning("OAuth exchange failed: %s", e)
-        return templates.TemplateResponse(
-            request, "login.html", {"error": "Fluxer rejected that login. Try again."}
-        )
+        return RedirectResponse("/?login_error=oauth_failed")
     request.session["user"] = me
     request.session["access_token"] = access_token
     return RedirectResponse("/")
 
 
-@app.get("/logout")
+@app.post("/api/logout")
 async def logout(request: Request):
     request.session.clear()
-    return RedirectResponse("/login")
+    return {"ok": True}
 
 
-# ------------------------------------------------------------------ pages --
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+# --------------------------------------------------------------------- api --
+@app.get("/api/me")
+async def api_me(request: Request):
     user = current_user(request)
     if not user:
-        return templates.TemplateResponse(request, "login.html", {})
+        return JSONResponse({"user": None}, status_code=200)
+    return {"user": user, "bot_name": config.bot_name}
 
+
+@app.get("/api/guilds")
+async def api_guilds(request: Request):
+    require_login(request)
     access_token = request.session.get("access_token")
     try:
         my_guilds = await oauth.fetch_my_guilds(access_token)
@@ -89,74 +172,419 @@ async def index(request: Request):
         my_guilds = []
 
     bot_guild_ids = {g["guild_id"] for g in await db.list_guilds()}
-    manageable = [
-        g for g in my_guilds
-        if str(g.get("id")) in bot_guild_ids and oauth.can_manage(g)
-    ]
-    return templates.TemplateResponse(
-        request, "index.html", {"user": user, "guilds": manageable}
-    )
+    manageable = [g for g in my_guilds if str(g.get("id")) in bot_guild_ids and oauth.can_manage(g)]
+
+    media_base = await get_media_base()
+    result = []
+    for g in manageable:
+        result.append({
+            "id": str(g.get("id")),
+            "name": g.get("name"),
+            "icon_url": guild_icon_url(media_base, str(g.get("id")), g.get("icon")),
+        })
+    return {"guilds": result}
 
 
-async def _require_manage(request: Request, guild_id: str) -> bool:
-    access_token = request.session.get("access_token")
-    if not access_token:
-        return False
-    try:
-        my_guilds = await oauth.fetch_my_guilds(access_token)
-    except httpx.HTTPStatusError:
-        return False
-    entry = next((g for g in my_guilds if str(g.get("id")) == guild_id), None)
-    return bool(entry and oauth.can_manage(entry))
+@app.get("/api/commands")
+async def api_commands():
+    by_category: dict[str, list] = {}
+    for cmd in COMMAND_CATALOG:
+        by_category.setdefault(cmd.category, []).append({
+            "name": cmd.name,
+            "aliases": cmd.aliases,
+            "help_text": cmd.help_text,
+            "permission": "Owner only" if cmd.owner_only else permission_name(cmd.required_permission),
+        })
+    return {"default_prefix": config.command_prefix, "categories": by_category}
 
 
-@app.get("/guild/{guild_id}", response_class=HTMLResponse)
-async def guild_page(request: Request, guild_id: str):
-    user = current_user(request)
-    if not user:
-        return RedirectResponse("/login")
-    if not await _require_manage(request, guild_id):
-        return HTMLResponse("You don't have permission to manage this server.", status_code=403)
+def _guild_to_json(row) -> dict:
+    return {
+        "guild_id": row["guild_id"],
+        "name": row["name"],
+        "log_channel_id": row["log_channel_id"],
+        "mute_role_id": row["mute_role_id"],
+        "command_prefix": row["command_prefix"],
+        "welcome_channel_id": row["welcome_channel_id"],
+        "welcome_message": row["welcome_message"],
+        "warn_timeout_at": row["warn_timeout_at"],
+        "warn_kick_at": row["warn_kick_at"],
+        "warn_timeout_minutes": row["warn_timeout_minutes"],
+    }
 
+
+def _warning_to_json(row) -> dict:
+    return {
+        "id": row["id"], "user_id": row["user_id"], "moderator_id": row["moderator_id"],
+        "reason": row["reason"], "active": row["active"],
+        "created_at": row["created_at"].isoformat(),
+    }
+
+
+def _action_to_json(row) -> dict:
+    return {
+        "id": row["id"], "user_id": row["user_id"], "moderator_id": row["moderator_id"],
+        "action": row["action"], "reason": row["reason"],
+        "created_at": row["created_at"].isoformat(),
+    }
+
+
+def _reaction_role_to_json(row) -> dict:
+    return {
+        "id": row["id"], "channel_id": row["channel_id"], "message_id": row["message_id"],
+        "emoji": row["emoji"], "role_id": row["role_id"],
+    }
+
+
+def _tag_to_json(row) -> dict:
+    return {
+        "id": row["id"], "name": row["name"], "content": row["content"],
+        "created_by": row["created_by"], "created_at": row["created_at"].isoformat(),
+    }
+
+
+@app.get("/api/guilds/{guild_id}")
+async def api_guild_detail(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
     guild_cfg = await db.get_guild(guild_id)
     if guild_cfg is None:
-        return HTMLResponse("The bot isn't in this server (yet).", status_code=404)
+        raise _ApiError(404, "The bot isn't in this server (yet).")
 
     actions = await db.list_actions(guild_id, limit=50)
     warnings = await db.list_warnings(guild_id)
     autoroles = await db.list_autoroles(guild_id)
     reaction_roles = await db.list_reaction_roles(guild_id)
+    guild_tags = await db.list_tags(guild_id)
 
-    return templates.TemplateResponse(request, "guild.html", {
-        "user": user, "guild": guild_cfg,
-        "actions": actions, "warnings": warnings,
-        "autoroles": autoroles, "reaction_roles": reaction_roles,
-    })
+    return {
+        "guild": _guild_to_json(guild_cfg),
+        "actions": [_action_to_json(a) for a in actions],
+        "warnings": [_warning_to_json(w) for w in warnings],
+        "autoroles": autoroles,
+        "reaction_roles": [_reaction_role_to_json(r) for r in reaction_roles],
+        "tags": [_tag_to_json(t) for t in guild_tags],
+        "active_warning_count": sum(1 for w in warnings if w["active"]),
+    }
 
 
-@app.post("/guild/{guild_id}/settings")
-async def update_settings(
-    request: Request, guild_id: str,
-    log_channel_id: str = Form(""), mute_role_id: str = Form(""),
-    warn_timeout_at: int = Form(3), warn_kick_at: int = Form(5),
-    warn_timeout_minutes: int = Form(60),
-):
-    if not await _require_manage(request, guild_id):
-        return HTMLResponse("You don't have permission to manage this server.", status_code=403)
+class SettingsPayload(BaseModel):
+    log_channel_id: str = ""
+    mute_role_id: str = ""
+    command_prefix: str = "!"
+    welcome_channel_id: str = ""
+    welcome_message: str = "Welcome {user} to {server}! 👋"
+    warn_timeout_at: int = 3
+    warn_kick_at: int = 5
+    warn_timeout_minutes: int = 60
+
+
+@app.post("/api/guilds/{guild_id}/settings")
+async def api_update_settings(request: Request, guild_id: str, payload: SettingsPayload):
+    await _require_manage(request, guild_id)
+    prefix = (payload.command_prefix or "!").strip()[:5] or "!"
     await db.update_guild_settings(
         guild_id,
-        log_channel_id=log_channel_id or None,
-        mute_role_id=mute_role_id or None,
-        warn_timeout_at=warn_timeout_at,
-        warn_kick_at=warn_kick_at,
-        warn_timeout_minutes=warn_timeout_minutes,
+        log_channel_id=payload.log_channel_id or None,
+        mute_role_id=payload.mute_role_id or None,
+        command_prefix=prefix,
+        welcome_channel_id=payload.welcome_channel_id or None,
+        welcome_message=payload.welcome_message or "Welcome {user} to {server}! 👋",
+        warn_timeout_at=payload.warn_timeout_at,
+        warn_kick_at=payload.warn_kick_at,
+        warn_timeout_minutes=payload.warn_timeout_minutes,
     )
-    return RedirectResponse(f"/guild/{guild_id}", status_code=303)
+    guild_cfg = await db.get_guild(guild_id)
+    return {"guild": _guild_to_json(guild_cfg)}
 
 
-@app.post("/guild/{guild_id}/warnings/{user_id}/clear")
-async def clear_warnings(request: Request, guild_id: str, user_id: str):
-    if not await _require_manage(request, guild_id):
-        return HTMLResponse("You don't have permission to manage this server.", status_code=403)
-    await db.clear_warnings(guild_id, user_id)
-    return RedirectResponse(f"/guild/{guild_id}", status_code=303)
+@app.post("/api/guilds/{guild_id}/warnings/{user_id}/clear")
+async def api_clear_warnings(request: Request, guild_id: str, user_id: str):
+    await _require_manage(request, guild_id)
+    cleared = await db.clear_warnings(guild_id, user_id)
+    warnings = await db.list_warnings(guild_id)
+    return {
+        "cleared": cleared,
+        "warnings": [_warning_to_json(w) for w in warnings],
+        "active_warning_count": sum(1 for w in warnings if w["active"]),
+    }
+
+
+class AutoroleAddPayload(BaseModel):
+    role_id: str
+
+
+@app.post("/api/guilds/{guild_id}/autoroles")
+async def api_add_autorole(request: Request, guild_id: str, payload: AutoroleAddPayload):
+    await _require_manage(request, guild_id)
+    role_id = payload.role_id.strip()
+    if not role_id.isdigit():
+        raise _ApiError(400, "Role ID must be numeric — copy it from Fluxer with Developer Mode on.")
+    await db.add_autorole(guild_id, role_id)
+    return {"autoroles": await db.list_autoroles(guild_id)}
+
+
+@app.delete("/api/guilds/{guild_id}/autoroles/{role_id}")
+async def api_remove_autorole(request: Request, guild_id: str, role_id: str):
+    await _require_manage(request, guild_id)
+    await db.remove_autorole(guild_id, role_id)
+    return {"autoroles": await db.list_autoroles(guild_id)}
+
+
+class ReactionRolePair(BaseModel):
+    emoji: str
+    role_id: str
+
+
+class ReactionRoleCreatePayload(BaseModel):
+    channel_id: str
+    title: str = "Pick your roles"
+    description: str = ""
+    pairs: list[ReactionRolePair]
+
+
+@app.post("/api/guilds/{guild_id}/reactionroles")
+async def api_create_reaction_role(request: Request, guild_id: str, payload: ReactionRoleCreatePayload):
+    await _require_manage(request, guild_id)
+    channel_id = payload.channel_id.strip()
+    pairs = [(p.emoji.strip(), p.role_id.strip()) for p in payload.pairs if p.emoji.strip() and p.role_id.strip()]
+    if not channel_id.isdigit() or not pairs:
+        raise _ApiError(400, "Give a channel ID and at least one emoji + role pair.")
+
+    lines = "\n".join(f"{emoji} — <@&{role}>" for emoji, role in pairs)
+    embed = {
+        "title": payload.title or "Pick your roles",
+        "description": (payload.description + "\n\n" if payload.description else "") + lines,
+        "color": 0x5865F2,
+    }
+
+    try:
+        sent = await bot_rest.send_message(channel_id, embeds=[embed])
+        message_id = str(sent["id"])
+        for emoji, role_id in pairs:
+            try:
+                await bot_rest.add_reaction(channel_id, message_id, emoji)
+            except FluxerAPIError:
+                # Emoji format the instance expects may differ (unicode vs
+                # custom emoji id) — the mapping is still stored below so
+                # reactions added manually will still grant the role.
+                pass
+            await db.add_reaction_role(guild_id, channel_id, message_id, emoji, role_id)
+    except FluxerAPIError as e:
+        log.warning("Failed to send reaction-role embed: %s", e)
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}) — check the bot can post in that channel.")
+
+    return {"reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)]}
+
+
+@app.delete("/api/guilds/{guild_id}/reactionroles/{mapping_id}")
+async def api_remove_reaction_role(request: Request, guild_id: str, mapping_id: int):
+    await _require_manage(request, guild_id)
+    await db.remove_reaction_role(mapping_id)
+    return {"reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)]}
+
+
+# --------------------------------------------------------- roles / channels --
+@app.get("/api/guilds/{guild_id}/roles")
+async def api_guild_roles(request: Request, guild_id: str):
+    """Powers the role picker dropdowns (autoroles, reaction roles, mute
+    role) instead of making people copy-paste raw role IDs."""
+    await _require_manage(request, guild_id)
+    try:
+        guild = await bot_rest.get_guild(guild_id)
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Couldn't fetch roles from Fluxer (HTTP {e.status}).")
+    roles_list = [
+        {"id": str(r["id"]), "name": r.get("name", "role"), "color": r.get("color")}
+        for r in guild.get("roles", [])
+        if str(r.get("id")) != guild_id  # exclude @everyone (id == guild id, Discord convention)
+    ]
+    return {"roles": roles_list}
+
+
+@app.get("/api/guilds/{guild_id}/channels")
+async def api_guild_channels(request: Request, guild_id: str):
+    """Powers the channel picker dropdowns (mod-log, welcome, reaction-role
+    target channel)."""
+    await _require_manage(request, guild_id)
+    try:
+        guild = await bot_rest.get_guild(guild_id)
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Couldn't fetch channels from Fluxer (HTTP {e.status}).")
+    # Best-effort text-channel filter: Discord-style type 0 = text. If an
+    # instance omits `type` entirely we keep the channel rather than hide it.
+    channels_list = [
+        {"id": str(c["id"]), "name": c.get("name", "channel")}
+        for c in guild.get("channels", [])
+        if c.get("type") in (0, None)
+    ]
+    return {"channels": channels_list}
+
+
+# ------------------------------------------------------------------ members --
+@app.get("/api/guilds/{guild_id}/members")
+async def api_guild_members(request: Request, guild_id: str, q: str = ""):
+    """Best-effort member list/search. Fluxer's member-list endpoint (like
+    Discord's) is paginated and capped per-request; this fetches one page
+    (up to 500) and filters client-side-ish here, which comfortably covers
+    small-to-medium communities. For very large servers this won't show
+    every member — search by exact ID also works around that."""
+    await _require_manage(request, guild_id)
+    try:
+        members = await bot_rest.list_guild_members(guild_id, limit=500)
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Couldn't fetch members from Fluxer (HTTP {e.status}).")
+
+    q_lower = q.strip().lower()
+    result = []
+    for m in members:
+        user = m.get("user", m)
+        username = user.get("username", "")
+        user_id = str(user.get("id"))
+        if q_lower and q_lower not in username.lower() and q_lower != user_id:
+            continue
+        result.append({
+            "id": user_id,
+            "username": username,
+            "avatar": user.get("avatar"),
+            "roles": m.get("roles", []),
+            "joined_at": m.get("joined_at"),
+        })
+    return {"members": result[:100]}
+
+
+class MemberActionPayload(BaseModel):
+    reason: str = ""
+
+
+class TimeoutPayload(BaseModel):
+    reason: str = ""
+    duration_seconds: int = 3600
+
+
+def _moderator_from_session(request: Request) -> dict:
+    user = require_login(request)
+    return {"id": str(user.get("id")), "username": user.get("username", "dashboard")}
+
+
+async def _fetch_member_user(guild_id: str, user_id: str) -> dict:
+    try:
+        member = await bot_rest.get_guild_member(guild_id, user_id)
+    except FluxerAPIError:
+        raise _ApiError(404, "Couldn't find that member in this server.")
+    return member.get("user", member)
+
+
+@app.post("/api/guilds/{guild_id}/members/{user_id}/kick")
+async def api_kick_member(request: Request, guild_id: str, user_id: str, payload: MemberActionPayload):
+    await _require_manage(request, guild_id)
+    moderator = _moderator_from_session(request)
+    user = await _fetch_member_user(guild_id, user_id)
+    try:
+        await moderation_actions.kick_member(bot_rest, guild_id, user, moderator, payload.reason or "No reason provided")
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}).")
+    return {"ok": True}
+
+
+@app.post("/api/guilds/{guild_id}/members/{user_id}/ban")
+async def api_ban_member(request: Request, guild_id: str, user_id: str, payload: MemberActionPayload):
+    await _require_manage(request, guild_id)
+    moderator = _moderator_from_session(request)
+    user = await _fetch_member_user(guild_id, user_id)
+    try:
+        await moderation_actions.ban_member(bot_rest, guild_id, user, moderator, payload.reason or "No reason provided")
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}).")
+    return {"ok": True}
+
+
+@app.post("/api/guilds/{guild_id}/members/{user_id}/timeout")
+async def api_timeout_member(request: Request, guild_id: str, user_id: str, payload: TimeoutPayload):
+    await _require_manage(request, guild_id)
+    moderator = _moderator_from_session(request)
+    user = await _fetch_member_user(guild_id, user_id)
+    if payload.duration_seconds <= 0:
+        raise _ApiError(400, "Duration must be positive.")
+    try:
+        await moderation_actions.timeout_member(bot_rest, guild_id, user, moderator,
+                                                  payload.duration_seconds, payload.reason or "No reason provided")
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}).")
+    return {"ok": True}
+
+
+@app.post("/api/guilds/{guild_id}/members/{user_id}/untimeout")
+async def api_untimeout_member(request: Request, guild_id: str, user_id: str, payload: MemberActionPayload):
+    await _require_manage(request, guild_id)
+    moderator = _moderator_from_session(request)
+    user = await _fetch_member_user(guild_id, user_id)
+    try:
+        await moderation_actions.untimeout_member(bot_rest, guild_id, user, moderator, payload.reason)
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}).")
+    return {"ok": True}
+
+
+@app.post("/api/guilds/{guild_id}/members/{user_id}/warn")
+async def api_warn_member(request: Request, guild_id: str, user_id: str, payload: MemberActionPayload):
+    await _require_manage(request, guild_id)
+    moderator = _moderator_from_session(request)
+    user = await _fetch_member_user(guild_id, user_id)
+    result = await moderation_actions.warn_member(bot_rest, guild_id, user, moderator,
+                                                    payload.reason or "No reason provided")
+    warnings = await db.list_warnings(guild_id)
+    return {
+        "result": result,
+        "warnings": [_warning_to_json(w) for w in warnings],
+        "active_warning_count": sum(1 for w in warnings if w["active"]),
+    }
+
+
+# ---------------------------------------------------------------------- tags --
+class TagCreatePayload(BaseModel):
+    name: str
+    content: str
+
+
+@app.post("/api/guilds/{guild_id}/tags")
+async def api_add_tag(request: Request, guild_id: str, payload: TagCreatePayload):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    name = payload.name.strip().lower()
+    content = payload.content.strip()
+    if not name or not content:
+        raise _ApiError(400, "Give a tag name and content.")
+    if name in {c.name for c in COMMAND_CATALOG}:
+        raise _ApiError(400, f'"{name}" is already a built-in command name — pick another.')
+    await db.add_tag(guild_id, name, content, str(user.get("id")))
+    return {"tags": [_tag_to_json(t) for t in await db.list_tags(guild_id)]}
+
+
+@app.delete("/api/guilds/{guild_id}/tags/{tag_name}")
+async def api_remove_tag(request: Request, guild_id: str, tag_name: str):
+    await _require_manage(request, guild_id)
+    await db.remove_tag(guild_id, tag_name)
+    return {"tags": [_tag_to_json(t) for t in await db.list_tags(guild_id)]}
+
+
+# ------------------------------------------------------ serve the frontend --
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="frontend-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Catch-all so React Router's client-side routes (e.g. /guild/123)
+        work on a hard refresh too — anything not matched above falls
+        through to index.html and the SPA takes over routing."""
+        candidate = FRONTEND_DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")
+else:
+    @app.get("/")
+    async def frontend_not_built():
+        return JSONResponse(
+            {"detail": "Frontend isn't built yet. Run `npm install && npm run build` in "
+                       "dashboard-frontend/, then restart the dashboard."},
+            status_code=503,
+        )

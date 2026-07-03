@@ -23,7 +23,7 @@ import websockets
 from bot.rest import FluxerREST
 from common.config import config
 
-log = logging.getLogger("fluxerbot.gateway")
+log = logging.getLogger("fluxbot.gateway")
 
 OP_DISPATCH = 0
 OP_HEARTBEAT = 1
@@ -66,6 +66,9 @@ class GatewayClient:
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._running = False
         self.user: Optional[dict] = None  # populated on READY
+        self.connected_at: Optional[float] = None
+        self.latency_ms: Optional[float] = None
+        self._last_heartbeat_sent: Optional[float] = None
 
     def on(self, event_name: str) -> Callable[[EventHandler], EventHandler]:
         """Decorator: register a coroutine for a gateway event, e.g. MESSAGE_CREATE."""
@@ -86,6 +89,7 @@ class GatewayClient:
         await asyncio.sleep((interval_ms / 1000) * random.random())
         while self._running:
             try:
+                self._last_heartbeat_sent = time.monotonic()
                 await self._ws.send(json.dumps({"op": OP_HEARTBEAT, "d": self._seq}))
             except Exception:
                 return
@@ -99,8 +103,8 @@ class GatewayClient:
                 "intents": self.intents,
                 "properties": {
                     "os": "linux",
-                    "browser": "fluxer-mod-bot",
-                    "device": "fluxer-mod-bot",
+                    "browser": "FluxBot",
+                    "device": "FluxBot",
                 },
             },
         }))
@@ -129,9 +133,12 @@ class GatewayClient:
                     if event_name == "READY":
                         self._session_id = data.get("session_id")
                         self.user = data.get("user")
+                        self.connected_at = time.monotonic()
                         log.info("Ready as %s", (self.user or {}).get("username", "unknown"))
                     await self._dispatch(event_name, data)
                 elif op == OP_HEARTBEAT_ACK:
+                    if self._last_heartbeat_sent is not None:
+                        self.latency_ms = (time.monotonic() - self._last_heartbeat_sent) * 1000
                     continue
                 elif op == OP_RECONNECT:
                     log.info("Gateway requested reconnect")

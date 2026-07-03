@@ -31,7 +31,7 @@ def parse_role_id(token: str) -> str | None:
 def register(bot: Bot) -> None:
 
     # ------------------------------------------------------------ setup --
-    @bot.command("autorole", help_text="Manage roles auto-assigned to new members. "
+    @bot.command("autorole", category="Roles", help_text="Manage roles auto-assigned to new members. "
                                         "Usage: !autorole add|remove|list [@role]",
                  required_permission=PERM_MANAGE_GUILD)
     async def autorole(ctx: Context) -> None:
@@ -62,7 +62,7 @@ def register(bot: Bot) -> None:
         else:
             await ctx.reply("Usage: `!autorole add @role` / `remove @role` / `list`")
 
-    @bot.command("reactionrole", aliases=["rr"], required_permission=PERM_MANAGE_GUILD,
+    @bot.command("reactionrole", category="Roles", aliases=["rr"], required_permission=PERM_MANAGE_GUILD,
                  help_text="Map a reaction to a role. "
                             "Usage: !reactionrole add <message_id> <emoji> @role")
     async def reactionrole(ctx: Context) -> None:
@@ -118,6 +118,22 @@ def register(bot: Bot) -> None:
         for role_id in role_ids:
             try:
                 await bot.rest.add_member_role(guild_id, str(user_id), role_id)
+            except Exception:
+                pass
+
+        guild_cfg = await db.get_guild(guild_id)
+        if guild_cfg and guild_cfg["welcome_channel_id"] and guild_cfg["welcome_message"]:
+            try:
+                guild = await bot.get_guild(guild_id)
+            except Exception:
+                guild = {}
+            text = (guild_cfg["welcome_message"]
+                    .replace("{user}", f"<@{user_id}>")
+                    .replace("{username}", user.get("username", "there"))
+                    .replace("{server}", guild.get("name", "the server"))
+                    .replace("{membercount}", str(guild.get("member_count", ""))))
+            try:
+                await bot.rest.send_message(guild_cfg["welcome_channel_id"], content=text)
             except Exception:
                 pass
 

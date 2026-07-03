@@ -11,7 +11,7 @@ just calls `is_moderator()` / `has_permission()`.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 PERM_KICK_MEMBERS = 1 << 1
 PERM_BAN_MEMBERS = 1 << 2
@@ -19,6 +19,21 @@ PERM_ADMINISTRATOR = 1 << 3
 PERM_MANAGE_GUILD = 1 << 5
 PERM_MANAGE_MESSAGES = 1 << 13
 PERM_MODERATE_MEMBERS = 1 << 40  # timeout
+
+PERMISSION_NAMES = {
+    PERM_KICK_MEMBERS: "Kick Members",
+    PERM_BAN_MEMBERS: "Ban Members",
+    PERM_ADMINISTRATOR: "Administrator",
+    PERM_MANAGE_GUILD: "Manage Guild",
+    PERM_MANAGE_MESSAGES: "Manage Messages",
+    PERM_MODERATE_MEMBERS: "Moderate Members",
+}
+
+
+def permission_name(bit: Optional[int]) -> str:
+    if bit is None:
+        return "Everyone"
+    return PERMISSION_NAMES.get(bit, f"Permission bit {bit}")
 
 
 def compute_permissions(guild: dict, member: dict) -> int:

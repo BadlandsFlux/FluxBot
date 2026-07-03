@@ -1,0 +1,109 @@
+import { useState } from "react";
+import { Plus, X } from "lucide-react";
+import { api } from "../api";
+import { useFlash } from "./Flash";
+import Spinner from "./Spinner";
+import Combobox from "./Combobox";
+
+export default function ReactionRoleBuilder({ guildId, roles, channels, onCreated }) {
+  const flash = useFlash();
+  const [channelId, setChannelId] = useState("");
+  const [title, setTitle] = useState("Pick your roles");
+  const [description, setDescription] = useState("");
+  const [rows, setRows] = useState([{ emoji: "", role_id: "" }]);
+  const [submitting, setSubmitting] = useState(false);
+
+  function updateRow(index, field, value) {
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, [field]: value } : r)));
+  }
+
+  function addRow() {
+    setRows((prev) => [...prev, { emoji: "", role_id: "" }]);
+  }
+
+  function removeRow(index) {
+    setRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const pairs = rows.filter((r) => r.emoji.trim() && r.role_id);
+    if (!channelId || pairs.length === 0) {
+      flash("Pick a channel and at least one emoji + role pair.", "error");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await api.createReactionRole(guildId, {
+        channel_id: channelId,
+        title,
+        description,
+        pairs,
+      });
+      flash(`Sent the reaction-role embed with ${pairs.length} role(s).`);
+      setChannelId("");
+      setTitle("Pick your roles");
+      setDescription("");
+      setRows([{ emoji: "", role_id: "" }]);
+      onCreated(result.reaction_roles);
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="settings-form">
+      <label>
+        Channel
+        <Combobox options={channels} value={channelId} onChange={setChannelId} placeholder="Pick a channel" />
+      </label>
+      <label>
+        Embed title
+        <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Pick your roles" />
+      </label>
+      <label>
+        Embed description (optional)
+        <input
+          type="text"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="React below to opt into pings for..."
+        />
+      </label>
+
+      <div className="rr-rows">
+        {rows.map((row, i) => (
+          <div className="rr-row" key={i}>
+            <input
+              type="text"
+              value={row.emoji}
+              onChange={(e) => updateRow(i, "emoji", e.target.value)}
+              placeholder="Emoji, e.g. 🎉"
+              required
+            />
+            <Combobox options={roles} value={row.role_id} onChange={(v) => updateRow(i, "role_id", v)}
+                      placeholder="Pick a role" />
+            <button
+              type="button"
+              className="btn btn-ghost btn-small btn-icon"
+              onClick={() => removeRow(i)}
+              disabled={rows.length === 1}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button type="button" className="btn btn-ghost btn-small" onClick={addRow}>
+        <Plus size={14} /> Add another role
+      </button>
+      <div className="form-spacer" />
+      <button className="btn btn-primary" type="submit" disabled={submitting}>
+        {submitting ? <Spinner size={14} /> : null}
+        {submitting ? "Sending…" : "Send embed & start listening"}
+      </button>
+    </form>
+  );
+}

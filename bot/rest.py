@@ -54,7 +54,7 @@ class FluxerREST:
             self._session = aiohttp.ClientSession(
                 headers={
                     "Authorization": f"Bot {self.token}",
-                    "User-Agent": "FluxerModBot (https://github.com/your-org/fluxer-mod-bot, 0.1)",
+                    "User-Agent": f"{config.bot_name} (https://github.com/your-org/fluxbot, 0.1)",
                 }
             )
 
@@ -147,6 +147,15 @@ class FluxerREST:
         if embeds:
             payload["embeds"] = embeds
         return await self.request("POST", f"/channels/{channel_id}/messages", json=payload)
+
+    async def edit_message(self, channel_id: str, message_id: str, content: Optional[str] = None,
+                            embeds: Optional[list] = None) -> dict:
+        payload: dict = {}
+        if content is not None:
+            payload["content"] = content
+        if embeds is not None:
+            payload["embeds"] = embeds
+        return await self.request("PATCH", f"/channels/{channel_id}/messages/{message_id}", json=payload)
 
     async def delete_message(self, channel_id: str, message_id: str, reason: str = "") -> None:
         await self.request(

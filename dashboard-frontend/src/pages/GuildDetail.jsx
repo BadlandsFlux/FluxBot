@@ -1,0 +1,505 @@
+import { useCallback, useEffect, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import {
+  LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users, Tag as TagIcon,
+} from "lucide-react";
+import { api } from "../api";
+import { useFlash } from "../components/Flash";
+import Spinner from "../components/Spinner";
+import ReactionRoleBuilder from "../components/ReactionRoleBuilder";
+import Combobox from "../components/Combobox";
+import MembersTab from "../components/MembersTab";
+import TagsTab from "../components/TagsTab";
+import useRolesChannels from "../hooks/useRolesChannels";
+import usePolling from "../hooks/usePolling";
+
+const TABS = [
+  { id: "overview", label: "Overview", icon: LayoutGrid },
+  { id: "settings", label: "Settings", icon: Settings },
+  { id: "members", label: "Members", icon: Users },
+  { id: "warnings", label: "Warnings", icon: ShieldAlert },
+  { id: "modlog", label: "Mod Log", icon: ScrollText },
+  { id: "autoroles", label: "Autoroles", icon: UserPlus },
+  { id: "reactionroles", label: "Reaction Roles", icon: Smile },
+  { id: "tags", label: "Tags", icon: TagIcon },
+];
+
+const ACTION_TAG_CLASS = {
+  ban: "tag-ban", kick: "tag-kick", timeout: "tag-timeout", warn: "tag-warn",
+  unban: "tag-unban", untimeout: "tag-untimeout", clearwarnings: "tag-clearwarnings", purge: "tag-purge",
+};
+
+function fmt(iso) {
+  return new Date(iso).toLocaleString(undefined, {
+    year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+  });
+}
+
+export default function GuildDetail() {
+  const { id } = useParams();
+  const [params, setParams] = useSearchParams();
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  const [lastSynced, setLastSynced] = useState(null);
+  const tab = params.get("tab") || "overview";
+  const { roles, channels } = useRolesChannels(id);
+
+  function setTab(next) {
+    setParams((p) => {
+      p.set("tab", next);
+      return p;
+    });
+  }
+
+  const load = useCallback(
+    (silent = false) =>
+      api
+        .guildDetail(id)
+        .then((d) => {
+          setData(d);
+          setLastSynced(new Date());
+          if (!silent) setError(null);
+        })
+        .catch((e) => !silent && setError(e.message)),
+    [id]
+  );
+
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    load();
+  }, [id, load]);
+
+  // Live-ish updates: quietly refetch every 8s so kicks/bans/warnings from
+  // chat commands (or another admin) show up without a manual refresh.
+  // Paused on the Settings tab so it can't clobber an in-progress edit.
+  usePolling(() => load(true), 8000, tab !== "settings" && !!data);
+
+  if (error) {
+    return (
+      <div className="card empty-state">
+        <p className="error">{error}</p>
+        <Link className="btn btn-ghost btn-small" to="/">
+          ← Back to your servers
+        </Link>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="loading-row">
+        <Spinner />
+        <span className="muted">Loading server…</span>
+      </div>
+    );
+  }
+
+  const {
+    guild, actions, warnings, autoroles, reaction_roles: reactionRoles, tags,
+    active_warning_count: activeWarningCount,
+  } = data;
+
+  return (
+    <>
+      <Link className="back-link" to="/">
+        <ArrowLeft size={13} /> Your servers
+      </Link>
+      <div className="page-head page-head-row">
+        <div>
+          <h1>{guild.name}</h1>
+        </div>
+        {lastSynced && (
+          <div className="live-indicator" title={`Last updated ${lastSynced.toLocaleTimeString()}`}>
+            <span className="live-dot" /> Live
+          </div>
+        )}
+      </div>
+
+      <nav
+        className="tabs-nav"
+        onWheel={(e) => {
+          if (e.deltaY === 0) return;
+          e.currentTarget.scrollLeft += e.deltaY;
+        }}
+      >
+        {TABS.map((t) => {
+          const Icon = t.icon;
+          const count =
+            t.id === "warnings" ? activeWarningCount
+            : t.id === "autoroles" ? autoroles.length
+            : t.id === "reactionroles" ? reactionRoles.length
+            : t.id === "tags" ? tags.length
+            : null;
+          return (
+            <button key={t.id} className={`tab-btn ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
+              <Icon size={14} />
+              {t.label}
+              {count !== null && <span className="tab-count">{count}</span>}
+            </button>
+          );
+        })}
+      </nav>
+
+      {tab === "overview" && (
+        <OverviewTab guild={guild} actions={actions} autoroles={autoroles} reactionRoles={reactionRoles}
+                     tags={tags} activeWarningCount={activeWarningCount} />
+      )}
+      {tab === "settings" && (
+        <SettingsTab guildId={id} guild={guild} roles={roles} channels={channels}
+                     onSaved={(g) => setData((d) => ({ ...d, guild: g }))} />
+      )}
+      {tab === "members" && <MembersTab guildId={id} roles={roles} />}
+      {tab === "warnings" && (
+        <WarningsTab guildId={id} warnings={warnings}
+                     onCleared={(w, count) => setData((d) => ({ ...d, warnings: w, active_warning_count: count }))} />
+      )}
+      {tab === "modlog" && <ModLogTab actions={actions} />}
+      {tab === "autoroles" && (
+        <AutorolesTab guildId={id} autoroles={autoroles} roles={roles}
+                      onChange={(a) => setData((d) => ({ ...d, autoroles: a }))} />
+      )}
+      {tab === "reactionroles" && (
+        <ReactionRolesTab guildId={id} reactionRoles={reactionRoles} roles={roles} channels={channels}
+                          onChange={(r) => setData((d) => ({ ...d, reaction_roles: r }))} />
+      )}
+      {tab === "tags" && (
+        <TagsTab guildId={id} tags={tags} prefix={guild.command_prefix || "!"}
+                 onChange={(t) => setData((d) => ({ ...d, tags: t }))} />
+      )}
+    </>
+  );
+}
+
+function StatCard({ value, label }) {
+  return (
+    <div className="card stat-card">
+      <div className="stat-value">{value}</div>
+      <div className="stat-label">{label}</div>
+    </div>
+  );
+}
+
+function OverviewTab({ guild, actions, autoroles, reactionRoles, tags, activeWarningCount }) {
+  return (
+    <>
+      <div className="stat-grid">
+        <StatCard value={guild.command_prefix || "!"} label="Prefix" />
+        <StatCard value={activeWarningCount} label="Active warnings" />
+        <StatCard value={actions.length} label="Logged mod actions" />
+        <StatCard value={autoroles.length} label="Autoroles" />
+        <StatCard value={reactionRoles.length} label="Reaction role mappings" />
+        <StatCard value={tags.length} label="Tags" />
+      </div>
+      <div className="card">
+        <h2>Recent activity</h2>
+        {actions.length ? (
+          <table className="table">
+            <thead>
+              <tr><th>Action</th><th>User</th><th>Moderator</th><th>When</th></tr>
+            </thead>
+            <tbody>
+              {actions.slice(0, 8).map((a) => (
+                <tr key={a.id}>
+                  <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
+                  <td><code>{a.user_id || "—"}</code></td>
+                  <td><code>{a.moderator_id || "system"}</code></td>
+                  <td>{fmt(a.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="muted">No mod actions logged yet.</p>
+        )}
+      </div>
+    </>
+  );
+}
+
+function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
+  const flash = useFlash();
+  const [form, setForm] = useState(guild);
+  const [saving, setSaving] = useState(false);
+
+  function set(field, value) {
+    setForm((f) => ({ ...f, [field]: value }));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const result = await api.updateSettings(guildId, {
+        log_channel_id: form.log_channel_id || "",
+        mute_role_id: form.mute_role_id || "",
+        command_prefix: form.command_prefix || "!",
+        welcome_channel_id: form.welcome_channel_id || "",
+        welcome_message: form.welcome_message || "Welcome {user} to {server}! 👋",
+        warn_timeout_at: Number(form.warn_timeout_at),
+        warn_kick_at: Number(form.warn_kick_at),
+        warn_timeout_minutes: Number(form.warn_timeout_minutes),
+      });
+      onSaved(result.guild);
+      flash("Settings saved.");
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Moderation settings</h2>
+      <form onSubmit={handleSubmit} className="settings-form">
+        <label>
+          Mod-log channel
+          <Combobox options={channels} value={form.log_channel_id || ""}
+                    onChange={(v) => set("log_channel_id", v)} placeholder="No mod-log channel set" />
+        </label>
+        <label>
+          Command prefix
+          <input type="text" value={form.command_prefix || "!"} maxLength={5}
+                 onChange={(e) => set("command_prefix", e.target.value)} placeholder="!" />
+        </label>
+        <label>
+          Mute role (fallback if timeout API is unavailable)
+          <Combobox options={roles} value={form.mute_role_id || ""}
+                    onChange={(v) => set("mute_role_id", v)} placeholder="No mute role set" />
+        </label>
+        <div className="form-row form-row-3">
+          <label>
+            Warn count → auto-timeout
+            <input type="number" min={1} value={form.warn_timeout_at} onChange={(e) => set("warn_timeout_at", e.target.value)} />
+          </label>
+          <label>
+            Warn count → auto-kick
+            <input type="number" min={1} value={form.warn_kick_at} onChange={(e) => set("warn_kick_at", e.target.value)} />
+          </label>
+          <label>
+            Auto-timeout length (minutes)
+            <input type="number" min={1} value={form.warn_timeout_minutes} onChange={(e) => set("warn_timeout_minutes", e.target.value)} />
+          </label>
+        </div>
+
+        <h2 className="section-divider">Welcome messages</h2>
+        <label>
+          Welcome channel
+          <Combobox options={channels} value={form.welcome_channel_id || ""}
+                    onChange={(v) => set("welcome_channel_id", v)} placeholder="Welcome messages off" />
+        </label>
+        <label>
+          Message — <code>{"{user}"}</code> mentions them, <code>{"{username}"}</code>, <code>{"{server}"}</code>,{" "}
+          <code>{"{membercount}"}</code> also work
+          <input type="text" value={form.welcome_message || ""} onChange={(e) => set("welcome_message", e.target.value)}
+                 placeholder="Welcome {user} to {server}! 👋" />
+        </label>
+
+        <button className="btn btn-primary" type="submit" disabled={saving}>
+          {saving ? <Spinner size={14} /> : null}
+          {saving ? "Saving…" : "Save settings"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function WarningsTab({ guildId, warnings, onCleared }) {
+  const flash = useFlash();
+  const [clearingId, setClearingId] = useState(null);
+
+  async function handleClear(userId) {
+    setClearingId(userId);
+    try {
+      const result = await api.clearWarning(guildId, userId);
+      onCleared(result.warnings, result.active_warning_count);
+      flash(`Cleared ${result.cleared} warning(s) for ${userId}.`);
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setClearingId(null);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Warnings</h2>
+      {warnings.length ? (
+        <table className="table">
+          <thead>
+            <tr><th>User</th><th>Moderator</th><th>Reason</th><th>When</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody>
+            {warnings.map((w) => (
+              <tr key={w.id}>
+                <td><code>{w.user_id}</code></td>
+                <td><code>{w.moderator_id}</code></td>
+                <td>{w.reason}</td>
+                <td>{fmt(w.created_at)}</td>
+                <td>
+                  {w.active ? <span className="tag tag-warn">active</span> : <span className="tag tag-unban">cleared</span>}
+                </td>
+                <td>
+                  {w.active && (
+                    <button className="btn btn-ghost btn-small" onClick={() => handleClear(w.user_id)}
+                            disabled={clearingId === w.user_id}>
+                      {clearingId === w.user_id ? <Spinner size={12} /> : "Clear"}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">No warnings recorded yet.</p>
+      )}
+    </div>
+  );
+}
+
+function ModLogTab({ actions }) {
+  return (
+    <div className="card">
+      <h2>Mod action history</h2>
+      {actions.length ? (
+        <table className="table">
+          <thead>
+            <tr><th>Action</th><th>User</th><th>Moderator</th><th>Reason</th><th>When</th></tr>
+          </thead>
+          <tbody>
+            {actions.map((a) => (
+              <tr key={a.id}>
+                <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
+                <td><code>{a.user_id || "—"}</code></td>
+                <td><code>{a.moderator_id || "system"}</code></td>
+                <td>{a.reason}</td>
+                <td>{fmt(a.created_at)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">No mod actions logged yet.</p>
+      )}
+    </div>
+  );
+}
+
+function AutorolesTab({ guildId, autoroles, roles, onChange }) {
+  const flash = useFlash();
+  const [newRole, setNewRole] = useState("");
+  const [busy, setBusy] = useState(false);
+  const roleNameById = Object.fromEntries(roles.map((r) => [r.id, r.name]));
+  const availableRoles = roles.filter((r) => !autoroles.includes(r.id));
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    if (!newRole) return;
+    setBusy(true);
+    try {
+      const result = await api.addAutorole(guildId, newRole);
+      onChange(result.autoroles);
+      const addedName = roleNameById[newRole] || newRole;
+      setNewRole("");
+      flash(`Added autorole ${addedName}.`);
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRemove(roleId) {
+    try {
+      const result = await api.removeAutorole(guildId, roleId);
+      onChange(result.autoroles);
+      flash(`Removed autorole ${roleNameById[roleId] || roleId}.`);
+    } catch (err) {
+      flash(err.message, "error");
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Autoroles</h2>
+      <p className="muted small">Roles automatically given to every member who joins.</p>
+      {autoroles.length ? (
+        <ul className="chip-list">
+          {autoroles.map((r) => (
+            <li className="chip" key={r}>
+              {roleNameById[r] || <code>{r}</code>}
+              <button className="chip-remove" onClick={() => handleRemove(r)} title="Remove">
+                <Trash2 size={12} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">None set yet.</p>
+      )}
+      <form onSubmit={handleAdd} className="inline-form">
+        <Combobox options={availableRoles} value={newRole} onChange={setNewRole} placeholder="Pick a role to add" />
+        <button className="btn btn-primary btn-small" type="submit" disabled={busy || !newRole}>
+          <Plus size={14} /> Add autorole
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function ReactionRolesTab({ guildId, reactionRoles, roles, channels, onChange }) {
+  const flash = useFlash();
+  const roleNameById = Object.fromEntries(roles.map((r) => [r.id, r.name]));
+  const channelNameById = Object.fromEntries(channels.map((c) => [c.id, c.name]));
+
+  async function handleRemove(mappingId) {
+    try {
+      const result = await api.removeReactionRole(guildId, mappingId);
+      onChange(result.reaction_roles);
+      flash("Removed that reaction role mapping.");
+    } catch (err) {
+      flash(err.message, "error");
+    }
+  }
+
+  return (
+    <>
+      <div className="card">
+        <h2>Send a reaction-role embed</h2>
+        <p className="muted small">
+          Posts an embed in the channel you choose. Members react with one of the emojis below to get
+          the matching role (and lose it if they remove their reaction).
+        </p>
+        <ReactionRoleBuilder guildId={guildId} roles={roles} channels={channels} onCreated={onChange} />
+      </div>
+      <div className="card">
+        <h2>Existing mappings</h2>
+        {reactionRoles.length ? (
+          <table className="table">
+            <thead>
+              <tr><th>Emoji</th><th>Role</th><th>Channel</th><th></th></tr>
+            </thead>
+            <tbody>
+              {reactionRoles.map((rr) => (
+                <tr key={rr.id}>
+                  <td>{rr.emoji}</td>
+                  <td>{roleNameById[rr.role_id] || <code>{rr.role_id}</code>}</td>
+                  <td>{channelNameById[rr.channel_id] || <code>{rr.channel_id}</code>}</td>
+                  <td>
+                    <button className="btn btn-ghost btn-small" onClick={() => handleRemove(rr.id)}>
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="muted">None set yet — build one above.</p>
+        )}
+      </div>
+    </>
+  );
+}
