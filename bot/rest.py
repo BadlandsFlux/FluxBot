@@ -139,9 +139,36 @@ class FluxerREST:
         await self.request("DELETE", f"/guilds/{guild_id}/members/{user_id}/roles/{role_id}")
 
     # --------------------------------------------------------- messages --
+    # Default allowed_mentions (Discord-convention field, best-effort assumed
+    # supported by Fluxer): nothing is auto-parsed by default, not even
+    # direct user mentions. Callers that intentionally want to ping someone
+    # (warn/kick/reminder/level-up notifications) must pass an explicit
+    # allowed_mentions allow-listing exactly that user's ID.
+    #
+    # This matters because several messages embed free-text that a low- or
+    # no-privilege member fully controls (!remind's text, a member's own
+    # username in welcome/goodbye/level-up messages) and send it as plain
+    # `content`. Without this, literal "@everyone" in that text would ping
+    # the whole server if the bot has mention-everyone permission (which
+    # Administrator, our own suggested invite permission, includes), with
+    # zero special access required to trigger it. A blanket "allow all user
+    # mentions" default isn't enough either: free text could still contain
+    # other members' <@id> mentions to mass-ping people who never opted in.
+    # Allow-listing the one specific, server-known user ID per message closes
+    # that gap too. Embeds are unaffected either way: Discord-style platforms
+    # don't parse mentions inside embeds for real notifications, only a
+    # message's top-level `content` does.
+    SAFE_ALLOWED_MENTIONS = {"parse": []}
+
+    @staticmethod
+    def mention_only(*user_ids: str) -> dict:
+        """Build an allowed_mentions value that pings exactly these user IDs
+        and nothing else, regardless of what else is in the message content."""
+        return {"parse": [], "users": [str(uid) for uid in user_ids]}
+
     async def send_message(self, channel_id: str, content: Optional[str] = None,
-                            embeds: Optional[list] = None) -> dict:
-        payload: dict = {}
+                            embeds: Optional[list] = None, allowed_mentions: Optional[dict] = None) -> dict:
+        payload: dict = {"allowed_mentions": allowed_mentions or self.SAFE_ALLOWED_MENTIONS}
         if content:
             payload["content"] = content
         if embeds:
@@ -149,8 +176,8 @@ class FluxerREST:
         return await self.request("POST", f"/channels/{channel_id}/messages", json=payload)
 
     async def edit_message(self, channel_id: str, message_id: str, content: Optional[str] = None,
-                            embeds: Optional[list] = None) -> dict:
-        payload: dict = {}
+                            embeds: Optional[list] = None, allowed_mentions: Optional[dict] = None) -> dict:
+        payload: dict = {"allowed_mentions": allowed_mentions or self.SAFE_ALLOWED_MENTIONS}
         if content is not None:
             payload["content"] = content
         if embeds is not None:

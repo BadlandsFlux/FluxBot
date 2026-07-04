@@ -75,7 +75,7 @@ async def grant_xp(bot: Bot, guild_id: str, user_id: str, username: str, amount:
             .replace("{level}", str(new_level))
         )
         try:
-            await bot.rest.send_message(channel_id, content=text)
+            await bot.rest.send_message(channel_id, content=text, allowed_mentions=bot.rest.mention_only(user_id))
         except Exception:
             pass
 

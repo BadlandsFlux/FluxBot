@@ -181,18 +181,20 @@ async def list_reaction_roles(guild_id: str) -> list[asyncpg.Record]:
     )
 
 
-async def get_reaction_roles_by_message(message_id: str) -> list[asyncpg.Record]:
+async def get_reaction_roles_by_message(guild_id: str, message_id: str) -> list[asyncpg.Record]:
     return await pool().fetch(
-        "SELECT * FROM reaction_roles WHERE message_id=$1", message_id,
+        "SELECT * FROM reaction_roles WHERE guild_id=$1 AND message_id=$2", guild_id, message_id,
     )
 
 
-async def remove_reaction_role(row_id: int) -> None:
-    await pool().execute("DELETE FROM reaction_roles WHERE id=$1", row_id)
+async def remove_reaction_role(guild_id: str, row_id: int) -> None:
+    await pool().execute("DELETE FROM reaction_roles WHERE guild_id=$1 AND id=$2", guild_id, row_id)
 
 
-async def remove_reaction_roles_by_message(message_id: str) -> int:
-    result = await pool().execute("DELETE FROM reaction_roles WHERE message_id=$1", message_id)
+async def remove_reaction_roles_by_message(guild_id: str, message_id: str) -> int:
+    result = await pool().execute(
+        "DELETE FROM reaction_roles WHERE guild_id=$1 AND message_id=$2", guild_id, message_id,
+    )
     return int(result.split()[-1])
 
 

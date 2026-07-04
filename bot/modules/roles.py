@@ -84,7 +84,7 @@ def register(bot: Bot) -> None:
             if len(ctx.args) < 2 or not ctx.args[1].isdigit():
                 await ctx.reply("Usage: `!reactionrole remove <mapping_id>` (see `!reactionrole list`)")
                 return
-            await db.remove_reaction_role(int(ctx.args[1]))
+            await db.remove_reaction_role(ctx.guild_id, int(ctx.args[1]))
             await ctx.reply("✅ Removed that reaction role mapping.")
             return
         if sub == "add":
@@ -133,7 +133,8 @@ def register(bot: Bot) -> None:
                     .replace("{server}", guild.get("name", "the server"))
                     .replace("{membercount}", str(guild.get("member_count", ""))))
             try:
-                await bot.rest.send_message(guild_cfg["welcome_channel_id"], content=text)
+                await bot.rest.send_message(guild_cfg["welcome_channel_id"], content=text,
+                                             allowed_mentions=bot.rest.mention_only(user_id))
             except Exception:
                 pass
 
@@ -151,7 +152,7 @@ def register(bot: Bot) -> None:
             guild = await bot.get_guild(guild_id)
         except Exception:
             guild = {}
-        # No {user} mention here on purpose — the member has already left, so
+        # No {user} mention here on purpose, the member has already left, so
         # a mention would just render as an unresolved/greyed-out user.
         text = (guild_cfg["goodbye_message"]
                 .replace("{user}", user.get("username", "Someone"))

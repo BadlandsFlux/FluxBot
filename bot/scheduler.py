@@ -37,7 +37,8 @@ async def _deliver_reminders(bot: Bot) -> None:
     for r in await db.list_due_reminders(now):
         try:
             await bot.rest.send_message(
-                r["channel_id"], content=f"⏰ <@{r['user_id']}> reminder: {r['content']}"
+                r["channel_id"], content=f"⏰ <@{r['user_id']}> reminder: {r['content']}",
+                allowed_mentions=bot.rest.mention_only(r["user_id"]),
             )
         except Exception:
             log.warning("Failed to deliver reminder %s", r["id"])

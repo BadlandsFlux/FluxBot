@@ -64,8 +64,24 @@ def _build_command_catalog() -> list:
 COMMAND_CATALOG = _build_command_catalog()
 
 
+_KNOWN_PLACEHOLDER_SECRETS = {"dev-secret-change-me", "change_me_to_a_long_random_string"}
+
+
+def _check_session_secret() -> None:
+    secret = config.session_secret
+    if secret in _KNOWN_PLACEHOLDER_SECRETS or len(secret) < 16:
+        raise SystemExit(
+            "DASHBOARD_SESSION_SECRET is missing or still set to a placeholder value. "
+            "This key signs login sessions, since this project is open source, anyone "
+            "can see the placeholder values and forge sessions if you leave one in place. "
+            "Set DASHBOARD_SESSION_SECRET in .env to a long random string, e.g.: "
+            "python3 -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _check_session_secret()
     await db.init_pool()
     await bot_rest.start()
     yield
@@ -73,7 +89,8 @@ async def lifespan(app: FastAPI):
     await db.close_pool()
 
 
-app = FastAPI(title=f"{config.bot_name} Dashboard", lifespan=lifespan)
+app = FastAPI(title=f"{config.bot_name} Dashboard", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(SessionMiddleware, secret_key=config.session_secret, same_site="lax",
                     https_only=config.dashboard_cookie_secure)
 # The built frontend is served same-origin (see the catch-all route below),
@@ -418,7 +435,7 @@ async def api_create_reaction_role(request: Request, guild_id: str, payload: Rea
 @app.delete("/api/guilds/{guild_id}/reactionroles/{mapping_id}")
 async def api_remove_reaction_role(request: Request, guild_id: str, mapping_id: int):
     await _require_manage(request, guild_id)
-    await db.remove_reaction_role(mapping_id)
+    await db.remove_reaction_role(guild_id, mapping_id)
     return {"reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)]}
 
 
@@ -428,14 +445,14 @@ async def api_remove_reaction_role_message(request: Request, guild_id: str, mess
     plus a best-effort attempt to delete the actual Fluxer message so
     members don't keep reacting to a dead setup."""
     await _require_manage(request, guild_id)
-    rows = await db.get_reaction_roles_by_message(message_id)
+    rows = await db.get_reaction_roles_by_message(guild_id, message_id)
     if rows:
         channel_id = rows[0]["channel_id"]
         try:
             await bot_rest.delete_message(channel_id, message_id, reason="Reaction-role setup removed via dashboard")
         except FluxerAPIError:
             pass  # message may already be gone; mapping cleanup still proceeds
-    await db.remove_reaction_roles_by_message(message_id)
+    await db.remove_reaction_roles_by_message(guild_id, message_id)
     return {"reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)]}
 
 
@@ -753,14 +770,26 @@ async def api_announce(request: Request, guild_id: str, payload: AnnouncePayload
 # ------------------------------------------------------ serve the frontend --
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="frontend-assets")
+    _FRONTEND_DIST_RESOLVED = FRONTEND_DIST.resolve()
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         """Catch-all so React Router's client-side routes (e.g. /guild/123)
-        work on a hard refresh too — anything not matched above falls
-        through to index.html and the SPA takes over routing."""
-        candidate = FRONTEND_DIST / full_path
-        if full_path and candidate.is_file():
+        work on a hard refresh too, anything not matched above falls
+        through to index.html and the SPA takes over routing.
+
+        SECURITY: full_path is attacker-controlled. A naive
+        `FRONTEND_DIST / full_path` join is vulnerable to path traversal,
+        percent-encoded slashes (e.g. `..%2f..%2f.env`) bypass most
+        request-path normalization done earlier in the stack and reach
+        this handler with literal `..` segments intact. We resolve the
+        joined path and explicitly verify it's still inside FRONTEND_DIST
+        before ever touching the filesystem with it, rather than trusting
+        the join result directly.
+        """
+        candidate = (FRONTEND_DIST / full_path).resolve()
+        is_contained = candidate == _FRONTEND_DIST_RESOLVED or _FRONTEND_DIST_RESOLVED in candidate.parents
+        if full_path and is_contained and candidate.is_file():
             return FileResponse(candidate)
         return FileResponse(FRONTEND_DIST / "index.html")
 else:

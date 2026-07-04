@@ -235,8 +235,9 @@ The dashboard listens on plain HTTP (`DASHBOARD_PORT`, default 8000). For a real
 4. **Bind the dashboard to localhost only**, now that nginx is the public entry point. In `.env`:
    ```
    DASHBOARD_HOST=127.0.0.1
+   DASHBOARD_COOKIE_SECURE=true
    ```
-   Restart the dashboard after changing this, then open your firewall for 80/443 only (not 8000):
+   The second line marks the login session cookie `Secure`, meaning the browser will only ever send it over HTTPS, worth turning on now that nginx is terminating TLS in front of you. Leave it `false` only if you're deliberately running without HTTPS (not recommended). Restart the dashboard after changing this, then open your firewall for 80/443 only (not 8000):
    ```bash
    sudo ufw allow 80/tcp
    sudo ufw allow 443/tcp
@@ -293,10 +294,13 @@ Fluxer's public API reference is still being filled in (as of mid-2026), and som
 - OAuth2 guild permission check: `dashboard/oauth.py::can_manage`
 - Media/CDN URL paths (guild icons, avatars) and snowflake to date epoch: `common/discovery.py`, `bot/timeutil.py`
 - The guild's AFK-channel field name (assumed `afk_channel_id`, Discord convention) used to exclude AFK-channel time from voice XP/stats: `bot/voice_tracker.py`
+- Mention suppression (`allowed_mentions` on outgoing messages, Discord convention): `bot/rest.py`
 
 If your instance's OpenAPI spec (usually at `<api_base>/openapi.json`, or your instance's own `/api-reference` page) disagrees with a path or bit value here, that's the source of truth, the fix is a one-line change in one of those files, not a rewrite.
 
 One concrete limit worth knowing: the dashboard's Members tab fetches up to 500 members per request (Fluxer's member-list endpoint is paginated like Discord's). Large servers won't show every member in search, searching by exact user ID still works around that.
+
+**On that `allowed_mentions` point specifically**: several messages the bot sends embed free text a member fully controls, `!remind`'s reminder text, a member's own username in welcome/goodbye/level-up messages, so every outgoing message defaults to pinging nobody at all (`bot/rest.py`'s `FluxerREST.SAFE_ALLOWED_MENTIONS`) unless the calling code explicitly allow-lists the one specific user ID it intends to notify (`FluxerREST.mention_only(user_id)`). This closes off a real mass-ping griefing path: without it, any member (no special permission needed) could type `@everyone` or mention other members inside free-text fields and have the bot actually broadcast it, especially if the bot's invite permission includes mention-everyone, which Administrator (this README's suggested simple option) does. If you add new code that sends a message with plain `content`, don't forget to either accept the default (nobody gets pinged) or pass `allowed_mentions=bot.rest.mention_only(the_one_user_id)` if a ping is genuinely intended, don't rely on Fluxer's own default, since we don't know what that default is on any given instance.
 
 ## Commands
 
