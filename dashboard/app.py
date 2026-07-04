@@ -74,7 +74,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=f"{config.bot_name} Dashboard", lifespan=lifespan)
-app.add_middleware(SessionMiddleware, secret_key=config.session_secret, same_site="lax")
+app.add_middleware(SessionMiddleware, secret_key=config.session_secret, same_site="lax",
+                    https_only=config.dashboard_cookie_secure)
 # The built frontend is served same-origin (see the catch-all route below),
 # so this CORS entry only matters if you run `npm run dev` (Vite on 5173)
 # against this API directly during frontend development.

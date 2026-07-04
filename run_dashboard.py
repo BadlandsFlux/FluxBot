@@ -10,4 +10,7 @@ if __name__ == "__main__":
         host=config.dashboard_host,
         port=config.dashboard_port,
         reload=False,
+        # Trust X-Forwarded-* from the reverse proxy so requests behindnginx correctly resolve as https:// (matters for the OAutredirect_uri and secure cookies) instead of appearing as plain http:// from uvicorn's point of view.
+        proxy_headers=True,
+        forwarded_allow_ips=config.trusted_proxy_ips,
     )

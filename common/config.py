@@ -46,6 +46,15 @@ class Config:
     session_secret: str = os.getenv("DASHBOARD_SESSION_SECRET", "dev-secret-change-me")
     dashboard_host: str = os.getenv("DASHBOARD_HOST", "0.0.0.0")
     dashboard_port: int = int(os.getenv("DASHBOARD_PORT", "8000"))
+    # Comma-separated IPs/CIDRs uvicorn will trust X-Forwarded-* headers
+    # from. Default assumes nginx runs on the same host. If your reverse
+    # proxy is on a different machine, set this to its IP.
+    trusted_proxy_ips: str = os.getenv("TRUSTED_PROXY_IPS", "127.0.0.1")
+    # Set to true once you're actually serving over HTTPS (e.g. behind the
+    # nginx config in deploy/) so the session cookie gets the Secure flag.
+    # Keep false for plain-http local development, browsers won't send a
+    # Secure cookie back over http and you'd get logged out immediately.
+    dashboard_cookie_secure: bool = os.getenv("DASHBOARD_COOKIE_SECURE", "false").lower() == "true"
 
     # Storage — real Postgres service, shared by the bot process and the
     # dashboard process. e.g. postgresql://user:pass@localhost:5432/fluxerbot

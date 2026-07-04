@@ -16,6 +16,7 @@ Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohtt
 - [Setup](#setup)
 - [Updating](#updating)
 - [Running at startup on Ubuntu (systemd)](#running-at-startup-on-ubuntu-systemd)
+- [Reverse proxy (nginx)](#reverse-proxy-nginx)
 - [Creating the bot application on Fluxer](#creating-the-bot-application-on-fluxer)
 - [Self-hosting a Fluxer instance](#self-hosting-a-fluxer-instance)
 - [Dashboard access](#dashboard-access)
@@ -80,7 +81,8 @@ dashboard-frontend/      React SPA (Vite)
 schema.sql              Postgres schema (idempotent, CREATE TABLE IF NOT EXISTS,
                         plus ALTER TABLE ADD COLUMN IF NOT EXISTS migrations)
 run_bot.py / run_dashboard.py
-deploy/                systemd unit files for running both processes at boot on Ubuntu
+deploy/                systemd unit files + nginx reverse proxy config for running
+                        both processes at boot on Ubuntu
 ```
 
 ## Setup
@@ -206,6 +208,43 @@ sudo systemctl restart fluxbot-bot.service fluxbot-dashboard.service
    ```
 
 If Postgres runs on this same machine, uncomment the `Requires=postgresql.service` line in both unit files before installing them, so they wait for the database on boot. Leave it commented out if Postgres is on a remote host, systemd can't depend on a service running on a different machine.
+
+## Reverse proxy (nginx)
+
+The dashboard listens on plain HTTP (`DASHBOARD_PORT`, default 8000). For a real deployment, put nginx in front of it to handle TLS and expose it on the standard 443 port, a config is included at `deploy/nginx-fluxbot.conf`.
+
+1. **Install nginx and certbot:**
+   ```bash
+   sudo apt install nginx certbot python3-certbot-nginx
+   ```
+
+2. **Point DNS** for your dashboard's domain (e.g. `dashboard.example.com`) at this server, then get a cert:
+   ```bash
+   sudo certbot --nginx -d dashboard.example.com
+   ```
+   If you'd rather set up the nginx config first and get the cert after, comment out the `server { listen 443 ... }` block in the config below and change the port-80 block's redirect to a `proxy_pass` instead, so you can reach the dashboard over plain `http://` while DNS/certs are still in progress.
+
+3. **Install the config:**
+   ```bash
+   sudo cp deploy/nginx-fluxbot.conf /etc/nginx/sites-available/fluxbot
+   sudo sed -i 's/dashboard.example.com/your-real-domain.com/g' /etc/nginx/sites-available/fluxbot
+   sudo ln -s /etc/nginx/sites-available/fluxbot /etc/nginx/sites-enabled/
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+4. **Bind the dashboard to localhost only**, now that nginx is the public entry point. In `.env`:
+   ```
+   DASHBOARD_HOST=127.0.0.1
+   ```
+   Restart the dashboard after changing this, then open your firewall for 80/443 only (not 8000):
+   ```bash
+   sudo ufw allow 80/tcp
+   sudo ufw allow 443/tcp
+   ```
+
+5. **Update the OAuth2 redirect URI** to match your real domain, both in `.env` (`FLUXER_OAUTH_REDIRECT_URI=https://dashboard.example.com/auth/callback`) and on the Fluxer application itself (see "Creating the bot application on Fluxer" below), then restart the dashboard.
+
+The included config proxies everything to the dashboard, sets the standard `X-Forwarded-*` headers, and long-caches the frontend's content-hashed static assets (`/assets/*`) since a new deploy always gets new filenames from Vite's build.
 
 ## Creating the bot application on Fluxer
 
