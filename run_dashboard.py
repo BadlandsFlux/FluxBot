@@ -3,6 +3,9 @@
 import uvicorn
 
 from common.config import config
+from common.logging_setup import configure_logging
+
+configure_logging()
 
 if __name__ == "__main__":
     uvicorn.run(
