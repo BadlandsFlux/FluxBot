@@ -302,6 +302,8 @@ One concrete limit worth knowing: the dashboard's Members tab fetches up to 500 
 
 **On that `allowed_mentions` point specifically**: several messages the bot sends embed free text a member fully controls, `!remind`'s reminder text, a member's own username in welcome/goodbye/level-up messages, so every outgoing message defaults to pinging nobody at all (`bot/rest.py`'s `FluxerREST.SAFE_ALLOWED_MENTIONS`) unless the calling code explicitly allow-lists the one specific user ID it intends to notify (`FluxerREST.mention_only(user_id)`). This closes off a real mass-ping griefing path: without it, any member (no special permission needed) could type `@everyone` or mention other members inside free-text fields and have the bot actually broadcast it, especially if the bot's invite permission includes mention-everyone, which Administrator (this README's suggested simple option) does. If you add new code that sends a message with plain `content`, don't forget to either accept the default (nobody gets pinged) or pass `allowed_mentions=bot.rest.mention_only(the_one_user_id)` if a ping is genuinely intended, don't rely on Fluxer's own default, since we don't know what that default is on any given instance.
 
+P.P.S. The [dashboard-frontend](https://github.com/BadlandsFlux/FluxBot/tree/main/dashboard-frontend) page has a readme with all the API endpoints I use. This frontend can be ripped out and used for other projects if you so wish.
+
 ## Commands
 
 Run `!help` in Fluxer once the bot is running for the live, per-server list (it shows your server's actual prefix and groups commands by category), or visit the dashboard's `/commands` page, same source, always in sync.
