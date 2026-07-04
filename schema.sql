@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS guild_daily_stats (
     guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
     day             DATE NOT NULL,
     message_count   BIGINT NOT NULL DEFAULT 0,
-    voice_minutes   BIGINT NOT NULL DEFAULT 0,
+    voice_minutes   DOUBLE PRECISION NOT NULL DEFAULT 0,
     PRIMARY KEY (guild_id, day)
 );
 
@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS member_message_counts (
 CREATE TABLE IF NOT EXISTS member_voice_minutes (
     guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
     user_id         TEXT NOT NULL,
-    minutes         BIGINT NOT NULL DEFAULT 0,
+    minutes         DOUBLE PRECISION NOT NULL DEFAULT 0,
     PRIMARY KEY (guild_id, user_id)
 );
 
@@ -159,7 +159,14 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS level_up_message TEXT NOT NULL DEFAU
     'GG {user}, you reached level {level}! 🎉';
 
 -- Migration for databases created before voice activity tracking existed.
-ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS voice_minutes BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS voice_minutes DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+-- Migration: voice_minutes/minutes were originally BIGINT, which silently
+-- truncates every fractional-minute write (the scheduler credits ~0.25
+-- minutes per 15s tick) down to 0, so the total could never move no matter
+-- how long someone stayed connected. Safe no-op if already the right type.
+ALTER TABLE guild_daily_stats ALTER COLUMN voice_minutes TYPE DOUBLE PRECISION;
+ALTER TABLE member_voice_minutes ALTER COLUMN minutes TYPE DOUBLE PRECISION;
 
 -- One-time repair for rows created before common/db.py explicitly read this
 -- file as UTF-8. Path.read_text() with no encoding argument uses the
