@@ -35,7 +35,7 @@ async def init_pool() -> asyncpg.Pool:
         max_size=config.db_pool_max,
     )
     async with _pool.acquire() as conn:
-        await conn.execute(SCHEMA_PATH.read_text())
+        await conn.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
     return _pool
 
 

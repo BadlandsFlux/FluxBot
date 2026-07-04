@@ -160,3 +160,18 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS level_up_message TEXT NOT NULL DEFAU
 
 -- Migration for databases created before voice activity tracking existed.
 ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS voice_minutes BIGINT NOT NULL DEFAULT 0;
+
+-- One-time repair for rows created before common/db.py explicitly read this
+-- file as UTF-8. Path.read_text() with no encoding argument uses the
+-- platform's default locale encoding, which on Windows is commonly cp1252,
+-- not UTF-8, so every emoji below got mangled into mojibake (e.g. "🎉"
+-- became "ðŸŽ‰") the moment a guild row was created on an affected install.
+-- Matches the exact corrupted byte sequence only, not a prefix, so a
+-- legitimate custom message that happens to start with similar wording
+-- (e.g. "Welcome {user} to {server}! Enjoy your stay...") is never touched.
+UPDATE guilds SET welcome_message = 'Welcome {user} to {server}! 👋'
+    WHERE welcome_message = 'Welcome {user} to {server}! ðŸ‘‹';
+UPDATE guilds SET goodbye_message = '{username} left {server}. 👋'
+    WHERE goodbye_message = '{username} left {server}. ðŸ‘‹';
+UPDATE guilds SET level_up_message = 'GG {user}, you reached level {level}! 🎉'
+    WHERE level_up_message = 'GG {user}, you reached level {level}! ðŸŽ‰';
