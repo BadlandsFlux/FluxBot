@@ -55,6 +55,7 @@ class Config:
     # Keep false for plain-http local development, browsers won't send a
     # Secure cookie back over http and you'd get logged out immediately.
     dashboard_cookie_secure: bool = os.getenv("DASHBOARD_COOKIE_SECURE", "false").lower() == "true"
+    log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
     # Storage — real Postgres service, shared by the bot process and the
     # dashboard process. e.g. postgresql://user:pass@localhost:5432/fluxerbot

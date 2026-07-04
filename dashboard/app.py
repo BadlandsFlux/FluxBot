@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from bot import moderation_actions
+from bot import voice_tracker
 from bot.commands import Bot as BotFramework
 from bot.modules import fun, info as info_module, leveling, moderation, reminders, roles, tags, utility
 from bot.permissions import permission_name
@@ -51,6 +52,7 @@ def _build_command_catalog() -> list:
     tags.register(catalog_bot)
     reminders.register(catalog_bot)
     leveling.register(catalog_bot)
+    voice_tracker.register(catalog_bot)
     seen = set()
     commands = []
     for cmd in catalog_bot.commands.values():

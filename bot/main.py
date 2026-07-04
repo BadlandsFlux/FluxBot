@@ -9,11 +9,9 @@ from bot.scheduler import run_scheduler
 from bot import voice_tracker
 from common import db
 from common.config import config
+from common.logging_setup import configure_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-)
+configure_logging()
 log = logging.getLogger("fluxbot.main")
 
 

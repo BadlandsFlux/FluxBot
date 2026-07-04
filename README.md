@@ -201,6 +201,7 @@ sudo systemctl restart fluxbot-bot.service fluxbot-dashboard.service
    journalctl -u fluxbot-bot.service -f          # live logs
    journalctl -u fluxbot-dashboard.service -f
    ```
+   Set `LOG_LEVEL` in `.env` to control verbosity for both processes: `DEBUG` for troubleshooting something specific (e.g. voice tracking), `INFO` (the default) for normal operation, or `WARNING`/`ERROR` to only see actual problems. Restart both processes after changing it.
 
 7. **After pulling code changes**, see "Updating" above, then restart:
    ```bash
