@@ -208,3 +208,9 @@ class FluxerREST:
 
     async def add_reaction(self, channel_id: str, message_id: str, emoji: str) -> None:
         await self.request("PUT", f"/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/@me")
+
+    async def get_reaction_users(self, channel_id: str, message_id: str, emoji: str) -> list[dict]:
+        """List of user objects who reacted with this specific emoji (Discord
+        convention). Used by trivia to figure out who answered correctly,
+        not just how many people reacted."""
+        return await self.request("GET", f"/channels/{channel_id}/messages/{message_id}/reactions/{emoji}")

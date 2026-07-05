@@ -17,7 +17,8 @@ from starlette.middleware.sessions import SessionMiddleware
 from bot import moderation_actions
 from bot import voice_tracker
 from bot.commands import Bot as BotFramework
-from bot.modules import fun, info as info_module, leveling, moderation, reminders, roles, tags, utility
+from bot.modules import achievements, fun, info as info_module, leveling, moderation, reminders, roles, staffnotes, tags, trivia, utility
+from bot.modules import afk as afk_module
 from bot.permissions import permission_name
 from bot.rest import FluxerAPIError, FluxerREST
 from common import db
@@ -53,6 +54,10 @@ def _build_command_catalog() -> list:
     reminders.register(catalog_bot)
     leveling.register(catalog_bot)
     voice_tracker.register(catalog_bot)
+    achievements.register(catalog_bot)
+    trivia.register(catalog_bot)
+    afk_module.register(catalog_bot)
+    staffnotes.register(catalog_bot)
     seen = set()
     commands = []
     for cmd in catalog_bot.commands.values():
@@ -615,6 +620,45 @@ async def api_warn_member(request: Request, guild_id: str, user_id: str, payload
     }
 
 
+# --------------------------------------------------------------- staff notes --
+def _note_to_json(row) -> dict:
+    return {
+        "id": row["id"], "user_id": row["user_id"], "note": row["note"],
+        "created_by": row["created_by"], "created_at": row["created_at"].isoformat(),
+    }
+
+
+class NoteCreatePayload(BaseModel):
+    note: str
+
+
+@app.get("/api/guilds/{guild_id}/members/{user_id}/notes")
+async def api_list_member_notes(request: Request, guild_id: str, user_id: str):
+    await _require_manage(request, guild_id)
+    rows = await db.list_staff_notes(guild_id, user_id)
+    return {"notes": [_note_to_json(r) for r in rows]}
+
+
+@app.post("/api/guilds/{guild_id}/members/{user_id}/notes")
+async def api_add_member_note(request: Request, guild_id: str, user_id: str, payload: NoteCreatePayload):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    text = payload.note.strip()
+    if not text:
+        raise _ApiError(400, "Give the note some content.")
+    await db.add_staff_note(guild_id, user_id, text, str(user.get("id")))
+    rows = await db.list_staff_notes(guild_id, user_id)
+    return {"notes": [_note_to_json(r) for r in rows]}
+
+
+@app.delete("/api/guilds/{guild_id}/members/{user_id}/notes/{note_id}")
+async def api_remove_member_note(request: Request, guild_id: str, user_id: str, note_id: int):
+    await _require_manage(request, guild_id)
+    await db.remove_staff_note(guild_id, note_id)
+    rows = await db.list_staff_notes(guild_id, user_id)
+    return {"notes": [_note_to_json(r) for r in rows]}
+
+
 # ---------------------------------------------------------------------- tags --
 class TagCreatePayload(BaseModel):
     name: str
@@ -767,6 +811,37 @@ async def api_announce(request: Request, guild_id: str, payload: AnnouncePayload
     await db.log_action(guild_id, "announce", moderator_id=str(user.get("id")),
                          reason=f"Sent an announcement to <#{channel_id}>")
     return {"ok": True}
+
+
+# ------------------------------------------------------------ danger zone --
+@app.post("/api/guilds/{guild_id}/danger/clear-all-warnings")
+async def api_danger_clear_all_warnings(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    count = await db.clear_all_warnings(guild_id)
+    await db.log_action(guild_id, "danger_clear_warnings", moderator_id=str(user.get("id")),
+                         reason=f"Cleared {count} active warning(s) server-wide via Danger Zone")
+    return {"cleared": count}
+
+
+@app.post("/api/guilds/{guild_id}/danger/reset-all-xp")
+async def api_danger_reset_all_xp(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    count = await db.reset_all_xp(guild_id)
+    await db.log_action(guild_id, "danger_reset_xp", moderator_id=str(user.get("id")),
+                         reason=f"Reset XP/levels for {count} member(s) via Danger Zone")
+    return {"reset": count}
+
+
+@app.post("/api/guilds/{guild_id}/danger/wipe-reaction-roles")
+async def api_danger_wipe_reaction_roles(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    count = await db.wipe_all_reaction_roles(guild_id)
+    await db.log_action(guild_id, "danger_wipe_reaction_roles", moderator_id=str(user.get("id")),
+                         reason=f"Wiped {count} reaction-role mapping(s) via Danger Zone")
+    return {"wiped": count, "reaction_roles": []}
 
 
 # ------------------------------------------------------ serve the frontend --
