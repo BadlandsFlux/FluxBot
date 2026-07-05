@@ -13,6 +13,29 @@
   --success: #4ade80;
   --radius: 14px;
   --radius-sm: 9px;
+  --topbar-bg: rgba(18, 21, 31, 0.7);
+  --border-hover: #3a415a;
+  --code-color: var(--code-color);
+  --tag-bg: #2a2f42;
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f5f9;
+  --bg-elevated: #ffffff;
+  --panel: #ffffff;
+  --panel-hover: #eef0f7;
+  --border: #dde1ec;
+  --text: #1a1d29;
+  --muted: #666f87;
+  --accent: #5a68ee;
+  --accent-hover: #4854d6;
+  --accent-soft: rgba(90, 104, 238, 0.1);
+  --danger: #d64545;
+  --success: #22a862;
+  --topbar-bg: rgba(255, 255, 255, 0.75);
+  --border-hover: #b7bfd6;
+  --code-color: #4854d6;
+  --tag-bg: #e6e9f5;
 }
 
 * { box-sizing: border-box; }
@@ -46,7 +69,7 @@ button { font-family: inherit; }
   align-items: center;
   padding: 16px 32px;
   border-bottom: 1px solid var(--border);
-  background: rgba(18, 21, 31, 0.7);
+  background: var(--topbar-bg);
   backdrop-filter: blur(10px);
   position: sticky;
   top: 0;
@@ -54,6 +77,22 @@ button { font-family: inherit; }
 }
 
 .topbar-left { display: flex; align-items: center; gap: 28px; }
+.topbar-right { display: flex; align-items: center; gap: 16px; }
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.theme-toggle:hover { color: var(--accent); border-color: var(--accent); }
 
 .brand {
   display: flex;
@@ -192,7 +231,7 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
 .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 .btn-wide { width: 100%; padding: 12px; }
 .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
-.btn-ghost:hover:not(:disabled) { color: var(--text); border-color: #3a415a; }
+.btn-ghost:hover:not(:disabled) { color: var(--text); border-color: var(--border-hover); }
 .btn-small { padding: 6px 12px; font-size: 13px; }
 .btn-icon { padding: 6px; }
 
@@ -243,7 +282,7 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
   gap: 6px;
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
 }
-.tab-btn:hover { color: var(--text); border-color: #3a415a; }
+.tab-btn:hover { color: var(--text); border-color: var(--border-hover); }
 .tab-btn.active { color: white; background: var(--accent); border-color: var(--accent); }
 .tab-count { background: var(--panel-hover); color: var(--muted); border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 700; }
 .tab-btn.active .tab-count { background: rgba(255, 255, 255, 0.25); color: white; }
@@ -368,10 +407,10 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
 .table th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.02em; }
 .table tr:last-child td { border-bottom: none; }
 
-code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; font-size: 12px; color: #c3c9de; }
+code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; font-size: 12px; color: var(--code-color); }
 
 /* ------------------------------------------------------------------ tags */
-.tag { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: capitalize; background: #2a2f42; }
+.tag { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: capitalize; background: var(--tag-bg); }
 .tag-ban { background: rgba(241, 101, 101, 0.15); color: #ff9d9d; }
 .tag-kick { background: rgba(255, 176, 102, 0.15); color: #ffb066; }
 .tag-timeout { background: rgba(255, 224, 102, 0.15); color: #ffe066; }
@@ -441,7 +480,7 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
   cursor: pointer;
   text-align: left;
 }
-.combobox-trigger:hover { border-color: #3a415a; }
+.combobox-trigger:hover { border-color: var(--border-hover); }
 .combobox-trigger-flash { animation: combobox-flash 0.5s ease; }
 @keyframes combobox-flash {
   0% { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); background: var(--accent-soft); }
@@ -552,7 +591,7 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
   cursor: pointer;
   max-width: 220px;
 }
-.guild-switcher-trigger:hover { border-color: #3a415a; }
+.guild-switcher-trigger:hover { border-color: var(--border-hover); }
 .guild-switcher-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -674,7 +713,7 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
   cursor: pointer;
   text-align: left;
 }
-.emoji-picker-trigger:hover { border-color: #3a415a; }
+.emoji-picker-trigger:hover { border-color: var(--border-hover); }
 .emoji-picker-value { font-size: 18px; }
 .emoji-picker-panel {
   position: absolute;

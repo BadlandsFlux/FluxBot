@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { Zap } from "lucide-react";
 import { api } from "../api";
 import GuildSwitcher from "./GuildSwitcher";
+import ThemeToggle from "./ThemeToggle";
 
 export default function TopBar({ user, botName, onLoggedOut }) {
   async function handleLogout() {
@@ -25,14 +26,17 @@ export default function TopBar({ user, botName, onLoggedOut }) {
           </Link>
         </nav>
       </div>
-      {user && (
-        <div className="topbar-user">
-          <span className="user-pill">{user.username}</span>
-          <button className="btn btn-ghost btn-small" onClick={handleLogout}>
-            Log out
-          </button>
-        </div>
-      )}
+      <div className="topbar-right">
+        <ThemeToggle />
+        {user && (
+          <div className="topbar-user">
+            <span className="user-pill">{user.username}</span>
+            <button className="btn btn-ghost btn-small" onClick={handleLogout}>
+              Log out
+            </button>
+          </div>
+        )}
+      </div>
     </header>
   );
 }
