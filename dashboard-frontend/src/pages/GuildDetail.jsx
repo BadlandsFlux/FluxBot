@@ -13,6 +13,7 @@ import Switch from "../components/Switch";
 import MembersTab from "../components/MembersTab";
 import TagsTab from "../components/TagsTab";
 import LevelsTab from "../components/LevelsTab";
+import DangerZone from "../components/DangerZone";
 import AnnouncementBuilder from "../components/AnnouncementBuilder";
 import BarChart from "../components/BarChart";
 import useRolesChannels from "../hooks/useRolesChannels";
@@ -34,6 +35,7 @@ const TABS = [
 const ACTION_TAG_CLASS = {
   ban: "tag-ban", kick: "tag-kick", timeout: "tag-timeout", warn: "tag-warn",
   unban: "tag-unban", untimeout: "tag-untimeout", clearwarnings: "tag-clearwarnings", purge: "tag-purge",
+  danger_clear_warnings: "tag-ban", danger_reset_xp: "tag-ban", danger_wipe_reaction_roles: "tag-ban",
 };
 
 function fmt(iso) {
@@ -148,7 +150,13 @@ export default function GuildDetail() {
       )}
       {tab === "settings" && (
         <SettingsTab guildId={id} guild={guild} roles={roles} channels={channels}
-                     onSaved={(g) => setData((d) => ({ ...d, guild: g }))} />
+                     onSaved={(g) => setData((d) => ({ ...d, guild: g }))}
+                     onWarningsCleared={() => setData((d) => ({
+                       ...d,
+                       warnings: d.warnings.map((w) => ({ ...w, active: false })),
+                       active_warning_count: 0,
+                     }))}
+                     onReactionRolesWiped={() => setData((d) => ({ ...d, reaction_roles: [] }))} />
       )}
       {tab === "members" && <MembersTab guildId={id} roles={roles} />}
       {tab === "warnings" && (
@@ -295,7 +303,7 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
   );
 }
 
-function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
+function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsCleared, onReactionRolesWiped }) {
   const flash = useFlash();
   const [form, setForm] = useState(guild);
   const [welcomeOn, setWelcomeOn] = useState(!!guild.welcome_channel_id);
@@ -349,7 +357,8 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
   }
 
   return (
-    <div className="card">
+    <>
+      <div className="card">
       <h2>Moderation settings</h2>
       <form onSubmit={handleSubmit} className="settings-form">
         <label>
@@ -435,7 +444,7 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
                         placeholder="Announce in the channel they leveled up in" />
             </label>
             <label>
-              Message — <code>{"{user}"}</code>, <code>{"{username}"}</code>, <code>{"{level}"}</code> work
+              Message, <code>{"{user}"}</code>, <code>{"{username}"}</code>, <code>{"{level}"}</code> work
               <input type="text" value={form.level_up_message || ""} onChange={(e) => set("level_up_message", e.target.value)}
                      placeholder="GG {user}, you reached level {level}! 🎉" />
             </label>
@@ -447,7 +456,10 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
           {saving ? "Saving…" : "Save settings"}
         </button>
       </form>
-    </div>
+      </div>
+
+      <DangerZone guildId={guildId} onWarningsCleared={onWarningsCleared} onReactionRolesWiped={onReactionRolesWiped} />
+    </>
   );
 }
 

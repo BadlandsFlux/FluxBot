@@ -137,6 +137,14 @@ async def clear_warnings(guild_id: str, user_id: str) -> int:
     return int(result.split()[-1])
 
 
+async def clear_all_warnings(guild_id: str) -> int:
+    """Danger Zone: deactivate every active warning server-wide."""
+    result = await pool().execute(
+        "UPDATE warnings SET active=FALSE WHERE guild_id=$1 AND active", guild_id,
+    )
+    return int(result.split()[-1])
+
+
 # ------------------------------------------------------------ mod actions --
 async def log_action(guild_id: str, action: str, user_id: str = "", moderator_id: str = "",
                       reason: str = "") -> None:
@@ -195,6 +203,14 @@ async def remove_reaction_roles_by_message(guild_id: str, message_id: str) -> in
     result = await pool().execute(
         "DELETE FROM reaction_roles WHERE guild_id=$1 AND message_id=$2", guild_id, message_id,
     )
+    return int(result.split()[-1])
+
+
+async def wipe_all_reaction_roles(guild_id: str) -> int:
+    """Danger Zone: delete every reaction-role mapping for this guild. Does
+    not touch the actual Fluxer messages, just the DB-side mappings, so
+    reacting to an old message afterward simply won't do anything anymore."""
+    result = await pool().execute("DELETE FROM reaction_roles WHERE guild_id=$1", guild_id)
     return int(result.split()[-1])
 
 
@@ -340,6 +356,14 @@ async def set_level(guild_id: str, user_id: str, level: int) -> None:
     await pool().execute(
         "UPDATE levels SET level=$3 WHERE guild_id=$1 AND user_id=$2", guild_id, user_id, level,
     )
+
+
+async def reset_all_xp(guild_id: str) -> int:
+    """Danger Zone: wipe every member's level/XP for this guild back to
+    zero. Doesn't touch message/voice activity stats, those are a
+    separate concern from leveling."""
+    result = await pool().execute("DELETE FROM levels WHERE guild_id=$1", guild_id)
+    return int(result.split()[-1])
 
 
 async def get_leaderboard(guild_id: str, limit: int = 10) -> list[asyncpg.Record]:

@@ -60,4 +60,7 @@ export const api = {
     request(`/api/guilds/${id}/level-roles`, { method: "POST", body: { level, role_id } }),
   removeLevelRole: (id, level) => request(`/api/guilds/${id}/level-roles/${level}`, { method: "DELETE" }),
   announce: (id, payload) => request(`/api/guilds/${id}/announce`, { method: "POST", body: payload }),
+  dangerClearAllWarnings: (id) => request(`/api/guilds/${id}/danger/clear-all-warnings`, { method: "POST" }),
+  dangerResetAllXp: (id) => request(`/api/guilds/${id}/danger/reset-all-xp`, { method: "POST" }),
+  dangerWipeReactionRoles: (id) => request(`/api/guilds/${id}/danger/wipe-reaction-roles`, { method: "POST" }),
 };
