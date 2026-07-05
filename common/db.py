@@ -513,6 +513,16 @@ async def grant_achievement(guild_id: str, user_id: str, key: str) -> bool:
         ON CONFLICT (guild_id, user_id, key) DO NOTHING
         """,
         guild_id, user_id, key,
+    )
+    return result.split()[-1] != "0"
+
+
+async def list_achievements(guild_id: str, user_id: str) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM achievements WHERE guild_id=$1 AND user_id=$2 ORDER BY earned_at", guild_id, user_id,
+    )
+
+
 # ------------------------------------------------------------------ trivia --
 async def add_trivia_question(guild_id: str, channel_id: str, message_id: str, question: str,
                                options: list[str], correct_index: int, close_at) -> int:
@@ -524,6 +534,20 @@ async def add_trivia_question(guild_id: str, channel_id: str, message_id: str, q
         RETURNING id
         """,
         guild_id, channel_id, message_id, question, json.dumps(options), correct_index, close_at,
+    )
+    return row["id"]
+
+
+async def list_due_trivia(now) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM trivia_questions WHERE NOT closed AND close_at <= $1", now,
+    )
+
+
+async def mark_trivia_closed(trivia_id: int) -> None:
+    await pool().execute("UPDATE trivia_questions SET closed=TRUE WHERE id=$1", trivia_id)
+
+
 # ---------------------------------------------------------------------- afk --
 async def set_afk(guild_id: str, user_id: str, reason: str) -> None:
     await pool().execute(
@@ -545,6 +569,19 @@ async def get_afk(guild_id: str, user_id: str) -> Optional[asyncpg.Record]:
 async def clear_afk(guild_id: str, user_id: str) -> bool:
     result = await pool().execute(
         "DELETE FROM afk_status WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
+    )
+    return result.split()[-1] != "0"
+
+
+async def list_afk_for_users(guild_id: str, user_ids: list[str]) -> list[asyncpg.Record]:
+    if not user_ids:
+        return []
+    return await pool().fetch(
+        "SELECT * FROM afk_status WHERE guild_id=$1 AND user_id = ANY($2::text[])",
+        guild_id, user_ids,
+    )
+
+
 # ------------------------------------------------------------- staff notes --
 async def add_staff_note(guild_id: str, user_id: str, note: str, created_by: str) -> int:
     row = await pool().fetchrow(
@@ -558,14 +595,6 @@ async def add_staff_note(guild_id: str, user_id: str, note: str, created_by: str
     return row["id"]
 
 
-async def list_due_trivia(now) -> list[asyncpg.Record]:
-    return await pool().fetch(
-        "SELECT * FROM trivia_questions WHERE NOT closed AND close_at <= $1", now,
-    )
-
-
-async def mark_trivia_closed(trivia_id: int) -> None:
-    await pool().execute("UPDATE trivia_questions SET closed=TRUE WHERE id=$1", trivia_id)
 async def list_staff_notes(guild_id: str, user_id: str) -> list[asyncpg.Record]:
     return await pool().fetch(
         "SELECT * FROM staff_notes WHERE guild_id=$1 AND user_id=$2 ORDER BY created_at DESC",
@@ -578,18 +607,6 @@ async def remove_staff_note(guild_id: str, note_id: int) -> bool:
         "DELETE FROM staff_notes WHERE guild_id=$1 AND id=$2", guild_id, note_id,
     )
     return result.split()[-1] != "0"
-
-
-async def list_achievements(guild_id: str, user_id: str) -> list[asyncpg.Record]:
-    return await pool().fetch(
-        "SELECT * FROM achievements WHERE guild_id=$1 AND user_id=$2 ORDER BY earned_at", guild_id, user_id,
-async def list_afk_for_users(guild_id: str, user_ids: list[str]) -> list[asyncpg.Record]:
-    if not user_ids:
-        return []
-    return await pool().fetch(
-        "SELECT * FROM afk_status WHERE guild_id=$1 AND user_id = ANY($2::text[])",
-        guild_id, user_ids,
-    )
 
 
 if __name__ == "__main__":

@@ -298,87 +298,6 @@ export default function MembersTab({ guildId, roles }) {
                       )}
                     </div>
                   </div>
-                  {ACTION_META[pendingAction.type].needsDuration && (
-                    <select value={durationSeconds} onChange={(e) => setDurationSeconds(Number(e.target.value))}>
-                      {DURATIONS.map((d) => (
-                        <option key={d.seconds} value={d.seconds}>
-                          {d.label}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <button className="btn btn-primary btn-small" onClick={confirmAction} disabled={submitting}>
-                    {submitting ? <Spinner size={12} /> : `Confirm ${ACTION_META[pendingAction.type].label}`}
-                  </button>
-                  <button className="btn btn-ghost btn-small" onClick={() => setPendingAction(null)}>
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <div className="member-actions">
-                  {Object.entries(ACTION_META).map(([type, meta]) => {
-                    const Icon = meta.icon;
-                    return (
-                      <button
-                        key={type}
-                        className="btn btn-ghost btn-small btn-icon"
-                        title={meta.label}
-                        onClick={() => openAction(m.id, type)}
-                      >
-                        <Icon size={14} />
-                      </button>
-                    );
-                  })}
-                  <button
-                    className="btn btn-ghost btn-small btn-icon"
-                    title="Staff notes"
-                    onClick={() => toggleNotes(m.id)}
-                  >
-                    <StickyNote size={14} />
-                  </button>
-                </div>
-              )}
-
-              {notesOpenFor === m.id && (
-                <div className="member-notes-panel">
-                  {notesLoading ? (
-                    <div className="loading-row"><Spinner size={14} /><span className="muted small">Loading notes…</span></div>
-                  ) : (
-                    <>
-                      {notes.length ? (
-                        <ul className="member-notes-list">
-                          {notes.map((n) => (
-                            <li key={n.id}>
-                              <span>{n.note}</span>
-                              <span className="muted small">by <code>{n.created_by}</code></span>
-                              <button className="chip-remove" onClick={() => removeNoteRow(m.id, n.id)} title="Remove">
-                                <Trash2 size={12} />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="muted small">No notes on this member yet.</p>
-                      )}
-                      <form
-                        className="inline-form"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          addNote(m.id);
-                        }}
-                      >
-                        <input
-                          type="text"
-                          placeholder="Add a private note (staff only)…"
-                          value={newNote}
-                          onChange={(e) => setNewNote(e.target.value)}
-                        />
-                        <button className="btn btn-primary btn-small" type="submit">
-                          <Plus size={14} /> Add
-                        </button>
-                      </form>
-                    </>
-                  )}
                 </div>
 
                 {pendingAction?.userId === m.id ? (
@@ -421,6 +340,56 @@ export default function MembersTab({ guildId, roles }) {
                         </button>
                       );
                     })}
+                    <button
+                      className="btn btn-ghost btn-small btn-icon"
+                      title="Staff notes"
+                      onClick={() => toggleNotes(m.id)}
+                    >
+                      <StickyNote size={14} />
+                    </button>
+                  </div>
+                )}
+
+                {notesOpenFor === m.id && (
+                  <div className="member-notes-panel">
+                    {notesLoading ? (
+                      <div className="loading-row"><Spinner size={14} /><span className="muted small">Loading notes…</span></div>
+                    ) : (
+                      <>
+                        {notes.length ? (
+                          <ul className="member-notes-list">
+                            {notes.map((n) => (
+                              <li key={n.id}>
+                                <span>{n.note}</span>
+                                <span className="muted small">by <code>{n.created_by}</code></span>
+                                <button className="chip-remove" onClick={() => removeNoteRow(m.id, n.id)} title="Remove">
+                                  <Trash2 size={12} />
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="muted small">No notes on this member yet.</p>
+                        )}
+                        <form
+                          className="inline-form"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            addNote(m.id);
+                          }}
+                        >
+                          <input
+                            type="text"
+                            placeholder="Add a private note (staff only)…"
+                            value={newNote}
+                            onChange={(e) => setNewNote(e.target.value)}
+                          />
+                          <button className="btn btn-primary btn-small" type="submit">
+                            <Plus size={14} /> Add
+                          </button>
+                        </form>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

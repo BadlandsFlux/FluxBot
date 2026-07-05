@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from bot.commands import Bot
-from bot.modules import achievements, activity, afk, fun, info, leveling, logging_mod, moderation, reminders, roles, staffnotes, tags, triva, utility
+from bot.modules import achievements, activity, afk, fun, info, leveling, logging_mod, moderation, reminders, roles, staffnotes, tags, trivia, utility
 from bot.scheduler import run_scheduler
 from bot import voice_tracker
 from common import db
