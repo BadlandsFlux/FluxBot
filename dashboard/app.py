@@ -17,7 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from bot import moderation_actions
 from bot import voice_tracker
 from bot.commands import Bot as BotFramework
-from bot.modules import fun, info as info_module, leveling, moderation, reminders, roles, tags, utility
+from bot.modules import fun, info as info_module, leveling, moderation, reminders, roles, staffnotes, tags, utility
 from bot.permissions import permission_name
 from bot.rest import FluxerAPIError, FluxerREST
 from common import db
@@ -53,6 +53,7 @@ def _build_command_catalog() -> list:
     reminders.register(catalog_bot)
     leveling.register(catalog_bot)
     voice_tracker.register(catalog_bot)
+    staffnotes.register(catalog_bot)
     seen = set()
     commands = []
     for cmd in catalog_bot.commands.values():
@@ -613,6 +614,45 @@ async def api_warn_member(request: Request, guild_id: str, user_id: str, payload
         "warnings": [_warning_to_json(w) for w in warnings],
         "active_warning_count": sum(1 for w in warnings if w["active"]),
     }
+
+
+# --------------------------------------------------------------- staff notes --
+def _note_to_json(row) -> dict:
+    return {
+        "id": row["id"], "user_id": row["user_id"], "note": row["note"],
+        "created_by": row["created_by"], "created_at": row["created_at"].isoformat(),
+    }
+
+
+class NoteCreatePayload(BaseModel):
+    note: str
+
+
+@app.get("/api/guilds/{guild_id}/members/{user_id}/notes")
+async def api_list_member_notes(request: Request, guild_id: str, user_id: str):
+    await _require_manage(request, guild_id)
+    rows = await db.list_staff_notes(guild_id, user_id)
+    return {"notes": [_note_to_json(r) for r in rows]}
+
+
+@app.post("/api/guilds/{guild_id}/members/{user_id}/notes")
+async def api_add_member_note(request: Request, guild_id: str, user_id: str, payload: NoteCreatePayload):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    text = payload.note.strip()
+    if not text:
+        raise _ApiError(400, "Give the note some content.")
+    await db.add_staff_note(guild_id, user_id, text, str(user.get("id")))
+    rows = await db.list_staff_notes(guild_id, user_id)
+    return {"notes": [_note_to_json(r) for r in rows]}
+
+
+@app.delete("/api/guilds/{guild_id}/members/{user_id}/notes/{note_id}")
+async def api_remove_member_note(request: Request, guild_id: str, user_id: str, note_id: int):
+    await _require_manage(request, guild_id)
+    await db.remove_staff_note(guild_id, note_id)
+    rows = await db.list_staff_notes(guild_id, user_id)
+    return {"notes": [_note_to_json(r) for r in rows]}
 
 
 # ---------------------------------------------------------------------- tags --
