@@ -789,3 +789,35 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
 }
 .top-member-row:last-child { border-bottom: none; }
 .top-member-name { flex: 1; font-weight: 600; }
+
+/* ------------------------------------------------------------- embed preview */
+.embed-preview { margin-top: 16px; }
+.embed-preview-empty {
+  padding: 20px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border);
+  text-align: center;
+}
+.embed-preview-card {
+  max-width: 420px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  border-left: 4px solid #5865f2;
+  background: var(--bg-elevated);
+}
+.embed-preview-title { font-weight: 700; font-size: 15px; margin-bottom: 6px; color: var(--text); }
+.embed-preview-description {
+  font-size: 13px;
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.embed-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: 4px;
+  margin-top: 10px;
+  object-fit: cover;
+}
+.embed-preview-footer { font-size: 11px; color: var(--muted); margin-top: 10px; }
