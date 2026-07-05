@@ -47,6 +47,11 @@ export const api = {
     request(`/api/guilds/${id}/members/${userId}/untimeout`, { method: "POST", body: { reason } }),
   warnMember: (id, userId, reason) =>
     request(`/api/guilds/${id}/members/${userId}/warn`, { method: "POST", body: { reason } }),
+  listMemberNotes: (id, userId) => request(`/api/guilds/${id}/members/${userId}/notes`),
+  addMemberNote: (id, userId, note) =>
+    request(`/api/guilds/${id}/members/${userId}/notes`, { method: "POST", body: { note } }),
+  removeMemberNote: (id, userId, noteId) =>
+    request(`/api/guilds/${id}/members/${userId}/notes/${noteId}`, { method: "DELETE" }),
   addTag: (id, name, content) => request(`/api/guilds/${id}/tags`, { method: "POST", body: { name, content } }),
   removeTag: (id, name) => request(`/api/guilds/${id}/tags/${encodeURIComponent(name)}`, { method: "DELETE" }),
   stats: (id, days = 14) => request(`/api/guilds/${id}/stats?days=${days}`),

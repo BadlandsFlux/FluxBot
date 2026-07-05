@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Ban, Clock, LogOut, ShieldAlert, Search } from "lucide-react";
+import { Ban, Clock, LogOut, ShieldAlert, Search, StickyNote, Plus, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "./Flash";
 import Spinner from "./Spinner";
@@ -27,6 +27,10 @@ export default function MembersTab({ guildId, roles }) {
   const [reason, setReason] = useState("");
   const [durationSeconds, setDurationSeconds] = useState(3600);
   const [submitting, setSubmitting] = useState(false);
+  const [notesOpenFor, setNotesOpenFor] = useState(null);
+  const [notes, setNotes] = useState([]);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [newNote, setNewNote] = useState("");
 
   const roleNameById = Object.fromEntries(roles.map((r) => [r.id, r.name]));
 
@@ -54,6 +58,44 @@ export default function MembersTab({ guildId, roles }) {
     setDurationSeconds(3600);
   }
 
+  async function toggleNotes(userId) {
+    if (notesOpenFor === userId) {
+      setNotesOpenFor(null);
+      return;
+    }
+    setNotesOpenFor(userId);
+    setNewNote("");
+    setNotesLoading(true);
+    try {
+      const data = await api.listMemberNotes(guildId, userId);
+      setNotes(data.notes);
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setNotesLoading(false);
+    }
+  }
+
+  async function addNote(userId) {
+    if (!newNote.trim()) return;
+    try {
+      const data = await api.addMemberNote(guildId, userId, newNote.trim());
+      setNotes(data.notes);
+      setNewNote("");
+    } catch (err) {
+      flash(err.message, "error");
+    }
+  }
+
+  async function removeNoteRow(userId, noteId) {
+    try {
+      const data = await api.removeMemberNote(guildId, userId, noteId);
+      setNotes(data.notes);
+    } catch (err) {
+      flash(err.message, "error");
+    }
+  }
+
   async function confirmAction() {
     if (!pendingAction) return;
     const { userId, type } = pendingAction;
@@ -61,7 +103,7 @@ export default function MembersTab({ guildId, roles }) {
     try {
       if (type === "warn") {
         const result = await api.warnMember(guildId, userId, reason);
-        flash(`Warned — ${result.result.active_count} active warning(s).${
+        flash(`Warned, ${result.result.active_count} active warning(s).${
           result.result.escalated ? ` Auto-${result.result.escalated}ed.` : ""
         }`);
       } else if (type === "timeout") {
@@ -173,6 +215,56 @@ export default function MembersTab({ guildId, roles }) {
                       </button>
                     );
                   })}
+                  <button
+                    className="btn btn-ghost btn-small btn-icon"
+                    title="Staff notes"
+                    onClick={() => toggleNotes(m.id)}
+                  >
+                    <StickyNote size={14} />
+                  </button>
+                </div>
+              )}
+
+              {notesOpenFor === m.id && (
+                <div className="member-notes-panel">
+                  {notesLoading ? (
+                    <div className="loading-row"><Spinner size={14} /><span className="muted small">Loading notes…</span></div>
+                  ) : (
+                    <>
+                      {notes.length ? (
+                        <ul className="member-notes-list">
+                          {notes.map((n) => (
+                            <li key={n.id}>
+                              <span>{n.note}</span>
+                              <span className="muted small">by <code>{n.created_by}</code></span>
+                              <button className="chip-remove" onClick={() => removeNoteRow(m.id, n.id)} title="Remove">
+                                <Trash2 size={12} />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="muted small">No notes on this member yet.</p>
+                      )}
+                      <form
+                        className="inline-form"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          addNote(m.id);
+                        }}
+                      >
+                        <input
+                          type="text"
+                          placeholder="Add a private note (staff only)…"
+                          value={newNote}
+                          onChange={(e) => setNewNote(e.target.value)}
+                        />
+                        <button className="btn btn-primary btn-small" type="submit">
+                          <Plus size={14} /> Add
+                        </button>
+                      </form>
+                    </>
+                  )}
                 </div>
               )}
             </div>

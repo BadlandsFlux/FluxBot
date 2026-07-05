@@ -182,3 +182,13 @@ UPDATE guilds SET goodbye_message = '{username} left {server}. 👋'
     WHERE goodbye_message = '{username} left {server}. ðŸ‘‹';
 UPDATE guilds SET level_up_message = 'GG {user}, you reached level {level}! 🎉'
     WHERE level_up_message = 'GG {user}, you reached level {level}! ðŸŽ‰';
+
+CREATE TABLE IF NOT EXISTS staff_notes (
+    id          BIGSERIAL PRIMARY KEY,
+    guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    note        TEXT NOT NULL,
+    created_by  TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_staff_notes_guild_user ON staff_notes(guild_id, user_id, created_at DESC);
