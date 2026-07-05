@@ -182,3 +182,11 @@ UPDATE guilds SET goodbye_message = '{username} left {server}. 👋'
     WHERE goodbye_message = '{username} left {server}. ðŸ‘‹';
 UPDATE guilds SET level_up_message = 'GG {user}, you reached level {level}! 🎉'
     WHERE level_up_message = 'GG {user}, you reached level {level}! ðŸŽ‰';
+
+CREATE TABLE IF NOT EXISTS afk_status (
+    guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    reason      TEXT NOT NULL DEFAULT 'AFK',
+    since       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (guild_id, user_id)
+);

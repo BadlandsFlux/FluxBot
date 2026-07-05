@@ -480,6 +480,40 @@ async def get_member_voice_minutes(guild_id: str, user_id: str) -> float:
     return float(row["minutes"]) if row else 0.0
 
 
+# ---------------------------------------------------------------------- afk --
+async def set_afk(guild_id: str, user_id: str, reason: str) -> None:
+    await pool().execute(
+        """
+        INSERT INTO afk_status (guild_id, user_id, reason, since)
+        VALUES ($1, $2, $3, now())
+        ON CONFLICT (guild_id, user_id) DO UPDATE SET reason = EXCLUDED.reason, since = now()
+        """,
+        guild_id, user_id, reason,
+    )
+
+
+async def get_afk(guild_id: str, user_id: str) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow(
+        "SELECT * FROM afk_status WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
+    )
+
+
+async def clear_afk(guild_id: str, user_id: str) -> bool:
+    result = await pool().execute(
+        "DELETE FROM afk_status WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
+    )
+    return result.split()[-1] != "0"
+
+
+async def list_afk_for_users(guild_id: str, user_ids: list[str]) -> list[asyncpg.Record]:
+    if not user_ids:
+        return []
+    return await pool().fetch(
+        "SELECT * FROM afk_status WHERE guild_id=$1 AND user_id = ANY($2::text[])",
+        guild_id, user_ids,
+    )
+
+
 if __name__ == "__main__":
     # `python -m common.db` — one-off convenience to create the schema
     # without starting the bot or dashboard.
