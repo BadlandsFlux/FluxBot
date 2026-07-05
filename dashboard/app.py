@@ -17,7 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from bot import moderation_actions
 from bot import voice_tracker
 from bot.commands import Bot as BotFramework
-from bot.modules import fun, info as info_module, leveling, moderation, reminders, roles, staffnotes, tags, utility
+from bot.modules import fun, info as info_module, leveling, moderation, reminders, roles, staffnotes, tags, trivia, utility
 from bot.modules import afk as afk_module
 from bot.permissions import permission_name
 from bot.rest import FluxerAPIError, FluxerREST
@@ -54,6 +54,7 @@ def _build_command_catalog() -> list:
     reminders.register(catalog_bot)
     leveling.register(catalog_bot)
     voice_tracker.register(catalog_bot)
+    trivia.register(catalog_bot)
     afk_module.register(catalog_bot)
     staffnotes.register(catalog_bot)
     seen = set()

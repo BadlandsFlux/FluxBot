@@ -338,6 +338,7 @@ Run `!help` in Fluxer once the bot is running for the live, per-server list (it 
 | `!ping` | none | Gateway/API/DB latency, uptime, server count |
 | `!afk [reason]` | none | Mark yourself away; auto-clears on your next message, notes it if someone mentions you |
 | `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | none | Fun stuff |
+| `!trivia` | none | Multiple-choice trivia (pulled live from Open Trivia DB, falls back to a small local bank if that's unreachable), closes in 30s, correct answers earn XP |
 
 `!info` is gated by `BOT_OWNER_ID` in `.env` (your own Fluxer user ID), not by any per-server permission, it's meant for you, not server admins.
 
