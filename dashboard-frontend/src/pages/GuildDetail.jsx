@@ -13,6 +13,7 @@ import Switch from "../components/Switch";
 import MembersTab from "../components/MembersTab";
 import TagsTab from "../components/TagsTab";
 import LevelsTab from "../components/LevelsTab";
+import OnboardingChecklist from "../components/OnboardingChecklist";
 import DangerZone from "../components/DangerZone";
 import AnnouncementBuilder from "../components/AnnouncementBuilder";
 import BarChart from "../components/BarChart";
@@ -146,7 +147,7 @@ export default function GuildDetail() {
 
       {tab === "overview" && (
         <OverviewTab guildId={id} guild={guild} actions={actions} autoroles={autoroles} reactionRoles={reactionRoles}
-                     tags={tags} activeWarningCount={activeWarningCount} />
+                     tags={tags} activeWarningCount={activeWarningCount} setTab={setTab} />
       )}
       {tab === "settings" && (
         <SettingsTab guildId={id} guild={guild} roles={roles} channels={channels}
@@ -197,7 +198,7 @@ function StatCard({ value, label }) {
   );
 }
 
-function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, activeWarningCount }) {
+function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, activeWarningCount, setTab }) {
   const [stats, setStats] = useState(null);
 
   useEffect(() => {
@@ -206,6 +207,8 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
 
   return (
     <>
+      <OnboardingChecklist guild={guild} autoroles={autoroles} reactionRoles={reactionRoles} tags={tags} setTab={setTab} />
+
       <div className="stat-grid">
         <StatCard value={guild.command_prefix || "!"} label="Prefix" />
         <StatCard value={activeWarningCount} label="Active warnings" />
