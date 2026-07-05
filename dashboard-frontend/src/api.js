@@ -56,6 +56,9 @@ export const api = {
   removeTag: (id, name) => request(`/api/guilds/${id}/tags/${encodeURIComponent(name)}`, { method: "DELETE" }),
   stats: (id, days = 14) => request(`/api/guilds/${id}/stats?days=${days}`),
   levels: (id) => request(`/api/guilds/${id}/levels`),
+  resetUserXp: (id, userId) => request(`/api/guilds/${id}/levels/${userId}/reset`, { method: "POST" }),
+  adjustUserXp: (id, userId, amount) =>
+    request(`/api/guilds/${id}/levels/${userId}/adjust`, { method: "POST", body: { amount } }),
   addLevelRole: (id, level, role_id) =>
     request(`/api/guilds/${id}/level-roles`, { method: "POST", body: { level, role_id } }),
   removeLevelRole: (id, level) => request(`/api/guilds/${id}/level-roles/${level}`, { method: "DELETE" }),

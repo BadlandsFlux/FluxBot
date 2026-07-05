@@ -366,6 +366,30 @@ async def reset_all_xp(guild_id: str) -> int:
     return int(result.split()[-1])
 
 
+async def reset_user_xp(guild_id: str, user_id: str) -> None:
+    """Reset a single member's level/XP back to zero (dashboard admin
+    correction, distinct from the Danger Zone's server-wide reset)."""
+    await pool().execute("DELETE FROM levels WHERE guild_id=$1 AND user_id=$2", guild_id, user_id)
+
+
+async def adjust_xp(guild_id: str, user_id: str, delta: int) -> asyncpg.Record:
+    """Add (or, with a negative delta, remove) a specific amount of XP for
+    one member, clamped at zero. Caller is responsible for recomputing and
+    persisting `level` from the returned xp (see bot/modules/leveling.py's
+    level_for_xp), this function only touches the raw xp value."""
+    row = await pool().fetchrow(
+        """
+        INSERT INTO levels (guild_id, user_id, xp, level, last_xp_at)
+        VALUES ($1, $2, GREATEST(0, $3), 0, now())
+        ON CONFLICT (guild_id, user_id) DO UPDATE SET
+            xp = GREATEST(0, levels.xp + $3)
+        RETURNING *
+        """,
+        guild_id, user_id, delta,
+    )
+    return row
+
+
 async def get_leaderboard(guild_id: str, limit: int = 10) -> list[asyncpg.Record]:
     return await pool().fetch(
         "SELECT * FROM levels WHERE guild_id=$1 ORDER BY xp DESC LIMIT $2", guild_id, limit,

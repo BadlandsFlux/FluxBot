@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Minus, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "./Flash";
 import Spinner from "./Spinner";
@@ -12,6 +12,8 @@ export default function LevelsTab({ guildId, roles }) {
   const [newLevel, setNewLevel] = useState("");
   const [newRole, setNewRole] = useState("");
   const [busy, setBusy] = useState(false);
+  const [xpAmounts, setXpAmounts] = useState({}); // userId -> input value
+  const [xpBusyFor, setXpBusyFor] = useState(null);
   const roleNameById = Object.fromEntries(roles.map((r) => [r.id, r.name]));
 
   function load() {
@@ -22,6 +24,39 @@ export default function LevelsTab({ guildId, roles }) {
   }
 
   useEffect(load, [guildId]);
+
+  async function handleAdjust(userId, sign) {
+    const raw = Number(xpAmounts[userId]);
+    if (!raw || raw <= 0) {
+      flash("Enter a positive amount first.", "error");
+      return;
+    }
+    setXpBusyFor(userId);
+    try {
+      const result = await api.adjustUserXp(guildId, userId, raw * sign);
+      setData((d) => ({ ...d, leaderboard: result.leaderboard }));
+      setXpAmounts((a) => ({ ...a, [userId]: "" }));
+      flash(`${sign > 0 ? "Added" : "Removed"} ${raw} XP.`);
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setXpBusyFor(null);
+    }
+  }
+
+  async function handleResetUser(userId, username) {
+    if (!window.confirm(`Reset ${username}'s XP and level back to zero?`)) return;
+    setXpBusyFor(userId);
+    try {
+      const result = await api.resetUserXp(guildId, userId);
+      setData((d) => ({ ...d, leaderboard: result.leaderboard }));
+      flash(`Reset ${username}'s XP.`);
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setXpBusyFor(null);
+    }
+  }
 
   async function handleAddLevelRole(e) {
     e.preventDefault();
@@ -77,7 +112,7 @@ export default function LevelsTab({ guildId, roles }) {
         {data.leaderboard.length ? (
           <table className="table">
             <thead>
-              <tr><th>#</th><th>User</th><th>Level</th><th>XP</th></tr>
+              <tr><th>#</th><th>User</th><th>Level</th><th>XP</th><th>Manage XP</th></tr>
             </thead>
             <tbody>
               {data.leaderboard.map((row, i) => (
@@ -86,6 +121,40 @@ export default function LevelsTab({ guildId, roles }) {
                   <td>{row.username}</td>
                   <td>{row.level}</td>
                   <td>{row.xp}</td>
+                  <td>
+                    <div className="xp-manage-row">
+                      <input
+                        type="number"
+                        min={1}
+                        placeholder="Amount"
+                        value={xpAmounts[row.user_id] || ""}
+                        onChange={(e) => setXpAmounts((a) => ({ ...a, [row.user_id]: e.target.value }))}
+                      />
+                      <button
+                        className="btn btn-ghost btn-small btn-icon"
+                        title="Add XP"
+                        onClick={() => handleAdjust(row.user_id, 1)}
+                        disabled={xpBusyFor === row.user_id}
+                      >
+                        <Plus size={13} />
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-small btn-icon"
+                        title="Remove XP"
+                        onClick={() => handleAdjust(row.user_id, -1)}
+                        disabled={xpBusyFor === row.user_id}
+                      >
+                        <Minus size={13} />
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-small"
+                        onClick={() => handleResetUser(row.user_id, row.username)}
+                        disabled={xpBusyFor === row.user_id}
+                      >
+                        {xpBusyFor === row.user_id ? <Spinner size={12} /> : "Reset"}
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
