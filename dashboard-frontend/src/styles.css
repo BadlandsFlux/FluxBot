@@ -789,3 +789,28 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
 }
 .top-member-row:last-child { border-bottom: none; }
 .top-member-name { flex: 1; font-weight: 600; }
+
+/* ------------------------------------------------------- bulk member actions */
+.select-all-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.member-checkbox { cursor: pointer; flex-shrink: 0; }
+.bulk-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.bulk-action-bar > span { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; color: var(--accent); }
+.bulk-action-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
