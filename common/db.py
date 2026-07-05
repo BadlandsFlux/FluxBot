@@ -480,6 +480,25 @@ async def get_member_voice_minutes(guild_id: str, user_id: str) -> float:
     return float(row["minutes"]) if row else 0.0
 
 
+# ------------------------------------------------------------ achievements --
+async def grant_achievement(guild_id: str, user_id: str, key: str) -> bool:
+    """Returns True if this was newly granted, False if they already had it."""
+    result = await pool().execute(
+        """
+        INSERT INTO achievements (guild_id, user_id, key) VALUES ($1, $2, $3)
+        ON CONFLICT (guild_id, user_id, key) DO NOTHING
+        """,
+        guild_id, user_id, key,
+    )
+    return result.split()[-1] != "0"
+
+
+async def list_achievements(guild_id: str, user_id: str) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM achievements WHERE guild_id=$1 AND user_id=$2 ORDER BY earned_at", guild_id, user_id,
+    )
+
+
 if __name__ == "__main__":
     # `python -m common.db` — one-off convenience to create the schema
     # without starting the bot or dashboard.

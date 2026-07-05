@@ -334,6 +334,7 @@ Run `!help` in Fluxer once the bot is running for the live, per-server list (it 
 | `!delreminder <id>` | none | Cancel a reminder |
 | `!rank [@user]` | none | XP/level progress |
 | `!leaderboard` | none | Server XP leaderboard |
+| `!achievements [@user]` | none | Milestone badges earned (messages, level, voice time) |
 | `!ping` | none | Gateway/API/DB latency, uptime, server count |
 | `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | none | Fun stuff |
 
