@@ -501,6 +501,29 @@ async def get_afk(guild_id: str, user_id: str) -> Optional[asyncpg.Record]:
 async def clear_afk(guild_id: str, user_id: str) -> bool:
     result = await pool().execute(
         "DELETE FROM afk_status WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
+# ------------------------------------------------------------- staff notes --
+async def add_staff_note(guild_id: str, user_id: str, note: str, created_by: str) -> int:
+    row = await pool().fetchrow(
+        """
+        INSERT INTO staff_notes (guild_id, user_id, note, created_by)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
+        """,
+        guild_id, user_id, note, created_by,
+    )
+    return row["id"]
+
+
+async def list_staff_notes(guild_id: str, user_id: str) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM staff_notes WHERE guild_id=$1 AND user_id=$2 ORDER BY created_at DESC",
+        guild_id, user_id,
+    )
+
+
+async def remove_staff_note(guild_id: str, note_id: int) -> bool:
+    result = await pool().execute(
+        "DELETE FROM staff_notes WHERE guild_id=$1 AND id=$2", guild_id, note_id,
     )
     return result.split()[-1] != "0"
 

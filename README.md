@@ -319,6 +319,7 @@ Run `!help` in Fluxer once the bot is running for the live, per-server list (it 
 | `!purge <count>` | Manage Messages | Bulk delete recent messages |
 | `!warn @user [reason]` | Kick Members | Warn (auto-escalates per guild settings) |
 | `!warnings @user` | none | List a member's warnings |
+| `!note add/list/remove @user <text>` | Kick Members | Private staff notes on a member, no escalation, just visibility |
 | `!clearwarnings @user` | Kick Members | Clear active warnings |
 | `!modlog #channel` | Manage Guild | Set the mod-log channel |
 | `!autorole add/remove/list @role` | Manage Guild | Roles auto-given on join |
@@ -353,5 +354,6 @@ Most day-to-day admin work can be done entirely from the dashboard, no need to t
 - **Tags tab**: add/remove custom `!tagname` shortcuts.
 - **Announce tab**: compose and send a custom embed (title, description, color, image, footer) to any channel.
 - **Warnings / Mod Log tabs**: view and clear warnings, browse full history.
+- **Staff notes**: view, add, and remove private notes on any member directly from the Members tab.
 
 A few things are chat-only for now (no dashboard equivalent yet): `!purge`, `!roll`/`!coinflip`/`!wheel`, `!avatar`/`!serverinfo`/`!userinfo`/`!info`, and reminders (`!remind`/`!reminders`/`!delreminder`, inherently personal/ephemeral rather than server config). Starting a poll (`!poll`) is chat-only too, though its auto-close and results tally happen automatically via the background scheduler regardless of how it was started.
