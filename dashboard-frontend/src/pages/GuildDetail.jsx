@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users,
-  Tag as TagIcon, TrendingUp, Megaphone,
+  Tag as TagIcon, TrendingUp, Megaphone, Search,
 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "../components/Flash";
@@ -454,6 +454,8 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved }) {
 function WarningsTab({ guildId, warnings, onCleared }) {
   const flash = useFlash();
   const [clearingId, setClearingId] = useState(null);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   async function handleClear(userId) {
     setClearingId(userId);
@@ -468,16 +470,47 @@ function WarningsTab({ guildId, warnings, onCleared }) {
     }
   }
 
+  const filtered = warnings.filter((w) => {
+    if (statusFilter === "active" && !w.active) return false;
+    if (statusFilter === "cleared" && w.active) return false;
+    if (query.trim()) {
+      const q = query.trim().toLowerCase();
+      const haystack = `${w.user_id} ${w.moderator_id} ${w.reason || ""}`.toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="card">
       <h2>Warnings</h2>
-      {warnings.length ? (
+      <div className="filter-bar">
+        <div className="search-box">
+          <Search size={16} className="search-icon" />
+          <input
+            type="text"
+            placeholder="Search by user ID, moderator ID, or reason…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="all">All statuses</option>
+          <option value="active">Active only</option>
+          <option value="cleared">Cleared only</option>
+        </select>
+      </div>
+      {warnings.length === 0 ? (
+        <p className="muted">No warnings recorded yet.</p>
+      ) : filtered.length === 0 ? (
+        <p className="muted">No warnings match your filters.</p>
+      ) : (
         <table className="table">
           <thead>
             <tr><th>User</th><th>Moderator</th><th>Reason</th><th>When</th><th>Status</th><th></th></tr>
           </thead>
           <tbody>
-            {warnings.map((w) => (
+            {filtered.map((w) => (
               <tr key={w.id}>
                 <td><code>{w.user_id}</code></td>
                 <td><code>{w.moderator_id}</code></td>
@@ -498,27 +531,61 @@ function WarningsTab({ guildId, warnings, onCleared }) {
             ))}
           </tbody>
         </table>
-      ) : (
-        <p className="muted">No warnings recorded yet.</p>
       )}
     </div>
   );
 }
 
 function ModLogTab({ actions }) {
+  const [query, setQuery] = useState("");
+  const [actionFilter, setActionFilter] = useState("all");
+
+  const actionTypes = [...new Set(actions.map((a) => a.action))].sort();
+
+  const filtered = actions.filter((a) => {
+    if (actionFilter !== "all" && a.action !== actionFilter) return false;
+    if (query.trim()) {
+      const q = query.trim().toLowerCase();
+      const haystack = `${a.user_id || ""} ${a.moderator_id || ""} ${a.reason || ""}`.toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="card">
       <h2>Mod action history</h2>
-      {actions.length ? (
+      <div className="filter-bar">
+        <div className="search-box">
+          <Search size={16} className="search-icon" />
+          <input
+            type="text"
+            placeholder="Search by user ID, moderator ID, or reason…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)}>
+          <option value="all">All actions</option>
+          {actionTypes.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+      </div>
+      {actions.length === 0 ? (
+        <p className="muted">No mod actions logged yet.</p>
+      ) : filtered.length === 0 ? (
+        <p className="muted">No actions match your filters.</p>
+      ) : (
         <table className="table">
           <thead>
             <tr><th>Action</th><th>User</th><th>Moderator</th><th>Reason</th><th>When</th></tr>
           </thead>
           <tbody>
-            {actions.map((a) => (
+            {filtered.map((a) => (
               <tr key={a.id}>
                 <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
-                <td><code>{a.user_id || "—"}</code></td>
+                <td><code>{a.user_id || "none"}</code></td>
                 <td><code>{a.moderator_id || "system"}</code></td>
                 <td>{a.reason}</td>
                 <td>{fmt(a.created_at)}</td>
@@ -526,8 +593,6 @@ function ModLogTab({ actions }) {
             ))}
           </tbody>
         </table>
-      ) : (
-        <p className="muted">No mod actions logged yet.</p>
       )}
     </div>
   );
