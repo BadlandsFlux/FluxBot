@@ -183,6 +183,13 @@ UPDATE guilds SET goodbye_message = '{username} left {server}. 👋'
 UPDATE guilds SET level_up_message = 'GG {user}, you reached level {level}! 🎉'
     WHERE level_up_message = 'GG {user}, you reached level {level}! ðŸŽ‰';
 
+CREATE TABLE IF NOT EXISTS achievements (
+    guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    earned_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (guild_id, user_id, key)
+);
 CREATE TABLE IF NOT EXISTS trivia_questions (
     id              BIGSERIAL PRIMARY KEY,
     guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,

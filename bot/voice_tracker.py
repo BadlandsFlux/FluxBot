@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from bot.commands import Bot, Context
-from bot.modules import leveling
+from bot.modules import achievements, leveling
 from common import db
 
 log = logging.getLogger("fluxbot.voice_tracker")
@@ -73,6 +73,7 @@ async def _flush_member(bot: Bot, guild_id: str, user_id: str, now: datetime, ke
         return
 
     await db.record_voice_minutes(guild_id, user_id, elapsed_minutes)
+    await achievements.check_voice_achievements(guild_id, user_id)
     log.info("voice: credited %.2f min to guild=%s user=%s (keep_earning=%s)",
               elapsed_minutes, guild_id, user_id, keep_earning)
 
