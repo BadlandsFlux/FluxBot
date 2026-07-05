@@ -769,6 +769,37 @@ async def api_announce(request: Request, guild_id: str, payload: AnnouncePayload
     return {"ok": True}
 
 
+# ------------------------------------------------------------ danger zone --
+@app.post("/api/guilds/{guild_id}/danger/clear-all-warnings")
+async def api_danger_clear_all_warnings(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    count = await db.clear_all_warnings(guild_id)
+    await db.log_action(guild_id, "danger_clear_warnings", moderator_id=str(user.get("id")),
+                         reason=f"Cleared {count} active warning(s) server-wide via Danger Zone")
+    return {"cleared": count}
+
+
+@app.post("/api/guilds/{guild_id}/danger/reset-all-xp")
+async def api_danger_reset_all_xp(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    count = await db.reset_all_xp(guild_id)
+    await db.log_action(guild_id, "danger_reset_xp", moderator_id=str(user.get("id")),
+                         reason=f"Reset XP/levels for {count} member(s) via Danger Zone")
+    return {"reset": count}
+
+
+@app.post("/api/guilds/{guild_id}/danger/wipe-reaction-roles")
+async def api_danger_wipe_reaction_roles(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    count = await db.wipe_all_reaction_roles(guild_id)
+    await db.log_action(guild_id, "danger_wipe_reaction_roles", moderator_id=str(user.get("id")),
+                         reason=f"Wiped {count} reaction-role mapping(s) via Danger Zone")
+    return {"wiped": count, "reaction_roles": []}
+
+
 # ------------------------------------------------------ serve the frontend --
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="frontend-assets")
