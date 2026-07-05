@@ -5,6 +5,7 @@ import { useFlash } from "./Flash";
 import Spinner from "./Spinner";
 import Combobox from "./Combobox";
 import EmojiPicker from "./EmojiPicker";
+import EmbedPreview from "./EmbedPreview";
 
 export default function ReactionRoleBuilder({ guildId, roles, channels, onCreated }) {
   const flash = useFlash();
@@ -26,6 +27,15 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
   function removeRow(index) {
     setRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
   }
+
+  const roleNameById = Object.fromEntries(roles.map((r) => [r.id, r.name]));
+  const previewLines = rows
+    .filter((r) => r.emoji && r.role_id)
+    .map((r) => {
+      const roleName = roleNameById[r.role_id] || r.role_id;
+      return r.label ? `${r.emoji} **${r.label}** — @${roleName}` : `${r.emoji} — @${roleName}`;
+    });
+  const previewDescription = [description, previewLines.join("\n")].filter(Boolean).join("\n\n");
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -122,6 +132,7 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
       <button type="button" className="btn btn-ghost btn-small" onClick={addRow}>
         <Plus size={14} /> Add another role
       </button>
+      <EmbedPreview title={title} description={previewDescription} color={color} />
       <div className="form-spacer" />
       <button className="btn btn-primary" type="submit" disabled={submitting}>
         {submitting ? <Spinner size={14} /> : null}
