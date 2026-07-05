@@ -182,3 +182,17 @@ UPDATE guilds SET goodbye_message = '{username} left {server}. 👋'
     WHERE goodbye_message = '{username} left {server}. ðŸ‘‹';
 UPDATE guilds SET level_up_message = 'GG {user}, you reached level {level}! 🎉'
     WHERE level_up_message = 'GG {user}, you reached level {level}! ðŸŽ‰';
+
+CREATE TABLE IF NOT EXISTS trivia_questions (
+    id              BIGSERIAL PRIMARY KEY,
+    guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    channel_id      TEXT NOT NULL,
+    message_id      TEXT NOT NULL,
+    question        TEXT NOT NULL,
+    options         JSONB NOT NULL,
+    correct_index   INTEGER NOT NULL,
+    close_at        TIMESTAMPTZ NOT NULL,
+    closed          BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_trivia_due ON trivia_questions(close_at) WHERE NOT closed;

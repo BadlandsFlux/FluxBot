@@ -480,6 +480,31 @@ async def get_member_voice_minutes(guild_id: str, user_id: str) -> float:
     return float(row["minutes"]) if row else 0.0
 
 
+# ------------------------------------------------------------------ trivia --
+async def add_trivia_question(guild_id: str, channel_id: str, message_id: str, question: str,
+                               options: list[str], correct_index: int, close_at) -> int:
+    import json
+    row = await pool().fetchrow(
+        """
+        INSERT INTO trivia_questions (guild_id, channel_id, message_id, question, options, correct_index, close_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id
+        """,
+        guild_id, channel_id, message_id, question, json.dumps(options), correct_index, close_at,
+    )
+    return row["id"]
+
+
+async def list_due_trivia(now) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM trivia_questions WHERE NOT closed AND close_at <= $1", now,
+    )
+
+
+async def mark_trivia_closed(trivia_id: int) -> None:
+    await pool().execute("UPDATE trivia_questions SET closed=TRUE WHERE id=$1", trivia_id)
+
+
 if __name__ == "__main__":
     # `python -m common.db` — one-off convenience to create the schema
     # without starting the bot or dashboard.

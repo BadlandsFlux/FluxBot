@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 from bot.commands import Bot
 from bot.modules.fun import NUMBER_EMOJI
+from bot.modules import leveling, trivia as trivia_module
 from bot import voice_tracker
 from common import db
 
@@ -80,11 +81,48 @@ async def _close_polls(bot: Bot) -> None:
         await db.mark_poll_closed(p["id"])
 
 
+async def _close_trivia(bot: Bot) -> None:
+    now = datetime.now(timezone.utc)
+    bot_id = str(bot.gateway.user["id"]) if bot.gateway.user else None
+    for t in await db.list_due_trivia(now):
+        try:
+            options = json.loads(t["options"]) if isinstance(t["options"], str) else t["options"]
+            correct_emoji = trivia_module.NUMBER_EMOJI[t["correct_index"]]
+            reactors = await bot.rest.get_reaction_users(t["channel_id"], t["message_id"], correct_emoji)
+            winners = [str(u["id"]) for u in reactors if str(u.get("id")) != bot_id]
+
+            for user_id in winners:
+                try:
+                    member = await bot.get_member(t["guild_id"], user_id, fresh=False)
+                    username = member.get("user", member).get("username", "someone")
+                except Exception:
+                    username = "someone"
+                await leveling.grant_xp(bot, t["guild_id"], user_id, username, trivia_module.XP_REWARD)
+
+            winner_text = (
+                ", ".join(f"<@{uid}>" for uid in winners) if winners else "nobody got it this time"
+            )
+            embed = {
+                "title": f"🧠 {t['question']}",
+                "description": f"Correct answer: {correct_emoji} **{options[t['correct_index']]}**\n\n{winner_text}",
+                "color": 0x2ecc71,
+                "footer": {"text": f"+{trivia_module.XP_REWARD} XP each" if winners else "Trivia closed"},
+            }
+            await bot.rest.edit_message(
+                t["channel_id"], t["message_id"], content="", embeds=[embed],
+                allowed_mentions=bot.rest.mention_only(*winners),
+            )
+        except Exception:
+            log.warning("Failed to close trivia %s", t["id"])
+        await db.mark_trivia_closed(t["id"])
+
+
 async def run_scheduler(bot: Bot) -> None:
     while True:
         try:
             await _deliver_reminders(bot)
             await _close_polls(bot)
+            await _close_trivia(bot)
             await voice_tracker.flush_all(bot)
         except Exception:
             log.exception("Scheduler tick failed")
