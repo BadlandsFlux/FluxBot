@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 from bot.commands import Bot
-from bot.modules import activity, fun, info, leveling, logging_mod, moderation, reminders, roles, tags, trivia, utility
+from bot.modules import activity, afk, fun, info, leveling, logging_mod, moderation, reminders, roles, staffnotes, tags, triva, utility
 from bot.scheduler import run_scheduler
 from bot import voice_tracker
 from common import db
@@ -35,6 +35,8 @@ async def main() -> None:
     leveling.register(bot)
     activity.register(bot)
     trivia.register(bot)
+    afk.register(bot)
+    staffnotes.register(bot)
     voice_tracker.register(bot)
 
     @bot.on("GUILD_CREATE")

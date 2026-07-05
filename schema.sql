@@ -196,3 +196,19 @@ CREATE TABLE IF NOT EXISTS trivia_questions (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_trivia_due ON trivia_questions(close_at) WHERE NOT closed;
+CREATE TABLE IF NOT EXISTS afk_status (
+    guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    reason      TEXT NOT NULL DEFAULT 'AFK',
+    since       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (guild_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS staff_notes (
+    id          BIGSERIAL PRIMARY KEY,
+    guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    note        TEXT NOT NULL,
+    created_by  TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_staff_notes_guild_user ON staff_notes(guild_id, user_id, created_at DESC);
