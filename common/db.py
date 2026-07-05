@@ -137,6 +137,14 @@ async def clear_warnings(guild_id: str, user_id: str) -> int:
     return int(result.split()[-1])
 
 
+async def clear_all_warnings(guild_id: str) -> int:
+    """Danger Zone: deactivate every active warning server-wide."""
+    result = await pool().execute(
+        "UPDATE warnings SET active=FALSE WHERE guild_id=$1 AND active", guild_id,
+    )
+    return int(result.split()[-1])
+
+
 # ------------------------------------------------------------ mod actions --
 async def log_action(guild_id: str, action: str, user_id: str = "", moderator_id: str = "",
                       reason: str = "") -> None:
@@ -195,6 +203,14 @@ async def remove_reaction_roles_by_message(guild_id: str, message_id: str) -> in
     result = await pool().execute(
         "DELETE FROM reaction_roles WHERE guild_id=$1 AND message_id=$2", guild_id, message_id,
     )
+    return int(result.split()[-1])
+
+
+async def wipe_all_reaction_roles(guild_id: str) -> int:
+    """Danger Zone: delete every reaction-role mapping for this guild. Does
+    not touch the actual Fluxer messages, just the DB-side mappings, so
+    reacting to an old message afterward simply won't do anything anymore."""
+    result = await pool().execute("DELETE FROM reaction_roles WHERE guild_id=$1", guild_id)
     return int(result.split()[-1])
 
 
@@ -342,6 +358,14 @@ async def set_level(guild_id: str, user_id: str, level: int) -> None:
     )
 
 
+async def reset_all_xp(guild_id: str) -> int:
+    """Danger Zone: wipe every member's level/XP for this guild back to
+    zero. Doesn't touch message/voice activity stats, those are a
+    separate concern from leveling."""
+    result = await pool().execute("DELETE FROM levels WHERE guild_id=$1", guild_id)
+    return int(result.split()[-1])
+
+
 async def get_leaderboard(guild_id: str, limit: int = 10) -> list[asyncpg.Record]:
     return await pool().fetch(
         "SELECT * FROM levels WHERE guild_id=$1 ORDER BY xp DESC LIMIT $2", guild_id, limit,
@@ -478,6 +502,63 @@ async def get_member_voice_minutes(guild_id: str, user_id: str) -> float:
         guild_id, user_id,
     )
     return float(row["minutes"]) if row else 0.0
+
+
+# ---------------------------------------------------------------------- afk --
+async def set_afk(guild_id: str, user_id: str, reason: str) -> None:
+    await pool().execute(
+        """
+        INSERT INTO afk_status (guild_id, user_id, reason, since)
+        VALUES ($1, $2, $3, now())
+        ON CONFLICT (guild_id, user_id) DO UPDATE SET reason = EXCLUDED.reason, since = now()
+        """,
+        guild_id, user_id, reason,
+    )
+
+
+async def get_afk(guild_id: str, user_id: str) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow(
+        "SELECT * FROM afk_status WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
+    )
+
+
+async def clear_afk(guild_id: str, user_id: str) -> bool:
+    result = await pool().execute(
+        "DELETE FROM afk_status WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
+# ------------------------------------------------------------- staff notes --
+async def add_staff_note(guild_id: str, user_id: str, note: str, created_by: str) -> int:
+    row = await pool().fetchrow(
+        """
+        INSERT INTO staff_notes (guild_id, user_id, note, created_by)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
+        """,
+        guild_id, user_id, note, created_by,
+    )
+    return row["id"]
+
+
+async def list_staff_notes(guild_id: str, user_id: str) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM staff_notes WHERE guild_id=$1 AND user_id=$2 ORDER BY created_at DESC",
+        guild_id, user_id,
+    )
+
+
+async def remove_staff_note(guild_id: str, note_id: int) -> bool:
+    result = await pool().execute(
+        "DELETE FROM staff_notes WHERE guild_id=$1 AND id=$2", guild_id, note_id,
+    )
+    return result.split()[-1] != "0"
+
+
+async def list_afk_for_users(guild_id: str, user_ids: list[str]) -> list[asyncpg.Record]:
+    if not user_ids:
+        return []
+    return await pool().fetch(
+        "SELECT * FROM afk_status WHERE guild_id=$1 AND user_id = ANY($2::text[])",
+        guild_id, user_ids,
+    )
 
 
 if __name__ == "__main__":
