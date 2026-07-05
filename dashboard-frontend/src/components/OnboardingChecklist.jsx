@@ -1,6 +1,16 @@
-import { CheckCircle2, Circle } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, Circle, X } from "lucide-react";
+
+function storageKey(guildId) {
+  return `fluxbot-onboarding-dismissed-${guildId}`;
+}
 
 export default function OnboardingChecklist({ guild, autoroles, reactionRoles, tags, setTab }) {
+  const [closedThisSession, setClosedThisSession] = useState(false);
+  const [neverRemind, setNeverRemind] = useState(
+    () => localStorage.getItem(storageKey(guild.guild_id)) === "1"
+  );
+
   const items = [
     {
       key: "modlog",
@@ -47,10 +57,18 @@ export default function OnboardingChecklist({ guild, autoroles, reactionRoles, t
   ];
 
   const doneCount = items.filter((i) => i.done).length;
-  if (doneCount === items.length) return null; // fully set up, don't clutter the page
+  if (doneCount === items.length || closedThisSession || neverRemind) return null;
+
+  function dismissForever() {
+    localStorage.setItem(storageKey(guild.guild_id), "1");
+    setNeverRemind(true);
+  }
 
   return (
     <div className="card onboarding-checklist">
+      <button type="button" className="onboarding-close" onClick={() => setClosedThisSession(true)} title="Close">
+        <X size={16} />
+      </button>
       <h2>Getting set up ({doneCount}/{items.length})</h2>
       <p className="muted small">A quick look at what's configured so far. Disappears once everything below is done.</p>
       <ul className="checklist">
@@ -63,6 +81,9 @@ export default function OnboardingChecklist({ guild, autoroles, reactionRoles, t
           </li>
         ))}
       </ul>
+      <button type="button" className="onboarding-never-remind" onClick={dismissForever}>
+        Don't remind me again
+      </button>
     </div>
   );
 }

@@ -775,6 +775,41 @@ async def api_remove_level_role(request: Request, guild_id: str, level: int):
     return {"level_roles": [_level_role_to_json(r) for r in await db.list_level_roles(guild_id)]}
 
 
+async def _leaderboard_response(guild_id: str) -> dict:
+    leaderboard = await db.get_leaderboard(guild_id, 20)
+    names = await _resolve_usernames(guild_id, [r["user_id"] for r in leaderboard])
+    return {"leaderboard": [_level_to_json(r, names.get(r["user_id"], r["user_id"])) for r in leaderboard]}
+
+
+@app.post("/api/guilds/{guild_id}/levels/{user_id}/reset")
+async def api_reset_user_xp(request: Request, guild_id: str, user_id: str):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    await db.reset_user_xp(guild_id, user_id)
+    await db.log_action(guild_id, "xp_reset", user_id=user_id, moderator_id=str(user.get("id")),
+                         reason="Reset this member's XP/level via dashboard")
+    return await _leaderboard_response(guild_id)
+
+
+class XpAdjustPayload(BaseModel):
+    amount: int
+
+
+@app.post("/api/guilds/{guild_id}/levels/{user_id}/adjust")
+async def api_adjust_user_xp(request: Request, guild_id: str, user_id: str, payload: XpAdjustPayload):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    if payload.amount == 0:
+        raise _ApiError(400, "Give a non-zero amount to add or remove.")
+    row = await db.adjust_xp(guild_id, user_id, payload.amount)
+    new_level = leveling.level_for_xp(row["xp"])
+    await db.set_level(guild_id, user_id, new_level)
+    verb = "Added" if payload.amount > 0 else "Removed"
+    await db.log_action(guild_id, "xp_adjust", user_id=user_id, moderator_id=str(user.get("id")),
+                         reason=f"{verb} {abs(payload.amount)} XP via dashboard")
+    return await _leaderboard_response(guild_id)
+
+
 # ------------------------------------------------------------------ announce --
 class AnnouncePayload(BaseModel):
     channel_id: str

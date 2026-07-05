@@ -357,6 +357,8 @@ Most day-to-day admin work can be done entirely from the dashboard, no need to t
 - **Announce tab**: compose and send a custom embed (title, description, color, image, footer) to any channel.
 - **Warnings / Mod Log tabs**: view and clear warnings, browse full history.
 - **Danger Zone** (bottom of Settings): bulk, irreversible actions (clear all warnings, reset all XP, wipe all reaction roles), each gated behind typing "CONFIRM" before it runs, and logged to Mod Log.
+- **Per-user XP management** (Levels tab): add or remove a specific amount of XP for one member, or reset just their level/XP back to zero, distinct from the Danger Zone's server-wide reset. Both are logged to Mod Log.
+- **Onboarding checklist**: closeable with the X for the current visit, or permanently with "Don't remind me again" (persisted per-server in your browser), if you'd rather not see it again even before finishing setup.
 - **Staff notes**: view, add, and remove private notes on any member directly from the Members tab.
 
 A few things are chat-only for now (no dashboard equivalent yet): `!purge`, `!roll`/`!coinflip`/`!wheel`, `!avatar`/`!serverinfo`/`!userinfo`/`!info`, and reminders (`!remind`/`!reminders`/`!delreminder`, inherently personal/ephemeral rather than server config). Starting a poll (`!poll`) is chat-only too, though its auto-close and results tally happen automatically via the background scheduler regardless of how it was started.
