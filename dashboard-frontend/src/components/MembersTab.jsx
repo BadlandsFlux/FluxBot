@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Ban, Clock, LogOut, ShieldAlert, Search, Users } from "lucide-react";
+import { Ban, Clock, LogOut, ShieldAlert, Search, Users, StickyNote, Plus, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "./Flash";
 import Spinner from "./Spinner";
@@ -34,6 +34,10 @@ export default function MembersTab({ guildId, roles }) {
   const [reason, setReason] = useState("");
   const [durationSeconds, setDurationSeconds] = useState(3600);
   const [submitting, setSubmitting] = useState(false);
+  const [notesOpenFor, setNotesOpenFor] = useState(null);
+  const [notes, setNotes] = useState([]);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [newNote, setNewNote] = useState("");
 
   const [selected, setSelected] = useState(new Set());
   const [bulkAction, setBulkAction] = useState(null); // {type}
@@ -69,6 +73,44 @@ export default function MembersTab({ guildId, roles }) {
     setPendingAction({ userId, type });
     setReason("");
     setDurationSeconds(3600);
+  }
+
+  async function toggleNotes(userId) {
+    if (notesOpenFor === userId) {
+      setNotesOpenFor(null);
+      return;
+    }
+    setNotesOpenFor(userId);
+    setNewNote("");
+    setNotesLoading(true);
+    try {
+      const data = await api.listMemberNotes(guildId, userId);
+      setNotes(data.notes);
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setNotesLoading(false);
+    }
+  }
+
+  async function addNote(userId) {
+    if (!newNote.trim()) return;
+    try {
+      const data = await api.addMemberNote(guildId, userId, newNote.trim());
+      setNotes(data.notes);
+      setNewNote("");
+    } catch (err) {
+      flash(err.message, "error");
+    }
+  }
+
+  async function removeNoteRow(userId, noteId) {
+    try {
+      const data = await api.removeMemberNote(guildId, userId, noteId);
+      setNotes(data.notes);
+    } catch (err) {
+      flash(err.message, "error");
+    }
   }
 
   async function confirmAction() {
@@ -256,6 +298,87 @@ export default function MembersTab({ guildId, roles }) {
                       )}
                     </div>
                   </div>
+                  {ACTION_META[pendingAction.type].needsDuration && (
+                    <select value={durationSeconds} onChange={(e) => setDurationSeconds(Number(e.target.value))}>
+                      {DURATIONS.map((d) => (
+                        <option key={d.seconds} value={d.seconds}>
+                          {d.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button className="btn btn-primary btn-small" onClick={confirmAction} disabled={submitting}>
+                    {submitting ? <Spinner size={12} /> : `Confirm ${ACTION_META[pendingAction.type].label}`}
+                  </button>
+                  <button className="btn btn-ghost btn-small" onClick={() => setPendingAction(null)}>
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="member-actions">
+                  {Object.entries(ACTION_META).map(([type, meta]) => {
+                    const Icon = meta.icon;
+                    return (
+                      <button
+                        key={type}
+                        className="btn btn-ghost btn-small btn-icon"
+                        title={meta.label}
+                        onClick={() => openAction(m.id, type)}
+                      >
+                        <Icon size={14} />
+                      </button>
+                    );
+                  })}
+                  <button
+                    className="btn btn-ghost btn-small btn-icon"
+                    title="Staff notes"
+                    onClick={() => toggleNotes(m.id)}
+                  >
+                    <StickyNote size={14} />
+                  </button>
+                </div>
+              )}
+
+              {notesOpenFor === m.id && (
+                <div className="member-notes-panel">
+                  {notesLoading ? (
+                    <div className="loading-row"><Spinner size={14} /><span className="muted small">Loading notes…</span></div>
+                  ) : (
+                    <>
+                      {notes.length ? (
+                        <ul className="member-notes-list">
+                          {notes.map((n) => (
+                            <li key={n.id}>
+                              <span>{n.note}</span>
+                              <span className="muted small">by <code>{n.created_by}</code></span>
+                              <button className="chip-remove" onClick={() => removeNoteRow(m.id, n.id)} title="Remove">
+                                <Trash2 size={12} />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="muted small">No notes on this member yet.</p>
+                      )}
+                      <form
+                        className="inline-form"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          addNote(m.id);
+                        }}
+                      >
+                        <input
+                          type="text"
+                          placeholder="Add a private note (staff only)…"
+                          value={newNote}
+                          onChange={(e) => setNewNote(e.target.value)}
+                        />
+                        <button className="btn btn-primary btn-small" type="submit">
+                          <Plus size={14} /> Add
+                        </button>
+                      </form>
+                    </>
+                  )}
                 </div>
 
                 {pendingAction?.userId === m.id ? (
