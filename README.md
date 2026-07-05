@@ -319,6 +319,7 @@ Run `!help` in Fluxer once the bot is running for the live, per-server list (it 
 | `!purge <count>` | Manage Messages | Bulk delete recent messages |
 | `!warn @user [reason]` | Kick Members | Warn (auto-escalates per guild settings) |
 | `!warnings @user` | none | List a member's warnings |
+| `!note add/list/remove @user <text>` | Kick Members | Private staff notes on a member, no escalation, just visibility |
 | `!clearwarnings @user` | Kick Members | Clear active warnings |
 | `!modlog #channel` | Manage Guild | Set the mod-log channel |
 | `!autorole add/remove/list @role` | Manage Guild | Roles auto-given on join |
@@ -336,7 +337,9 @@ Run `!help` in Fluxer once the bot is running for the live, per-server list (it 
 | `!leaderboard` | none | Server XP leaderboard |
 | `!achievements [@user]` | none | Milestone badges earned (messages, level, voice time) |
 | `!ping` | none | Gateway/API/DB latency, uptime, server count |
+| `!afk [reason]` | none | Mark yourself away; auto-clears on your next message, notes it if someone mentions you |
 | `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | none | Fun stuff |
+| `!trivia` | none | Multiple-choice trivia (pulled live from Open Trivia DB, falls back to a small local bank if that's unreachable), closes in 30s, correct answers earn XP |
 
 `!info` is gated by `BOT_OWNER_ID` in `.env` (your own Fluxer user ID), not by any per-server permission, it's meant for you, not server admins.
 
@@ -353,5 +356,7 @@ Most day-to-day admin work can be done entirely from the dashboard, no need to t
 - **Tags tab**: add/remove custom `!tagname` shortcuts.
 - **Announce tab**: compose and send a custom embed (title, description, color, image, footer) to any channel.
 - **Warnings / Mod Log tabs**: view and clear warnings, browse full history.
+- **Danger Zone** (bottom of Settings): bulk, irreversible actions (clear all warnings, reset all XP, wipe all reaction roles), each gated behind typing "CONFIRM" before it runs, and logged to Mod Log.
+- **Staff notes**: view, add, and remove private notes on any member directly from the Members tab.
 
 A few things are chat-only for now (no dashboard equivalent yet): `!purge`, `!roll`/`!coinflip`/`!wheel`, `!avatar`/`!serverinfo`/`!userinfo`/`!info`, and reminders (`!remind`/`!reminders`/`!delreminder`, inherently personal/ephemeral rather than server config). Starting a poll (`!poll`) is chat-only too, though its auto-close and results tally happen automatically via the background scheduler regardless of how it was started.

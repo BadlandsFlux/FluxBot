@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useFlash } from "./Flash";
 import Spinner from "./Spinner";
 import Combobox from "./Combobox";
+import EmbedPreview from "./EmbedPreview";
 
 export default function AnnouncementBuilder({ guildId, channels }) {
   const flash = useFlash();
@@ -74,8 +75,10 @@ export default function AnnouncementBuilder({ guildId, channels }) {
       </label>
       <label>
         Footer (optional)
-        <input type="text" value={footer} onChange={(e) => setFooter(e.target.value)} placeholder="— The team" />
+        <input type="text" value={footer} onChange={(e) => setFooter(e.target.value)} placeholder="The team" />
       </label>
+      <EmbedPreview title={title} description={description} color={color} imageUrl={imageUrl} footer={footer} />
+      <div className="form-spacer" />
       <button className="btn btn-primary" type="submit" disabled={submitting}>
         {submitting ? <Spinner size={14} /> : <Send size={14} />}
         {submitting ? "Sending…" : "Send announcement"}
