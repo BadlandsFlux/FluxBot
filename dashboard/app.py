@@ -15,11 +15,12 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from bot import moderation_actions
+from bot.moderation_actions import ModerationBlocked
 from bot import voice_tracker
 from bot.commands import Bot as BotFramework
 from bot.modules import achievements, fun, info as info_module, leveling, moderation, reminders, roles, staffnotes, tags, trivia, utility
 from bot.modules import afk as afk_module
-from bot.permissions import permission_name
+from bot.permissions import permission_name, role_is_privileged
 from bot.rest import FluxerAPIError, FluxerREST
 from common import db
 from common.config import config
@@ -86,9 +87,28 @@ def _check_session_secret() -> None:
         )
 
 
+def _check_network_exposure() -> None:
+    """Not fatal, unlike the session-secret check: DASHBOARD_HOST=0.0.0.0
+    with DASHBOARD_COOKIE_SECURE=false might be a deliberate, understood
+    choice (quick LAN testing before TLS is set up), not necessarily a
+    mistake. But it's exactly the combination that sends the session
+    cookie in plaintext to whoever can reach the dashboard over the
+    network, so it's worth a loud warning rather than a silent footgun."""
+    if config.dashboard_host not in ("127.0.0.1", "localhost", "::1") and not config.dashboard_cookie_secure:
+        log.warning(
+            "DASHBOARD_HOST=%s (reachable from the network) but DASHBOARD_COOKIE_SECURE is not "
+            "enabled. The login session cookie will be sent in plaintext to anyone who can reach "
+            "this dashboard, not just you. If you're not behind TLS/nginx yet, either set "
+            "DASHBOARD_HOST=127.0.0.1 until you are, or set DASHBOARD_COOKIE_SECURE=true once you "
+            "actually are. See the README's \"Reverse proxy (nginx)\" section.",
+            config.dashboard_host,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _check_session_secret()
+    _check_network_exposure()
     await db.init_pool()
     await bot_rest.start()
     yield
@@ -362,6 +382,13 @@ async def api_add_autorole(request: Request, guild_id: str, payload: AutoroleAdd
     role_id = payload.role_id.strip()
     if not role_id.isdigit():
         raise _ApiError(400, "Role ID must be numeric — copy it from Fluxer with Developer Mode on.")
+    try:
+        guild = await bot_rest.get_guild(guild_id)
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Couldn't verify that role (HTTP {e.status}).")
+    if role_is_privileged(guild, role_id):
+        raise _ApiError(400, "That role carries moderation/admin permissions, autoroles can't grant it "
+                              "automatically to every new member. Assign it manually instead.")
     await db.add_autorole(guild_id, role_id)
     return {"autoroles": await db.list_autoroles(guild_id)}
 
@@ -404,6 +431,15 @@ async def api_create_reaction_role(request: Request, guild_id: str, payload: Rea
     ]
     if not channel_id.isdigit() or not pairs:
         raise _ApiError(400, "Give a channel ID and at least one emoji + role pair.")
+
+    try:
+        guild = await bot_rest.get_guild(guild_id)
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Couldn't verify those roles (HTTP {e.status}).")
+    privileged = [role_id for _, _, role_id in pairs if role_is_privileged(guild, role_id)]
+    if privileged:
+        raise _ApiError(400, "One or more of those roles carry moderation/admin permissions, reaction roles "
+                              "can't hand them out to anyone who clicks. Assign them manually instead.")
 
     def _line(emoji: str, label: str, role: str) -> str:
         return f"{emoji} **{label}** — <@&{role}>" if label else f"{emoji} — <@&{role}>"
@@ -561,6 +597,8 @@ async def api_kick_member(request: Request, guild_id: str, user_id: str, payload
     user = await _fetch_member_user(guild_id, user_id)
     try:
         await moderation_actions.kick_member(bot_rest, guild_id, user, moderator, payload.reason or "No reason provided")
+    except ModerationBlocked as e:
+        raise _ApiError(403, str(e))
     except FluxerAPIError as e:
         raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}).")
     return {"ok": True}
@@ -573,6 +611,8 @@ async def api_ban_member(request: Request, guild_id: str, user_id: str, payload:
     user = await _fetch_member_user(guild_id, user_id)
     try:
         await moderation_actions.ban_member(bot_rest, guild_id, user, moderator, payload.reason or "No reason provided")
+    except ModerationBlocked as e:
+        raise _ApiError(403, str(e))
     except FluxerAPIError as e:
         raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}).")
     return {"ok": True}
@@ -588,6 +628,8 @@ async def api_timeout_member(request: Request, guild_id: str, user_id: str, payl
     try:
         await moderation_actions.timeout_member(bot_rest, guild_id, user, moderator,
                                                   payload.duration_seconds, payload.reason or "No reason provided")
+    except ModerationBlocked as e:
+        raise _ApiError(403, str(e))
     except FluxerAPIError as e:
         raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}).")
     return {"ok": True}
@@ -610,8 +652,13 @@ async def api_warn_member(request: Request, guild_id: str, user_id: str, payload
     await _require_manage(request, guild_id)
     moderator = _moderator_from_session(request)
     user = await _fetch_member_user(guild_id, user_id)
-    result = await moderation_actions.warn_member(bot_rest, guild_id, user, moderator,
-                                                    payload.reason or "No reason provided")
+    try:
+        result = await moderation_actions.warn_member(bot_rest, guild_id, user, moderator,
+                                                        payload.reason or "No reason provided")
+    except ModerationBlocked as e:
+        raise _ApiError(403, str(e))
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}).")
     warnings = await db.list_warnings(guild_id)
     return {
         "result": result,

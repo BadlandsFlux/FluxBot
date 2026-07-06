@@ -22,6 +22,17 @@ log = logging.getLogger("fluxbot.commands")
 
 CommandFunc = Callable[["Context"], Awaitable[None]]
 _PREFIX_CACHE_TTL = 30  # seconds
+# Both of these back the permission check in _on_message (ctx.guild/ctx.member
+# feed straight into is_moderator()). Without a TTL, a demoted moderator (role
+# removed) or a role whose permissions get tightened keeps their old access
+# for as long as the bot process stays up, since nothing else in this file
+# forces a refetch. GUILD_UPDATE/GUILD_MEMBER_UPDATE invalidate these early
+# when we see them, but the TTL is what actually guarantees an upper bound
+# regardless of whether a given event fires or its shape matches what we
+# expect (best-effort, Discord-convention assumption, like most event
+# handling in this project).
+_GUILD_CACHE_TTL = 60  # seconds
+_MEMBER_CACHE_TTL = 60  # seconds
 
 
 @dataclass
@@ -66,8 +77,8 @@ class Bot:
         self.commands: dict[str, Command] = {}
         self.prefix = config.command_prefix
         self.started_at = time.monotonic()
-        self._member_cache: dict[tuple[str, str], dict] = {}
-        self._guild_cache: dict[str, dict] = {}
+        self._member_cache: dict[tuple[str, str], tuple[dict, float]] = {}
+        self._guild_cache: dict[str, tuple[dict, float]] = {}
         self._prefix_cache: dict[str, tuple[str, float]] = {}  # guild_id -> (prefix, fetched_at)
 
         self.gateway.on("MESSAGE_CREATE")(self._on_message)
@@ -90,18 +101,29 @@ class Bot:
         return self.gateway.on(event_name)
 
     async def get_guild(self, guild_id: str, fresh: bool = False) -> dict:
-        if fresh or guild_id not in self._guild_cache:
-            self._guild_cache[guild_id] = await self.rest.get_guild(guild_id)
-        return self._guild_cache[guild_id]
+        cached = self._guild_cache.get(guild_id)
+        now = time.monotonic()
+        if fresh or not cached or (now - cached[1]) >= _GUILD_CACHE_TTL:
+            data = await self.rest.get_guild(guild_id)
+            self._guild_cache[guild_id] = (data, now)
+            return data
+        return cached[0]
 
     async def get_member(self, guild_id: str, user_id: str, fresh: bool = False) -> dict:
         key = (guild_id, user_id)
-        if fresh or key not in self._member_cache:
-            self._member_cache[key] = await self.rest.get_guild_member(guild_id, user_id)
-        return self._member_cache[key]
+        cached = self._member_cache.get(key)
+        now = time.monotonic()
+        if fresh or not cached or (now - cached[1]) >= _MEMBER_CACHE_TTL:
+            data = await self.rest.get_guild_member(guild_id, user_id)
+            self._member_cache[key] = (data, now)
+            return data
+        return cached[0]
 
     def invalidate_guild(self, guild_id: str) -> None:
         self._guild_cache.pop(guild_id, None)
+
+    def invalidate_member(self, guild_id: str, user_id: str) -> None:
+        self._member_cache.pop((guild_id, user_id), None)
 
     @property
     def uptime_seconds(self) -> float:

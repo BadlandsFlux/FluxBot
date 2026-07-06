@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 
 from bot.commands import Bot, Context
-from bot.permissions import PERM_MANAGE_GUILD
+from bot.permissions import PERM_MANAGE_GUILD, role_is_privileged
 from common import db
 
 ROLE_MENTION_RE = re.compile(r"^<@&(\d+)>$")
@@ -54,6 +54,15 @@ def register(bot: Bot) -> None:
             await ctx.reply(f"Couldn't parse `{ctx.args[1]}` as a role.")
             return
         if sub == "add":
+            try:
+                guild = await ctx.bot.get_guild(ctx.guild_id, fresh=True)
+            except Exception:
+                await ctx.reply("Couldn't verify that role right now, try again in a moment.")
+                return
+            if role_is_privileged(guild, role_id):
+                await ctx.reply("🚫 That role carries moderation/admin permissions, autoroles can't grant it "
+                                 "automatically to every new member. Assign it manually instead.")
+                return
             await db.add_autorole(ctx.guild_id, role_id)
             await ctx.reply(f"✅ New members will now get <@&{role_id}>.")
         elif sub == "remove":
@@ -95,6 +104,15 @@ def register(bot: Bot) -> None:
             role_id = parse_role_id(ctx.args[3])
             if not role_id:
                 await ctx.reply(f"Couldn't parse `{ctx.args[3]}` as a role.")
+                return
+            try:
+                guild = await ctx.bot.get_guild(ctx.guild_id, fresh=True)
+            except Exception:
+                await ctx.reply("Couldn't verify that role right now, try again in a moment.")
+                return
+            if role_is_privileged(guild, role_id):
+                await ctx.reply("🚫 That role carries moderation/admin permissions, reaction roles can't "
+                                 "hand it out to anyone who clicks. Assign it manually instead.")
                 return
             await db.add_reaction_role(ctx.guild_id, ctx.channel_id, message_id, emoji, role_id)
             try:
@@ -173,7 +191,7 @@ def register(bot: Bot) -> None:
         guild_id = data.get("guild_id")
         if not (message_id and emoji and user_id and guild_id):
             return
-        mapping = await db.get_reaction_role(message_id, str(emoji))
+        mapping = await db.get_reaction_role(str(guild_id), message_id, str(emoji))
         if not mapping:
             return
         try:
@@ -190,7 +208,7 @@ def register(bot: Bot) -> None:
         guild_id = data.get("guild_id")
         if not (message_id and emoji and user_id and guild_id):
             return
-        mapping = await db.get_reaction_role(message_id, str(emoji))
+        mapping = await db.get_reaction_role(str(guild_id), message_id, str(emoji))
         if not mapping:
             return
         try:

@@ -113,7 +113,7 @@ class GatewayClient:
         gw = self.rest.gateway_url_hint or (await self.rest.get_gateway_bot())["url"]
         gw = _with_gateway_params(gw)
         log.info("Connecting to gateway %s", gw)
-        async with websockets.connect(gw, max_size=None) as ws:
+        async with websockets.connect(gw, max_size=config.gateway_max_message_bytes) as ws:
             self._ws = ws
             hello_raw = await ws.recv()
             hello = json.loads(hello_raw)
