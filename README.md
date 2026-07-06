@@ -233,7 +233,7 @@ The dashboard listens on plain HTTP (`DASHBOARD_PORT`, default 8000). For a real
    sudo nginx -t && sudo systemctl reload nginx
    ```
 
-4. **Bind the dashboard to localhost only**, now that nginx is the public entry point. In `.env`:
+4. **Confirm the dashboard is bound to localhost only**, now that nginx is the public entry point (this is the default since `.env.example`, so there's nothing to change here unless you'd previously widened it yourself, e.g. for LAN testing):
    ```
    DASHBOARD_HOST=127.0.0.1
    DASHBOARD_COOKIE_SECURE=true
@@ -262,9 +262,11 @@ One Fluxer "Application" gives you everything: the bot token, the OAuth2 client 
 
 5. **Add the dashboard's redirect URI**: under **Redirect URIs**, add exactly what you set as `FLUXER_OAUTH_REDIRECT_URI` in `.env` (e.g. `https://your-dashboard-domain/auth/callback`), then **Add redirect**. This has to match exactly, including scheme and trailing slashes, or the login flow will fail.
 
-6. **Invite the bot to your server**: scroll down to **OAuth2 URL builder**. Check the `bot` scope, then under **Bot permissions** check **Administrator** (simplest, guarantees every command works without fiddling with individual bits), copy the generated **Authorize URL**, and open it in a browser to add the bot to your server. The redirect URI dropdown there doesn't matter for this step, it's only relevant for identify/guilds-scope logins, not a plain bot invite.
+6. **Invite the bot to your server**: scroll down to **OAuth2 URL builder**. Check the `bot` scope, then under **Bot permissions** check exactly what the bot actually uses: Kick Members, Ban Members, Moderate Members (timeout), Manage Roles, Manage Messages, Manage Guild, Send Messages, Embed Links, Add Reactions, View Channel, Read Message History. Copy the generated **Authorize URL** and open it in a browser to add the bot to your server. The redirect URI dropdown there doesn't matter for this step, it's only relevant for identify/guilds-scope logins, not a plain bot invite.
 
-   If you'd rather not grant Administrator, the bot only actually needs: Kick Members, Ban Members, Moderate Members (timeout), Manage Roles, Manage Messages, Manage Guild, Send Messages, Embed Links, Add Reactions, View Channel, Read Message History.
+   Least privilege matters here independently of anything the bot's own code does: even with the hierarchy/self/owner protections and the privileged-role guardrails described elsewhere in this README, a smaller granted permission set is still a smaller blast radius if the bot's token or session is ever compromised, or if a bug turns up in the bot's own checks. Don't grant more than it needs just because it's one click easier.
+
+   If you'd genuinely rather not manage individual permission bits, checking **Administrator** instead guarantees every command works without fiddling with them, at the cost of exactly that reduced blast radius.
 
 ## Self-hosting a Fluxer instance
 
@@ -301,13 +303,15 @@ If your instance's OpenAPI spec (usually at `<api_base>/openapi.json`, or your i
 
 One concrete limit worth knowing: the dashboard's Members tab fetches up to 500 members per request (Fluxer's member-list endpoint is paginated like Discord's). Large servers won't show every member in search, searching by exact user ID still works around that.
 
-**On that `allowed_mentions` point specifically**: several messages the bot sends embed free text a member fully controls, `!remind`'s reminder text, a member's own username in welcome/goodbye/level-up messages, so every outgoing message defaults to pinging nobody at all (`bot/rest.py`'s `FluxerREST.SAFE_ALLOWED_MENTIONS`) unless the calling code explicitly allow-lists the one specific user ID it intends to notify (`FluxerREST.mention_only(user_id)`). This closes off a real mass-ping griefing path: without it, any member (no special permission needed) could type `@everyone` or mention other members inside free-text fields and have the bot actually broadcast it, especially if the bot's invite permission includes mention-everyone, which Administrator (this README's suggested simple option) does. If you add new code that sends a message with plain `content`, don't forget to either accept the default (nobody gets pinged) or pass `allowed_mentions=bot.rest.mention_only(the_one_user_id)` if a ping is genuinely intended, don't rely on Fluxer's own default, since we don't know what that default is on any given instance.
+**On that `allowed_mentions` point specifically**: several messages the bot sends embed free text a member fully controls, `!remind`'s reminder text, a member's own username in welcome/goodbye/level-up messages, so every outgoing message defaults to pinging nobody at all (`bot/rest.py`'s `FluxerREST.SAFE_ALLOWED_MENTIONS`) unless the calling code explicitly allow-lists the one specific user ID it intends to notify (`FluxerREST.mention_only(user_id)`). This closes off a real mass-ping griefing path: without it, any member (no special permission needed) could type `@everyone` or mention other members inside free-text fields and have the bot actually broadcast it, especially if the bot's invite permission includes mention-everyone, which Administrator (an option here, but not the recommended default) does. If you add new code that sends a message with plain `content`, don't forget to either accept the default (nobody gets pinged) or pass `allowed_mentions=bot.rest.mention_only(the_one_user_id)` if a ping is genuinely intended, don't rely on Fluxer's own default, since we don't know what that default is on any given instance.
 
 P.P.S. The [dashboard-frontend](https://github.com/BadlandsFlux/FluxBot/tree/main/dashboard-frontend) page has a readme with all the API endpoints I use. This frontend can be ripped out and used for other projects if you so wish.
 
 ## Commands
 
 Run `!help` in Fluxer once the bot is running for the live, per-server list (it shows your server's actual prefix and groups commands by category), or visit the dashboard's `/commands` page, same source, always in sync.
+
+Kick/ban/timeout/warn (chat commands and the dashboard's Members tab alike, both go through the same shared logic) refuse to act on yourself, the server owner, or anyone whose highest role outranks or ties yours, regardless of whether you technically hold the raw permission bit. Having Kick Members doesn't mean you should be able to kick an admin.
 
 | Command | Permission | Description |
 |---|---|---|
@@ -330,7 +334,7 @@ Run `!help` in Fluxer once the bot is running for the live, per-server list (it 
 | `!info` | Owner only | Bot-level stats (uptime, latency, server count) |
 | `!poll "Q" "A" "B" ... [duration]` | none | Reaction poll, up to 10 options, optional auto-close with tallied results |
 | `!tag add/remove/list <name> <content>` | Manage Guild (add/remove) | Custom `!name` shortcuts |
-| `!remind <duration> <text>` | none | Set a reminder, e.g. `!remind 2h take out trash` |
+| `!remind <duration> <text>` | none | Set a reminder, e.g. `!remind 2h take out trash` (capped at 10 pending per person) |
 | `!reminders` | none | List your pending reminders |
 | `!delreminder <id>` | none | Cancel a reminder |
 | `!rank [@user]` | none | XP/level progress |
@@ -351,7 +355,7 @@ Most day-to-day admin work can be done entirely from the dashboard, no need to t
 
 - **Settings tab**: mod-log channel, command prefix, mute role, welcome/goodbye channel and message (toggle switches), leveling on/off + level-up channel/message, warning-escalation thresholds, all with searchable role/channel pickers instead of raw IDs.
 - **Members tab**: search members, kick/ban/timeout/warn with a reason, goes through the same shared logic as chat commands, so it's logged and escalates identically either way.
-- **Autoroles / Reaction Roles tabs**: add/remove autoroles, and build reaction-role embeds (the dashboard posts the message, reacts to it, and stores the mapping for you). Reaction-role messages are managed as a unit: delete removes the whole message and every mapping on it, not one emoji at a time.
+- **Autoroles / Reaction Roles tabs**: add/remove autoroles, and build reaction-role embeds (the dashboard posts the message, reacts to it, and stores the mapping for you). Reaction-role messages are managed as a unit: delete removes the whole message and every mapping on it, not one emoji at a time. Neither feature will target a role that itself carries moderation/admin permissions (Administrator, Manage Guild, Kick/Ban/Moderate Members, Manage Messages), that's a privilege-escalation path (self-promotion via autorole-on-join or reacting), not a config choice, so it's blocked outright rather than just warned about.
 - **Levels tab**: view the XP leaderboard and configure level-role rewards (level N grants role X).
 - **Tags tab**: add/remove custom `!tagname` shortcuts.
 - **Announce tab**: compose and send a custom embed (title, description, color, image, footer) to any channel.

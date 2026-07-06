@@ -21,6 +21,7 @@ import re
 
 from bot import moderation_actions as actions
 from bot.commands import Bot, Context
+from bot.moderation_actions import ModerationBlocked
 from bot.modules.logging_mod import log_and_notify
 from bot.permissions import PERM_BAN_MEMBERS, PERM_KICK_MEMBERS, PERM_MANAGE_GUILD, PERM_MANAGE_MESSAGES, PERM_MODERATE_MEMBERS
 from bot.timeutil import parse_duration_seconds
@@ -75,7 +76,11 @@ def register(bot: Bot) -> None:
             return
         reason = " ".join(rest_args) or "No reason provided"
         user = member.get("user", member)
-        await actions.kick_member(ctx.bot.rest, ctx.guild_id, user, ctx.author, reason)
+        try:
+            await actions.kick_member(ctx.bot.rest, ctx.guild_id, user, ctx.author, reason)
+        except ModerationBlocked as e:
+            await ctx.reply(f"🚫 {e}")
+            return
         await ctx.reply(f"👢 Kicked **{user.get('username', user['id'])}**. Reason: {reason}")
 
     @bot.command("ban", category="Moderation", required_permission=PERM_BAN_MEMBERS,
@@ -86,7 +91,11 @@ def register(bot: Bot) -> None:
             return
         reason = " ".join(rest_args) or "No reason provided"
         user = member.get("user", member)
-        await actions.ban_member(ctx.bot.rest, ctx.guild_id, user, ctx.author, reason)
+        try:
+            await actions.ban_member(ctx.bot.rest, ctx.guild_id, user, ctx.author, reason)
+        except ModerationBlocked as e:
+            await ctx.reply(f"🚫 {e}")
+            return
         await ctx.reply(f"🔨 Banned **{user.get('username', user['id'])}**. Reason: {reason}")
 
     @bot.command("unban", category="Moderation", required_permission=PERM_BAN_MEMBERS,
@@ -118,7 +127,11 @@ def register(bot: Bot) -> None:
             return
         reason = " ".join(rest_args[1:]) or "No reason provided"
         user = member.get("user", member)
-        await actions.timeout_member(ctx.bot.rest, ctx.guild_id, user, ctx.author, seconds, reason)
+        try:
+            await actions.timeout_member(ctx.bot.rest, ctx.guild_id, user, ctx.author, seconds, reason)
+        except ModerationBlocked as e:
+            await ctx.reply(f"🚫 {e}")
+            return
         await ctx.reply(f"🔇 Timed out **{user.get('username', user['id'])}** for {rest_args[0]}. Reason: {reason}")
 
     @bot.command("untimeout", category="Moderation", aliases=["unmute"], required_permission=PERM_MODERATE_MEMBERS,
@@ -160,7 +173,11 @@ def register(bot: Bot) -> None:
             return
         reason = " ".join(rest_args) or "No reason provided"
         user = member.get("user", member)
-        result = await actions.warn_member(ctx.bot.rest, ctx.guild_id, user, ctx.author, reason)
+        try:
+            result = await actions.warn_member(ctx.bot.rest, ctx.guild_id, user, ctx.author, reason)
+        except ModerationBlocked as e:
+            await ctx.reply(f"🚫 {e}")
+            return
         active_count = result["active_count"]
         await ctx.reply(f"⚠️ Warned **{user.get('username', user['id'])}** ({active_count} active warning"
                          f"{'s' if active_count != 1 else ''}). Reason: {reason}")

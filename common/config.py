@@ -36,6 +36,13 @@ class Config:
     command_prefix: str = os.getenv("COMMAND_PREFIX", "!")
     intents: int = int(os.getenv("FLUXER_INTENTS", "3243773"))
     gateway_version: int = int(os.getenv("FLUXER_GATEWAY_VERSION", "1"))
+    # The `websockets` library's own default frame-size cap (1 MiB) can be
+    # too small for a single GUILD_CREATE payload on a very large server
+    # (many channels/roles inline in one frame), but disabling the cap
+    # entirely removes protection against a malicious or compromised
+    # gateway sending an oversized frame to exhaust memory. 10 MiB is
+    # generous for any legitimate payload while still being a hard ceiling.
+    gateway_max_message_bytes: int = int(os.getenv("FLUXER_GATEWAY_MAX_MESSAGE_BYTES", str(10 * 1024 * 1024)))
 
     # OAuth2 (dashboard login)
     oauth_client_id: str = os.getenv("FLUXER_OAUTH_CLIENT_ID", "")
@@ -44,7 +51,13 @@ class Config:
 
     # Dashboard
     session_secret: str = os.getenv("DASHBOARD_SESSION_SECRET", "dev-secret-change-me")
-    dashboard_host: str = os.getenv("DASHBOARD_HOST", "0.0.0.0")
+    # Loopback-only by default: only reachable from this machine until you
+    # explicitly widen it (e.g. to 0.0.0.0 for LAN testing, or when nginx
+    # runs on a different host than the dashboard). Binding to all
+    # interfaces by default would mean a fresh install is reachable from
+    # the network the moment it starts, before TLS/nginx/anything else is
+    # set up.
+    dashboard_host: str = os.getenv("DASHBOARD_HOST", "127.0.0.1")
     dashboard_port: int = int(os.getenv("DASHBOARD_PORT", "8000"))
     # Comma-separated IPs/CIDRs uvicorn will trust X-Forwarded-* headers
     # from. Default assumes nginx runs on the same host. If your reverse

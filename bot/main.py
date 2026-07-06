@@ -53,6 +53,19 @@ async def main() -> None:
         await db.upsert_guild(guild_id, name=data.get("name", ""), icon=data.get("icon"))
         bot.invalidate_guild(guild_id)
 
+    @bot.on("GUILD_MEMBER_UPDATE")
+    async def on_guild_member_update(data: dict) -> None:
+        # Best-effort: invalidates our permission-relevant member cache as
+        # soon as we see a role change, rather than waiting out the TTL.
+        # Not load-bearing for correctness (_MEMBER_CACHE_TTL in commands.py
+        # is what actually guarantees an upper bound on staleness), just
+        # closes the window faster when this event does fire as expected.
+        guild_id = data.get("guild_id")
+        user = data.get("user", {})
+        user_id = user.get("id")
+        if guild_id and user_id:
+            bot.invalidate_member(str(guild_id), str(user_id))
+
     log.info("Starting gateway connection to %s ...", config.api_base)
     scheduler_task = asyncio.create_task(run_scheduler(bot))
     try:

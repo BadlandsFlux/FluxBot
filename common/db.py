@@ -177,9 +177,9 @@ async def add_reaction_role(guild_id: str, channel_id: str, message_id: str, emo
     )
 
 
-async def get_reaction_role(message_id: str, emoji: str) -> Optional[asyncpg.Record]:
+async def get_reaction_role(guild_id: str, message_id: str, emoji: str) -> Optional[asyncpg.Record]:
     return await pool().fetchrow(
-        "SELECT * FROM reaction_roles WHERE message_id=$1 AND emoji=$2", message_id, emoji,
+        "SELECT * FROM reaction_roles WHERE guild_id=$1 AND message_id=$2 AND emoji=$3", guild_id, message_id, emoji,
     )
 
 
@@ -295,6 +295,14 @@ async def list_reminders_for_user(guild_id: str, user_id: str) -> list[asyncpg.R
         "SELECT * FROM reminders WHERE guild_id=$1 AND user_id=$2 AND NOT delivered ORDER BY remind_at",
         guild_id, user_id,
     )
+
+
+async def count_pending_reminders(guild_id: str, user_id: str) -> int:
+    row = await pool().fetchrow(
+        "SELECT COUNT(*) AS n FROM reminders WHERE guild_id=$1 AND user_id=$2 AND NOT delivered",
+        guild_id, user_id,
+    )
+    return row["n"]
 
 
 async def remove_reminder(reminder_id: int, user_id: str) -> bool:
