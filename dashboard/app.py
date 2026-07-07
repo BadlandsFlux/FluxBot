@@ -795,9 +795,13 @@ async def api_guild_levels(request: Request, guild_id: str):
     leaderboard = await db.get_leaderboard(guild_id, 20)
     level_roles_list = await db.list_level_roles(guild_id)
     names = await _resolve_usernames(guild_id, [r["user_id"] for r in leaderboard])
+    excluded_channels = await db.list_xp_excluded_channels(guild_id)
+    multipliers = await db.list_xp_role_multipliers(guild_id)
     return {
         "leaderboard": [_level_to_json(r, names.get(r["user_id"], r["user_id"])) for r in leaderboard],
         "level_roles": [_level_role_to_json(r) for r in level_roles_list],
+        "excluded_channels": excluded_channels,
+        "role_multipliers": [{"role_id": r["role_id"], "multiplier": float(r["multiplier"])} for r in multipliers],
     }
 
 
@@ -820,6 +824,50 @@ async def api_remove_level_role(request: Request, guild_id: str, level: int):
     await _require_manage(request, guild_id)
     await db.remove_level_role(guild_id, level)
     return {"level_roles": [_level_role_to_json(r) for r in await db.list_level_roles(guild_id)]}
+
+
+class XpExcludedChannelPayload(BaseModel):
+    channel_id: str
+
+
+@app.post("/api/guilds/{guild_id}/levels/excluded-channels")
+async def api_add_xp_excluded_channel(request: Request, guild_id: str, payload: XpExcludedChannelPayload):
+    await _require_manage(request, guild_id)
+    channel_id = payload.channel_id.strip()
+    if not channel_id.isdigit():
+        raise _ApiError(400, "Channel ID must be numeric.")
+    await db.add_xp_excluded_channel(guild_id, channel_id)
+    return {"excluded_channels": await db.list_xp_excluded_channels(guild_id)}
+
+
+@app.delete("/api/guilds/{guild_id}/levels/excluded-channels/{channel_id}")
+async def api_remove_xp_excluded_channel(request: Request, guild_id: str, channel_id: str):
+    await _require_manage(request, guild_id)
+    await db.remove_xp_excluded_channel(guild_id, channel_id)
+    return {"excluded_channels": await db.list_xp_excluded_channels(guild_id)}
+
+
+class XpMultiplierPayload(BaseModel):
+    role_id: str
+    multiplier: float
+
+
+@app.post("/api/guilds/{guild_id}/levels/multipliers")
+async def api_set_xp_multiplier(request: Request, guild_id: str, payload: XpMultiplierPayload):
+    await _require_manage(request, guild_id)
+    if payload.multiplier <= 0 or payload.multiplier > 10:
+        raise _ApiError(400, "Multiplier must be greater than 0 and at most 10.")
+    await db.set_xp_role_multiplier(guild_id, payload.role_id, payload.multiplier)
+    rows = await db.list_xp_role_multipliers(guild_id)
+    return {"role_multipliers": [{"role_id": r["role_id"], "multiplier": float(r["multiplier"])} for r in rows]}
+
+
+@app.delete("/api/guilds/{guild_id}/levels/multipliers/{role_id}")
+async def api_remove_xp_multiplier(request: Request, guild_id: str, role_id: str):
+    await _require_manage(request, guild_id)
+    await db.remove_xp_role_multiplier(guild_id, role_id)
+    rows = await db.list_xp_role_multipliers(guild_id)
+    return {"role_multipliers": [{"role_id": r["role_id"], "multiplier": float(r["multiplier"])} for r in rows]}
 
 
 async def _leaderboard_response(guild_id: str) -> dict:

@@ -641,6 +641,71 @@ async def remove_staff_note(guild_id: str, note_id: int) -> bool:
     return result.split()[-1] != "0"
 
 
+# ------------------------------------------------------ xp channel exclusion --
+async def add_xp_excluded_channel(guild_id: str, channel_id: str) -> None:
+    await pool().execute(
+        "INSERT INTO xp_excluded_channels (guild_id, channel_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        guild_id, channel_id,
+    )
+
+
+async def remove_xp_excluded_channel(guild_id: str, channel_id: str) -> None:
+    await pool().execute(
+        "DELETE FROM xp_excluded_channels WHERE guild_id=$1 AND channel_id=$2", guild_id, channel_id,
+    )
+
+
+async def list_xp_excluded_channels(guild_id: str) -> list[str]:
+    rows = await pool().fetch(
+        "SELECT channel_id FROM xp_excluded_channels WHERE guild_id=$1", guild_id,
+    )
+    return [r["channel_id"] for r in rows]
+
+
+async def is_xp_excluded_channel(guild_id: str, channel_id: str) -> bool:
+    row = await pool().fetchrow(
+        "SELECT 1 FROM xp_excluded_channels WHERE guild_id=$1 AND channel_id=$2", guild_id, channel_id,
+    )
+    return row is not None
+
+
+# -------------------------------------------------------- xp role multipliers --
+async def set_xp_role_multiplier(guild_id: str, role_id: str, multiplier: float) -> None:
+    await pool().execute(
+        """
+        INSERT INTO xp_role_multipliers (guild_id, role_id, multiplier) VALUES ($1, $2, $3)
+        ON CONFLICT (guild_id, role_id) DO UPDATE SET multiplier = EXCLUDED.multiplier
+        """,
+        guild_id, role_id, multiplier,
+    )
+
+
+async def remove_xp_role_multiplier(guild_id: str, role_id: str) -> None:
+    await pool().execute(
+        "DELETE FROM xp_role_multipliers WHERE guild_id=$1 AND role_id=$2", guild_id, role_id,
+    )
+
+
+async def list_xp_role_multipliers(guild_id: str) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM xp_role_multipliers WHERE guild_id=$1 ORDER BY multiplier DESC", guild_id,
+    )
+
+
+async def get_xp_multiplier_for_roles(guild_id: str, role_ids: list[str]) -> float:
+    """Highest multiplier among the member's roles, not stacked/multiplied
+    together, so having several boosted roles doesn't compound into a
+    runaway rate. 1.0 (no change) if the member has no multiplier-carrying
+    role or the guild has none configured."""
+    if not role_ids:
+        return 1.0
+    row = await pool().fetchrow(
+        "SELECT MAX(multiplier) AS m FROM xp_role_multipliers WHERE guild_id=$1 AND role_id = ANY($2::text[])",
+        guild_id, role_ids,
+    )
+    return float(row["m"]) if row and row["m"] is not None else 1.0
+
+
 if __name__ == "__main__":
     # `python -m common.db` — one-off convenience to create the schema
     # without starting the bot or dashboard.
