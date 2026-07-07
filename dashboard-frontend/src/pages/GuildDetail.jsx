@@ -17,20 +17,21 @@ import OnboardingChecklist from "../components/OnboardingChecklist";
 import DangerZone from "../components/DangerZone";
 import AnnouncementBuilder from "../components/AnnouncementBuilder";
 import BarChart from "../components/BarChart";
+import GuildSidebar from "../components/GuildSidebar";
 import useRolesChannels from "../hooks/useRolesChannels";
 import usePolling from "../hooks/usePolling";
 
 const TABS = [
-  { id: "overview", label: "Overview", icon: LayoutGrid },
-  { id: "settings", label: "Settings", icon: Settings },
-  { id: "members", label: "Members", icon: Users },
-  { id: "warnings", label: "Warnings", icon: ShieldAlert },
-  { id: "modlog", label: "Mod Log", icon: ScrollText },
-  { id: "autoroles", label: "Autoroles", icon: UserPlus },
-  { id: "reactionroles", label: "Reaction Roles", icon: Smile },
-  { id: "levels", label: "Levels", icon: TrendingUp },
-  { id: "tags", label: "Tags", icon: TagIcon },
-  { id: "announce", label: "Announce", icon: Megaphone },
+  { id: "overview", label: "Overview", icon: LayoutGrid, category: null },
+  { id: "members", label: "Members", icon: Users, category: "Moderation" },
+  { id: "warnings", label: "Warnings", icon: ShieldAlert, category: "Moderation" },
+  { id: "modlog", label: "Mod Log", icon: ScrollText, category: "Moderation" },
+  { id: "settings", label: "Settings", icon: Settings, category: "Configuration" },
+  { id: "autoroles", label: "Autoroles", icon: UserPlus, category: "Configuration" },
+  { id: "reactionroles", label: "Reaction Roles", icon: Smile, category: "Configuration" },
+  { id: "levels", label: "Levels", icon: TrendingUp, category: "Engagement" },
+  { id: "tags", label: "Tags", icon: TagIcon, category: "Engagement" },
+  { id: "announce", label: "Announce", icon: Megaphone, category: "Engagement" },
 ];
 
 const ACTION_TAG_CLASS = {
@@ -110,82 +111,75 @@ export default function GuildDetail() {
     active_warning_count: activeWarningCount,
   } = data;
 
+  const counts = {
+    warnings: activeWarningCount,
+    autoroles: autoroles.length,
+    reactionroles: reactionRoles.length,
+    tags: tags.length,
+  };
+
   return (
-    <>
-      <Link className="back-link" to="/">
-        <ArrowLeft size={13} /> Your servers
-      </Link>
-      <div className="page-head page-head-row">
-        <div>
-          <h1>{guild.name}</h1>
-        </div>
-        {lastSynced && (
-          <div className="live-indicator" title={`Last updated ${lastSynced.toLocaleTimeString()}`}>
-            <span className="live-dot" /> Live
+    <div className="guild-layout">
+      <GuildSidebar tabs={TABS} activeTab={tab} onTabChange={setTab} counts={counts} />
+      <div className="guild-main">
+        <Link className="back-link" to="/">
+          <ArrowLeft size={13} /> Your servers
+        </Link>
+        <div className="page-head page-head-row">
+          <div>
+            <h1>{guild.name}</h1>
           </div>
-        )}
-      </div>
-
-      <nav className="tabs-nav">
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const count =
-            t.id === "warnings" ? activeWarningCount
-            : t.id === "autoroles" ? autoroles.length
-            : t.id === "reactionroles" ? reactionRoles.length
-            : t.id === "tags" ? tags.length
-            : null;
-          return (
-            <button key={t.id} className={`tab-btn ${tab === t.id ? "active" : ""}`} onClick={() => setTab(t.id)}>
-              <Icon size={14} />
-              {t.label}
-              {count !== null && <span className="tab-count">{count}</span>}
-            </button>
-          );
-        })}
-      </nav>
-
-      {tab === "overview" && (
-        <OverviewTab guildId={id} guild={guild} actions={actions} autoroles={autoroles} reactionRoles={reactionRoles}
-                     tags={tags} activeWarningCount={activeWarningCount} setTab={setTab} />
-      )}
-      {tab === "settings" && (
-        <SettingsTab guildId={id} guild={guild} roles={roles} channels={channels}
-                     onSaved={(g) => setData((d) => ({ ...d, guild: g }))}
-                     onWarningsCleared={() => setData((d) => ({
-                       ...d,
-                       warnings: d.warnings.map((w) => ({ ...w, active: false })),
-                       active_warning_count: 0,
-                     }))}
-                     onReactionRolesWiped={() => setData((d) => ({ ...d, reaction_roles: [] }))} />
-      )}
-      {tab === "members" && <MembersTab guildId={id} roles={roles} />}
-      {tab === "warnings" && (
-        <WarningsTab guildId={id} warnings={warnings}
-                     onCleared={(w, count) => setData((d) => ({ ...d, warnings: w, active_warning_count: count }))} />
-      )}
-      {tab === "modlog" && <ModLogTab actions={actions} />}
-      {tab === "autoroles" && (
-        <AutorolesTab guildId={id} autoroles={autoroles} roles={roles}
-                      onChange={(a) => setData((d) => ({ ...d, autoroles: a }))} />
-      )}
-      {tab === "reactionroles" && (
-        <ReactionRolesTab guildId={id} reactionRoles={reactionRoles} roles={roles} channels={channels}
-                          onChange={(r) => setData((d) => ({ ...d, reaction_roles: r }))} />
-      )}
-      {tab === "tags" && (
-        <TagsTab guildId={id} tags={tags} prefix={guild.command_prefix || "!"}
-                 onChange={(t) => setData((d) => ({ ...d, tags: t }))} />
-      )}
-      {tab === "levels" && <LevelsTab guildId={id} roles={roles} channels={channels} />}
-      {tab === "announce" && (
-        <div className="card">
-          <h2>Send an announcement</h2>
-          <p className="muted small">Compose a rich embed and post it to any channel.</p>
-          <AnnouncementBuilder guildId={id} channels={channels} />
+          {lastSynced && (
+            <div className="live-indicator" title={`Last updated ${lastSynced.toLocaleTimeString()}`}>
+              <span className="live-dot" /> Live
+            </div>
+          )}
         </div>
-      )}
-    </>
+
+        <div className="tab-content" key={tab}>
+          {tab === "overview" && (
+            <OverviewTab guildId={id} guild={guild} actions={actions} autoroles={autoroles} reactionRoles={reactionRoles}
+                         tags={tags} activeWarningCount={activeWarningCount} setTab={setTab} />
+          )}
+          {tab === "settings" && (
+            <SettingsTab guildId={id} guild={guild} roles={roles} channels={channels}
+                         onSaved={(g) => setData((d) => ({ ...d, guild: g }))}
+                         onWarningsCleared={() => setData((d) => ({
+                           ...d,
+                           warnings: d.warnings.map((w) => ({ ...w, active: false })),
+                           active_warning_count: 0,
+                         }))}
+                         onReactionRolesWiped={() => setData((d) => ({ ...d, reaction_roles: [] }))} />
+          )}
+          {tab === "members" && <MembersTab guildId={id} roles={roles} />}
+          {tab === "warnings" && (
+            <WarningsTab guildId={id} warnings={warnings}
+                         onCleared={(w, count) => setData((d) => ({ ...d, warnings: w, active_warning_count: count }))} />
+          )}
+          {tab === "modlog" && <ModLogTab actions={actions} />}
+          {tab === "autoroles" && (
+            <AutorolesTab guildId={id} autoroles={autoroles} roles={roles}
+                          onChange={(a) => setData((d) => ({ ...d, autoroles: a }))} />
+          )}
+          {tab === "reactionroles" && (
+            <ReactionRolesTab guildId={id} reactionRoles={reactionRoles} roles={roles} channels={channels}
+                              onChange={(r) => setData((d) => ({ ...d, reaction_roles: r }))} />
+          )}
+          {tab === "tags" && (
+            <TagsTab guildId={id} tags={tags} prefix={guild.command_prefix || "!"}
+                     onChange={(t) => setData((d) => ({ ...d, tags: t }))} />
+          )}
+          {tab === "levels" && <LevelsTab guildId={id} roles={roles} channels={channels} />}
+          {tab === "announce" && (
+            <div className="card">
+              <h2>Send an announcement</h2>
+              <p className="muted small">Compose a rich embed and post it to any channel.</p>
+              <AnnouncementBuilder guildId={id} channels={channels} />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -220,7 +214,7 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
 
       {stats && (
         <div className="card">
-          <h2>Message activity — last 14 days</h2>
+          <h2>Message activity, last 14 days</h2>
           <div className="stat-grid" style={{ marginBottom: 16 }}>
             <StatCard value={stats.total_messages_30d} label="Messages (30d)" />
           </div>
@@ -306,7 +300,7 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
               {actions.slice(0, 8).map((a) => (
                 <tr key={a.id}>
                   <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
-                  <td><code>{a.user_id || "—"}</code></td>
+                  <td><code>{a.user_id || "none"}</code></td>
                   <td><code>{a.moderator_id || "system"}</code></td>
                   <td>{fmt(a.created_at)}</td>
                 </tr>
@@ -419,7 +413,7 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
                         onChange={(v) => set("welcome_channel_id", v)} placeholder="Pick a channel" />
             </label>
             <label>
-              Message — <code>{"{user}"}</code> mentions them, <code>{"{username}"}</code>, <code>{"{server}"}</code>,{" "}
+              Message, <code>{"{user}"}</code> mentions them, <code>{"{username}"}</code>, <code>{"{server}"}</code>,{" "}
               <code>{"{membercount}"}</code> also work
               <input type="text" value={form.welcome_message || ""} onChange={(e) => set("welcome_message", e.target.value)}
                      placeholder="Welcome {user} to {server}! 👋" />
@@ -440,7 +434,7 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
                         onChange={(v) => set("goodbye_channel_id", v)} placeholder="Pick a channel" />
             </label>
             <label>
-              Message — <code>{"{username}"}</code>, <code>{"{server}"}</code>, <code>{"{membercount}"}</code> work
+              Message, <code>{"{username}"}</code>, <code>{"{server}"}</code>, <code>{"{membercount}"}</code> work
               (no <code>{"{user}"}</code> mention since they've already left)
               <input type="text" value={form.goodbye_message || ""} onChange={(e) => set("goodbye_message", e.target.value)}
                      placeholder="{username} left {server}. 👋" />
