@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -244,6 +246,43 @@ async def api_commands():
             "permission": "Owner only" if cmd.owner_only else permission_name(cmd.required_permission),
         })
     return {"default_prefix": config.command_prefix, "categories": by_category}
+
+
+# A stale heartbeat (no update in well over one scheduler tick) means the
+# bot process is down, disconnected, or wedged, not just "the dashboard
+# happens to be up." 60s is generous relative to the 15s tick interval.
+_BOT_STALE_AFTER_SECONDS = 60
+
+
+@app.get("/api/status")
+async def api_public_status():
+    """Public, no login required, same spirit as /api/commands: "is the bot
+    down or is it just me" shouldn't require an account to check."""
+    db_start = time.monotonic()
+    try:
+        await db.list_guilds()
+        db_latency_ms = (time.monotonic() - db_start) * 1000
+        db_ok = True
+    except Exception:
+        db_latency_ms = None
+        db_ok = False
+
+    bot_row = await db.get_bot_status() if db_ok else None
+    bot_online = False
+    if bot_row:
+        age = (datetime.now(timezone.utc) - bot_row["last_heartbeat_at"]).total_seconds()
+        bot_online = age < _BOT_STALE_AFTER_SECONDS
+
+    return {
+        "bot_online": bot_online,
+        "bot_uptime_seconds": (
+            (datetime.now(timezone.utc) - bot_row["started_at"]).total_seconds() if bot_online and bot_row else None
+        ),
+        "gateway_latency_ms": round(bot_row["gateway_latency_ms"]) if bot_online and bot_row and bot_row["gateway_latency_ms"] else None,
+        "guild_count": bot_row["guild_count"] if bot_online and bot_row else None,
+        "dashboard_db_ok": db_ok,
+        "dashboard_db_latency_ms": round(db_latency_ms) if db_latency_ms is not None else None,
+    }
 
 
 def _guild_to_json(row) -> dict:
@@ -543,7 +582,7 @@ async def api_guild_members(request: Request, guild_id: str, q: str = ""):
     Discord's) is paginated and capped per-request; this fetches one page
     (up to 500) and filters client-side-ish here, which comfortably covers
     small-to-medium communities. For very large servers this won't show
-    every member — search by exact ID also works around that."""
+    every member, search by exact ID also works around that."""
     await _require_manage(request, guild_id)
     try:
         members = await bot_rest.list_guild_members(guild_id, limit=500)
@@ -551,21 +590,29 @@ async def api_guild_members(request: Request, guild_id: str, q: str = ""):
         raise _ApiError(502, f"Couldn't fetch members from Fluxer (HTTP {e.status}).")
 
     q_lower = q.strip().lower()
-    result = []
+    filtered = []
     for m in members:
         user = m.get("user", m)
         username = user.get("username", "")
         user_id = str(user.get("id"))
         if q_lower and q_lower not in username.lower() and q_lower != user_id:
             continue
-        result.append({
+        filtered.append((m, user, user_id, username))
+    filtered = filtered[:100]
+
+    message_counts = await db.get_member_message_counts(guild_id, [uid for _, _, uid, _ in filtered])
+    result = [
+        {
             "id": user_id,
             "username": username,
             "avatar": user.get("avatar"),
             "roles": m.get("roles", []),
             "joined_at": m.get("joined_at"),
-        })
-    return {"members": result[:100]}
+            "message_count": message_counts.get(user_id, 0),
+        }
+        for m, user, user_id, username in filtered
+    ]
+    return {"members": result}
 
 
 class MemberActionPayload(BaseModel):
@@ -758,6 +805,7 @@ async def api_guild_stats(request: Request, guild_id: str, days: int = 14):
     top_members = await db.get_top_members(guild_id, 5)
     top_voice_members = await db.get_top_voice_members(guild_id, 5)
     total = await db.get_total_messages(guild_id, 30)
+    top_commands = await db.get_top_commands(guild_id, 8)
 
     all_ids = list({r["user_id"] for r in top_members} | {r["user_id"] for r in top_voice_members})
     names = await _resolve_usernames(guild_id, all_ids)
@@ -777,6 +825,7 @@ async def api_guild_stats(request: Request, guild_id: str, days: int = 14):
             for r in top_voice_members
         ],
         "total_messages_30d": total,
+        "top_commands": [{"name": r["command_name"], "count": r["count"]} for r in top_commands],
     }
 
 

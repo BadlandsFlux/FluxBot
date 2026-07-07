@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import GuildPicker from "./pages/GuildPicker";
 import GuildDetail from "./pages/GuildDetail";
 import Commands from "./pages/Commands";
+import Status from "./pages/Status";
 import { api } from "./api";
 
 export default function App() {
@@ -40,6 +41,7 @@ export default function App() {
               <Route path="/" element={me.user ? <GuildPicker /> : <Login botName={botName} />} />
               <Route path="/guild/:id" element={me.user ? <GuildDetail /> : <Login botName={botName} />} />
               <Route path="/commands" element={<Commands />} />
+              <Route path="/status" element={<Status />} />
             </Routes>
           </main>
         </GuildsProvider>

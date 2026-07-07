@@ -38,6 +38,7 @@ export default function MembersTab({ guildId, roles }) {
   const [notes, setNotes] = useState([]);
   const [notesLoading, setNotesLoading] = useState(false);
   const [newNote, setNewNote] = useState("");
+  const [sortBy, setSortBy] = useState("username");
 
   const [selected, setSelected] = useState(new Set());
   const [bulkAction, setBulkAction] = useState(null); // {type}
@@ -200,6 +201,14 @@ export default function MembersTab({ guildId, roles }) {
     );
   }
 
+  const sortedMembers = members
+    ? [...members].sort((a, b) => {
+        if (sortBy === "joined_at") return new Date(b.joined_at || 0) - new Date(a.joined_at || 0);
+        if (sortBy === "message_count") return (b.message_count || 0) - (a.message_count || 0);
+        return (a.username || "").localeCompare(b.username || "");
+      })
+    : null;
+
   return (
     <div className="card">
       <h2>Members</h2>
@@ -207,14 +216,21 @@ export default function MembersTab({ guildId, roles }) {
         Search covers up to the first 500 members fetched from Fluxer. For huge servers, search by exact user ID
         if someone doesn't show up.
       </p>
-      <div className="search-box">
-        <Search size={16} className="search-icon" />
-        <input
-          type="text"
-          placeholder="Search by username or ID…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+      <div className="filter-bar">
+        <div className="search-box">
+          <Search size={16} className="search-icon" />
+          <input
+            type="text"
+            placeholder="Search by username or ID…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+          <option value="username">Sort: username (A-Z)</option>
+          <option value="joined_at">Sort: join date (newest first)</option>
+          <option value="message_count">Sort: messages sent (most first)</option>
+        </select>
       </div>
 
       {selected.size > 0 && (
@@ -265,21 +281,21 @@ export default function MembersTab({ guildId, roles }) {
         </div>
       )}
 
-      {members === null ? (
+      {sortedMembers === null ? (
         <div className="loading-row">
           <Spinner />
           <span className="muted">Loading members…</span>
         </div>
-      ) : members.length === 0 ? (
+      ) : sortedMembers.length === 0 ? (
         <p className="muted">No members match.</p>
       ) : (
         <>
           <label className="select-all-row">
-            <input type="checkbox" checked={selected.size === members.length} onChange={toggleSelectAll} />
-            Select all {members.length} shown
+            <input type="checkbox" checked={selected.size === sortedMembers.length} onChange={toggleSelectAll} />
+            Select all {sortedMembers.length} shown
           </label>
           <div className="member-list">
-            {members.map((m) => (
+            {sortedMembers.map((m) => (
               <div className="member-row" key={m.id}>
                 <div className="member-info">
                   <input

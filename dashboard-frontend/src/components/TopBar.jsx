@@ -24,6 +24,9 @@ export default function TopBar({ user, botName, onLoggedOut }) {
           <Link to="/commands" className="topbar-link">
             Commands
           </Link>
+          <Link to="/status" className="topbar-link">
+            Status
+          </Link>
         </nav>
       </div>
       <div className="topbar-right">

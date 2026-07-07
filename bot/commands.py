@@ -192,6 +192,8 @@ class Bot:
             if not config.owner_id or str(author.get("id")) != config.owner_id:
                 await ctx.reply("That command is restricted to the bot owner.")
                 return
+            from common import db as _db
+            await _db.record_command_usage(guild_id, name)
             try:
                 await command.func(ctx)
             except Exception:
@@ -212,11 +214,13 @@ class Bot:
                 await ctx.reply("You don't have permission to use that command.")
                 return
 
+        from common import db as _db
+        await _db.record_command_usage(guild_id, name)
         try:
             await command.func(ctx)
         except FluxerAPIError as e:
             log.warning("Command %s failed: %s", name, e)
-            await ctx.reply(f"That didn't work — the Fluxer API said: `{e.status}`. "
+            await ctx.reply(f"That didn't work, the Fluxer API said: `{e.status}`. "
                              f"(Check the bot's permissions / role position.)")
         except Exception:
             log.exception("Command %s raised an unexpected error", name)
