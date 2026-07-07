@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from bot.commands import Bot
 from bot.modules.fun import NUMBER_EMOJI
@@ -117,6 +117,12 @@ async def _close_trivia(bot: Bot) -> None:
         await db.mark_trivia_closed(t["id"])
 
 
+async def _update_bot_status(bot: Bot) -> None:
+    started_at_wall = datetime.now(timezone.utc) - timedelta(seconds=bot.uptime_seconds)
+    guild_count = await bot.guild_count()
+    await db.update_bot_status(started_at_wall, bot.gateway.latency_ms, guild_count)
+
+
 async def run_scheduler(bot: Bot) -> None:
     while True:
         try:
@@ -124,6 +130,7 @@ async def run_scheduler(bot: Bot) -> None:
             await _close_polls(bot)
             await _close_trivia(bot)
             await voice_tracker.flush_all(bot)
+            await _update_bot_status(bot)
         except Exception:
             log.exception("Scheduler tick failed")
         await asyncio.sleep(CHECK_INTERVAL)

@@ -24,6 +24,7 @@ export const api = {
   logout: () => request("/api/logout", { method: "POST" }),
   guilds: () => request("/api/guilds"),
   commands: () => request("/api/commands"),
+  status: () => request("/api/status"),
   guildDetail: (id) => request(`/api/guilds/${id}`),
   updateSettings: (id, payload) => request(`/api/guilds/${id}/settings`, { method: "POST", body: payload }),
   clearWarning: (id, userId) => request(`/api/guilds/${id}/warnings/${userId}/clear`, { method: "POST" }),

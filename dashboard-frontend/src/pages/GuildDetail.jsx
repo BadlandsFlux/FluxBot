@@ -251,9 +251,9 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
 
       {stats && (
         <div className="card">
-          <h2>Voice activity — last 14 days</h2>
+          <h2>Voice activity, last 14 days</h2>
           <p className="muted small">
-            Only counts time with 2+ people connected and not self-deafened — solo/AFK time doesn't count.
+            Only counts time with 2+ people connected and not self-deafened, solo/AFK time doesn't count.
           </p>
           {stats.daily.some((d) => d.voice_minutes > 0) ? (
             <BarChart
@@ -277,6 +277,21 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {stats && stats.top_commands.length > 0 && (
+        <div className="card">
+          <h2>Most-used commands</h2>
+          <div className="top-members-list">
+            {stats.top_commands.map((c, i) => (
+              <div className="top-member-row" key={c.name}>
+                <span className="muted">#{i + 1}</span>
+                <span className="top-member-name">!{c.name}</span>
+                <span className="muted small">{c.count} use{c.count !== 1 ? "s" : ""}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

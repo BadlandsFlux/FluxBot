@@ -219,3 +219,23 @@ CREATE TABLE IF NOT EXISTS staff_notes (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_staff_notes_guild_user ON staff_notes(guild_id, user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS command_usage (
+    guild_id      TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    command_name  TEXT NOT NULL,
+    count         BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, command_name)
+);
+
+-- Singleton row: the bot and dashboard run as separate processes (see
+-- deploy/*.service), so the dashboard's public status page can't read the
+-- bot's in-memory gateway state directly. The bot writes its own liveness
+-- here periodically; the dashboard reads it and treats a stale
+-- last_heartbeat_at as "the bot is down", not just "the dashboard is up".
+CREATE TABLE IF NOT EXISTS bot_status (
+    id                  TEXT PRIMARY KEY DEFAULT 'bot',
+    started_at          TIMESTAMPTZ NOT NULL,
+    last_heartbeat_at   TIMESTAMPTZ NOT NULL,
+    gateway_latency_ms  DOUBLE PRECISION,
+    guild_count         INTEGER NOT NULL DEFAULT 0
+);

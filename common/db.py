@@ -489,6 +489,18 @@ async def get_member_message_count(guild_id: str, user_id: str) -> int:
     return row["message_count"] if row else 0
 
 
+async def get_member_message_counts(guild_id: str, user_ids: list[str]) -> dict[str, int]:
+    """Batch version of get_member_message_count, one query instead of N,
+    for building a member list with counts attached."""
+    if not user_ids:
+        return {}
+    rows = await pool().fetch(
+        "SELECT user_id, message_count FROM member_message_counts WHERE guild_id=$1 AND user_id = ANY($2::text[])",
+        guild_id, user_ids,
+    )
+    return {r["user_id"]: r["message_count"] for r in rows}
+
+
 async def get_total_messages(guild_id: str, days: int = 30) -> int:
     row = await pool().fetchrow(
         """
@@ -639,6 +651,43 @@ async def remove_staff_note(guild_id: str, note_id: int) -> bool:
         "DELETE FROM staff_notes WHERE guild_id=$1 AND id=$2", guild_id, note_id,
     )
     return result.split()[-1] != "0"
+
+
+# -------------------------------------------------------------- command usage --
+async def record_command_usage(guild_id: str, command_name: str) -> None:
+    await pool().execute(
+        """
+        INSERT INTO command_usage (guild_id, command_name, count) VALUES ($1, $2, 1)
+        ON CONFLICT (guild_id, command_name) DO UPDATE SET count = command_usage.count + 1
+        """,
+        guild_id, command_name,
+    )
+
+
+async def get_top_commands(guild_id: str, limit: int = 10) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM command_usage WHERE guild_id=$1 ORDER BY count DESC LIMIT $2", guild_id, limit,
+    )
+
+
+# --------------------------------------------------------------- bot status --
+async def update_bot_status(started_at, gateway_latency_ms: Optional[float], guild_count: int) -> None:
+    await pool().execute(
+        """
+        INSERT INTO bot_status (id, started_at, last_heartbeat_at, gateway_latency_ms, guild_count)
+        VALUES ('bot', $1, now(), $2, $3)
+        ON CONFLICT (id) DO UPDATE SET
+            started_at = EXCLUDED.started_at,
+            last_heartbeat_at = now(),
+            gateway_latency_ms = EXCLUDED.gateway_latency_ms,
+            guild_count = EXCLUDED.guild_count
+        """,
+        started_at, gateway_latency_ms, guild_count,
+    )
+
+
+async def get_bot_status() -> Optional[asyncpg.Record]:
+    return await pool().fetchrow("SELECT * FROM bot_status WHERE id='bot'")
 
 
 if __name__ == "__main__":
