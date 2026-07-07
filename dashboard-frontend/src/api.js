@@ -63,6 +63,14 @@ export const api = {
   addLevelRole: (id, level, role_id) =>
     request(`/api/guilds/${id}/level-roles`, { method: "POST", body: { level, role_id } }),
   removeLevelRole: (id, level) => request(`/api/guilds/${id}/level-roles/${level}`, { method: "DELETE" }),
+  addXpExcludedChannel: (id, channelId) =>
+    request(`/api/guilds/${id}/levels/excluded-channels`, { method: "POST", body: { channel_id: channelId } }),
+  removeXpExcludedChannel: (id, channelId) =>
+    request(`/api/guilds/${id}/levels/excluded-channels/${channelId}`, { method: "DELETE" }),
+  setXpMultiplier: (id, roleId, multiplier) =>
+    request(`/api/guilds/${id}/levels/multipliers`, { method: "POST", body: { role_id: roleId, multiplier } }),
+  removeXpMultiplier: (id, roleId) =>
+    request(`/api/guilds/${id}/levels/multipliers/${roleId}`, { method: "DELETE" }),
   announce: (id, payload) => request(`/api/guilds/${id}/announce`, { method: "POST", body: payload }),
   dangerClearAllWarnings: (id) => request(`/api/guilds/${id}/danger/clear-all-warnings`, { method: "POST" }),
   dangerResetAllXp: (id) => request(`/api/guilds/${id}/danger/reset-all-xp`, { method: "POST" }),

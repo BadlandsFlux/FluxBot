@@ -337,7 +337,7 @@ Kick/ban/timeout/warn (chat commands and the dashboard's Members tab alike, both
 | `!remind <duration> <text>` | none | Set a reminder, e.g. `!remind 2h take out trash` (capped at 10 pending per person) |
 | `!reminders` | none | List your pending reminders |
 | `!delreminder <id>` | none | Cancel a reminder |
-| `!rank [@user]` | none | XP/level progress |
+| `!rank [@user]` | none | Visual rank card (avatar, level, XP bar, stats), falls back to a text embed if image rendering ever fails |
 | `!leaderboard` | none | Server XP leaderboard |
 | `!achievements [@user]` | none | Milestone badges earned (messages, level, voice time) |
 | `!ping` | none | Gateway/API/DB latency, uptime, server count |
@@ -356,7 +356,7 @@ Most day-to-day admin work can be done entirely from the dashboard, no need to t
 - **Settings tab**: mod-log channel, command prefix, mute role, welcome/goodbye channel and message (toggle switches), leveling on/off + level-up channel/message, warning-escalation thresholds, all with searchable role/channel pickers instead of raw IDs.
 - **Members tab**: search members, sort by username/join date/messages sent, kick/ban/timeout/warn with a reason, goes through the same shared logic as chat commands, so it's logged and escalates identically either way.
 - **Autoroles / Reaction Roles tabs**: add/remove autoroles, and build reaction-role embeds (the dashboard posts the message, reacts to it, and stores the mapping for you). Reaction-role messages are managed as a unit: delete removes the whole message and every mapping on it, not one emoji at a time. Neither feature will target a role that itself carries moderation/admin permissions (Administrator, Manage Guild, Kick/Ban/Moderate Members, Manage Messages), that's a privilege-escalation path (self-promotion via autorole-on-join or reacting), not a config choice, so it's blocked outright rather than just warned about.
-- **Levels tab**: view the XP leaderboard and configure level-role rewards (level N grants role X).
+- **Levels tab**: view the XP leaderboard and configure level-role rewards (level N grants role X). Also configure channels excluded from XP (e.g. a bot-commands channel) and per-role XP multipliers (highest applicable one wins if a member has more than one, they don't stack). Also configure channels excluded from earning XP (a bot-commands or spam channel, say) and role-based XP multipliers (a supporter role earning faster, for instance, highest applicable multiplier wins if a member has more than one, they don't stack).
 - **Tags tab**: add/remove custom `!tagname` shortcuts.
 - **Announce tab**: compose and send a custom embed (title, description, color, image, footer) to any channel.
 - **Warnings / Mod Log tabs**: view and clear warnings, browse full history.

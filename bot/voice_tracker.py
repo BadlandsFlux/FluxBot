@@ -77,14 +77,19 @@ async def _flush_member(bot: Bot, guild_id: str, user_id: str, now: datetime, ke
     log.info("voice: credited %.2f min to guild=%s user=%s (keep_earning=%s)",
               elapsed_minutes, guild_id, user_id, keep_earning)
 
-    xp_amount = round(elapsed_minutes * random.uniform(VOICE_XP_MIN_PER_MIN, VOICE_XP_MAX_PER_MIN))
-    if xp_amount > 0:
+    base_xp = round(elapsed_minutes * random.uniform(VOICE_XP_MIN_PER_MIN, VOICE_XP_MAX_PER_MIN))
+    if base_xp > 0:
         try:
             member = await bot.get_member(guild_id, user_id, fresh=False)
             username = member.get("user", member).get("username", "someone")
+            roles = member.get("roles", [])
         except Exception:
             username = "someone"
-        await leveling.grant_xp(bot, guild_id, user_id, username, xp_amount)
+            roles = []
+        multiplier = await db.get_xp_multiplier_for_roles(guild_id, roles)
+        xp_amount = round(base_xp * multiplier)
+        if xp_amount > 0:
+            await leveling.grant_xp(bot, guild_id, user_id, username, xp_amount)
 
 
 async def _recompute_channel(bot: Bot, guild_id: str, channel_id: str, now: datetime) -> None:

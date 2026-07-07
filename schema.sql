@@ -220,6 +220,21 @@ CREATE TABLE IF NOT EXISTS staff_notes (
 );
 CREATE INDEX IF NOT EXISTS idx_staff_notes_guild_user ON staff_notes(guild_id, user_id, created_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_staff_notes_guild_user ON staff_notes(guild_id, user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS xp_excluded_channels (
+    guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    channel_id  TEXT NOT NULL,
+    PRIMARY KEY (guild_id, channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS xp_role_multipliers (
+    guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    role_id     TEXT NOT NULL,
+    multiplier  NUMERIC NOT NULL,
+    PRIMARY KEY (guild_id, role_id)
+);
+
 CREATE TABLE IF NOT EXISTS command_usage (
     guild_id      TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
     command_name  TEXT NOT NULL,

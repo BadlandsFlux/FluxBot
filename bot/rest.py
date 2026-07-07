@@ -1,7 +1,7 @@
 """Async REST client for the Fluxer HTTP API.
 
 Points at `FLUXER_API_BASE` from config, so pointing this whole bot at
-a self-hosted instance is just an env var change — nothing here is
+a self-hosted instance is just an env var change, nothing here is
 hardcoded to the official api.fluxer.app instance.
 
 NOTE ON ENDPOINT COVERAGE: Fluxer's own published API reference is
@@ -11,11 +11,12 @@ paths below follow the conventions Fluxer already confirms elsewhere
 (guild bans, audit logs, member management). If your instance's
 OpenAPI spec (usually served at `<api_base>/openapi.json` or visible
 via the instance's own /api-reference page) disagrees with a path
-here, that's the source of truth — update the method in question.
+here, that's the source of truth, update the method in question.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Optional
 
 import aiohttp
@@ -174,6 +175,40 @@ class FluxerREST:
         if embeds:
             payload["embeds"] = embeds
         return await self.request("POST", f"/channels/{channel_id}/messages", json=payload)
+
+    async def send_message_with_file(self, channel_id: str, filename: str, file_bytes: bytes,
+                                      content: Optional[str] = None, embeds: Optional[list] = None,
+                                      allowed_mentions: Optional[dict] = None, retries: int = 3) -> dict:
+        """Like send_message, but with an actual file attachment (e.g. a
+        generated rank-card image), not just a URL in the text. Uses
+        multipart/form-data with a payload_json field alongside the file
+        (Discord convention, best-effort assumption like most Fluxer API
+        shapes in this project, not confirmed against Fluxer's own docs)."""
+        payload: dict = {"allowed_mentions": allowed_mentions or self.SAFE_ALLOWED_MENTIONS}
+        if content:
+            payload["content"] = content
+        if embeds:
+            payload["embeds"] = embeds
+
+        if self._session is None:
+            await self.start()
+        url = f"{self.base_url}/channels/{channel_id}/messages"
+
+        for attempt in range(retries):
+            form = aiohttp.FormData()
+            form.add_field("payload_json", json.dumps(payload), content_type="application/json")
+            form.add_field("files[0]", file_bytes, filename=filename, content_type="application/octet-stream")
+            async with self._session.post(url, data=form) as resp:
+                if resp.status == 429:
+                    body = await resp.json(content_type=None)
+                    retry_after = float(body.get("retry_after", 1.0)) if isinstance(body, dict) else 1.0
+                    await asyncio.sleep(retry_after)
+                    continue
+                if resp.status >= 400:
+                    body = await resp.text()
+                    raise FluxerAPIError(resp.status, "POST", f"/channels/{channel_id}/messages", body)
+                return await resp.json(content_type=None)
+        raise FluxerAPIError(429, "POST", f"/channels/{channel_id}/messages", "rate limited too many times")
 
     async def edit_message(self, channel_id: str, message_id: str, content: Optional[str] = None,
                             embeds: Optional[list] = None, allowed_mentions: Optional[dict] = None) -> dict:
