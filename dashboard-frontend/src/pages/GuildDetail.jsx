@@ -177,7 +177,7 @@ export default function GuildDetail() {
         <TagsTab guildId={id} tags={tags} prefix={guild.command_prefix || "!"}
                  onChange={(t) => setData((d) => ({ ...d, tags: t }))} />
       )}
-      {tab === "levels" && <LevelsTab guildId={id} roles={roles} />}
+      {tab === "levels" && <LevelsTab guildId={id} roles={roles} channels={channels} />}
       {tab === "announce" && (
         <div className="card">
           <h2>Send an announcement</h2>

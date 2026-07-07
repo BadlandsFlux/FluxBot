@@ -17,7 +17,9 @@ import random
 from datetime import datetime, timezone
 
 from bot.commands import Bot, Context
+from bot import rank_card
 from common import db
+from common.discovery import get_media_base, user_avatar_url
 
 XP_MIN, XP_MAX = 15, 25
 XP_COOLDOWN_SECONDS = 60
@@ -53,7 +55,7 @@ async def grant_xp(bot: Bot, guild_id: str, user_id: str, username: str, amount:
     """Add XP for a member and handle any resulting level-up (announcement +
     role rewards). Shared by both text-message XP (leveling.py) and voice-time
     XP (voice_tracker.py) so level-up behavior can't drift between the two
-    sources — only the "how much XP, how often" logic differs upstream."""
+    sources, only the "how much XP, how often" logic differs upstream."""
     guild_cfg = await db.get_guild(guild_id)
     if not guild_cfg or not guild_cfg["leveling_enabled"]:
         return
@@ -94,10 +96,13 @@ def register(bot: Bot) -> None:
     async def on_message_xp(data: dict) -> None:
         guild_id = data.get("guild_id")
         author = data.get("author", {})
+        channel_id = data.get("channel_id")
         if not guild_id or author.get("bot"):
             return
         guild_cfg = await db.get_guild(guild_id)
         if not guild_cfg or not guild_cfg["leveling_enabled"]:
+            return
+        if channel_id and await db.is_xp_excluded_channel(guild_id, channel_id):
             return
 
         user_id = str(author["id"])
@@ -106,14 +111,23 @@ def register(bot: Bot) -> None:
         if existing and existing["last_xp_at"] and (now - existing["last_xp_at"]).total_seconds() < XP_COOLDOWN_SECONDS:
             return
 
+        # MESSAGE_CREATE includes a `member` object alongside `author` for
+        # guild channel messages (Discord convention, best-effort assumption
+        # like most event shapes in this project). Falls back to no
+        # multiplier if it's ever missing rather than erroring.
+        member_roles = data.get("member", {}).get("roles", [])
+        multiplier = await db.get_xp_multiplier_for_roles(guild_id, member_roles)
+        amount = round(random.randint(XP_MIN, XP_MAX) * multiplier)
+
         await grant_xp(bot, guild_id, user_id, author.get("username", "someone"),
-                        random.randint(XP_MIN, XP_MAX), fallback_channel_id=data.get("channel_id"))
+                        amount, fallback_channel_id=channel_id)
 
     @bot.command("rank", category="Fun", aliases=["level"],
                  help_text="Show XP/level progress, messages sent, and voice time. Usage: !rank [@user]")
     async def rank(ctx: Context) -> None:
         target_id = str(ctx.author["id"])
         target_name = ctx.author.get("username", "You")
+        target_avatar_hash = ctx.author.get("avatar")
         if ctx.args:
             import re
             m = re.match(r"^<@!?(\d+)>$", ctx.args[0])
@@ -121,7 +135,9 @@ def register(bot: Bot) -> None:
             if target_id != str(ctx.author["id"]):
                 try:
                     member = await ctx.bot.get_member(ctx.guild_id, target_id, fresh=True)
-                    target_name = member.get("user", member).get("username", target_id)
+                    user_obj = member.get("user", member)
+                    target_name = user_obj.get("username", target_id)
+                    target_avatar_hash = user_obj.get("avatar")
                 except Exception:
                     target_name = target_id
 
@@ -149,7 +165,22 @@ def register(bot: Bot) -> None:
                 {"name": "Progress", "value": f"{_bar(pct)} {into_level}/{needed} XP", "inline": False},
             ],
         }
-        await ctx.bot.rest.send_message(ctx.channel_id, embeds=[embed])
+
+        try:
+            media_base = await get_media_base()
+            avatar_url = user_avatar_url(media_base, target_id, target_avatar_hash)
+            avatar_image = await rank_card.fetch_avatar(avatar_url)
+            png_bytes = rank_card.render(
+                username=target_name, avatar_image=avatar_image, level=row["level"], rank=rank_pos,
+                xp_into_level=into_level, xp_needed=needed, total_xp=row["xp"],
+                messages=message_count, voice_hours=voice_hours,
+            )
+            await ctx.bot.rest.send_message_with_file(ctx.channel_id, "rank.png", png_bytes)
+        except Exception:
+            # Cosmetic feature, any failure here (bad avatar data, a font
+            # issue, whatever) shouldn't break the command, fall back to
+            # the plain-text version that's always worked.
+            await ctx.bot.rest.send_message(ctx.channel_id, embeds=[embed])
 
     @bot.command("leaderboard", category="Fun", aliases=["lb", "top"],
                  help_text="Show the server's XP leaderboard. Usage: !leaderboard")
@@ -162,5 +193,5 @@ def register(bot: Bot) -> None:
         lines = []
         for i, r in enumerate(rows):
             prefix = medals[i] if i < 3 else f"`#{i + 1}`"
-            lines.append(f"{prefix} <@{r['user_id']}> — level {r['level']} ({r['xp']} XP)")
+            lines.append(f"{prefix} <@{r['user_id']}>, level {r['level']} ({r['xp']} XP)")
         await ctx.embed("🏆 Leaderboard", "\n".join(lines))
