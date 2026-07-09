@@ -339,6 +339,7 @@ Kick/ban/timeout/warn (chat commands and the dashboard's Members tab alike, both
 | `!delreminder <id>` | none | Cancel a reminder |
 | `!rank [@user]` | none | Visual rank card (avatar, level, XP bar, stats), falls back to a text embed if image rendering ever fails |
 | `!leaderboard` | none | Server XP leaderboard |
+| `!wrapped` | none | All-time server recap image: messages, voice hours, top chatter, top voice member, achievements unlocked |
 | `!achievements [@user]` | none | Milestone badges earned (messages, level, voice time) |
 | `!ping` | none | Gateway/API/DB latency, uptime, server count |
 | `!afk [reason]` | none | Mark yourself away; auto-clears on your next message, notes it if someone mentions you |
