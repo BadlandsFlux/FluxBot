@@ -17,7 +17,7 @@ import random
 from datetime import datetime, timezone
 
 from bot.commands import Bot, Context
-from bot import rank_card
+from bot import rank_card, wrapped_card
 from common import db
 from common.discovery import get_media_base, user_avatar_url
 
@@ -195,3 +195,51 @@ def register(bot: Bot) -> None:
             prefix = medals[i] if i < 3 else f"`#{i + 1}`"
             lines.append(f"{prefix} <@{r['user_id']}>, level {r['level']} ({r['xp']} XP)")
         await ctx.embed("🏆 Leaderboard", "\n".join(lines))
+
+    @bot.command("wrapped", category="Fun",
+                 help_text="Server recap: messages, voice time, top members, all-time. Usage: !wrapped")
+    async def wrapped(ctx: Context) -> None:
+        stats = await db.get_wrapped_stats(ctx.guild_id)
+
+        async def resolve(user_id: str | None) -> str | None:
+            if not user_id:
+                return None
+            try:
+                member = await ctx.bot.get_member(ctx.guild_id, user_id, fresh=False)
+                return member.get("user", member).get("username", user_id)
+            except Exception:
+                return user_id
+
+        top_chatter_name = await resolve(stats["top_chatter_id"])
+        top_voice_name = await resolve(stats["top_voice_id"])
+
+        try:
+            guild = await ctx.bot.get_guild(ctx.guild_id)
+            guild_name = guild.get("name", "This server")
+        except Exception:
+            guild_name = "This server"
+
+        try:
+            png_bytes = wrapped_card.render(
+                guild_name=guild_name,
+                total_messages=stats["total_messages"],
+                total_voice_hours=stats["total_voice_minutes"] / 60,
+                top_chatter=top_chatter_name, top_chatter_count=stats["top_chatter_count"],
+                top_voice=top_voice_name, top_voice_hours=stats["top_voice_minutes"] / 60,
+                members_with_xp=stats["members_with_xp"], achievements_unlocked=stats["achievements_unlocked"],
+            )
+            await ctx.bot.rest.send_message_with_file(ctx.channel_id, "wrapped.png", png_bytes)
+        except Exception:
+            embed = {
+                "title": f"{guild_name} Wrapped",
+                "color": 0x5865F2,
+                "fields": [
+                    {"name": "Messages sent", "value": f"{stats['total_messages']:,}", "inline": True},
+                    {"name": "Voice hours", "value": f"{stats['total_voice_minutes'] / 60:,.0f}h", "inline": True},
+                    {"name": "Top chatter", "value": top_chatter_name or "nobody yet", "inline": True},
+                    {"name": "Most in voice", "value": top_voice_name or "nobody yet", "inline": True},
+                    {"name": "Members with XP", "value": str(stats["members_with_xp"]), "inline": True},
+                    {"name": "Achievements unlocked", "value": str(stats["achievements_unlocked"]), "inline": True},
+                ],
+            }
+            await ctx.bot.rest.send_message(ctx.channel_id, embeds=[embed])

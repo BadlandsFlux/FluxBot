@@ -540,6 +540,39 @@ async def get_top_voice_members(guild_id: str, limit: int = 5) -> list[asyncpg.R
     )
 
 
+async def get_wrapped_stats(guild_id: str) -> dict:
+    """Everything !wrapped needs, gathered in one place rather than
+    scattering individual getter calls through the command handler."""
+    total_messages_row = await pool().fetchrow(
+        "SELECT COALESCE(SUM(message_count), 0) AS total FROM member_message_counts WHERE guild_id=$1", guild_id,
+    )
+    total_voice_row = await pool().fetchrow(
+        "SELECT COALESCE(SUM(minutes), 0) AS total FROM member_voice_minutes WHERE guild_id=$1", guild_id,
+    )
+    top_chatter = await pool().fetchrow(
+        "SELECT * FROM member_message_counts WHERE guild_id=$1 ORDER BY message_count DESC LIMIT 1", guild_id,
+    )
+    top_voice = await pool().fetchrow(
+        "SELECT * FROM member_voice_minutes WHERE guild_id=$1 ORDER BY minutes DESC LIMIT 1", guild_id,
+    )
+    members_with_xp_row = await pool().fetchrow(
+        "SELECT COUNT(*) AS n FROM levels WHERE guild_id=$1 AND xp > 0", guild_id,
+    )
+    achievements_row = await pool().fetchrow(
+        "SELECT COUNT(*) AS n FROM achievements WHERE guild_id=$1", guild_id,
+    )
+    return {
+        "total_messages": total_messages_row["total"],
+        "total_voice_minutes": float(total_voice_row["total"]),
+        "top_chatter_id": top_chatter["user_id"] if top_chatter else None,
+        "top_chatter_count": top_chatter["message_count"] if top_chatter else 0,
+        "top_voice_id": top_voice["user_id"] if top_voice else None,
+        "top_voice_minutes": float(top_voice["minutes"]) if top_voice else 0.0,
+        "members_with_xp": members_with_xp_row["n"],
+        "achievements_unlocked": achievements_row["n"],
+    }
+
+
 async def get_member_voice_minutes(guild_id: str, user_id: str) -> float:
     row = await pool().fetchrow(
         "SELECT minutes FROM member_voice_minutes WHERE guild_id=$1 AND user_id=$2",
