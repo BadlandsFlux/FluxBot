@@ -341,6 +341,7 @@ Kick/ban/timeout/warn (chat commands and the dashboard's Members tab alike, both
 | `!leaderboard` | none | Server XP leaderboard |
 | `!wrapped` | none | All-time server recap image: messages, voice hours, top chatter, top voice member, achievements unlocked |
 | `!achievements [@user]` | none | Milestone badges earned (messages, level, voice time) |
+| `!mydata` | none | Everything the bot has stored about you in this server (DMs it, staff notes never included) |
 | `!ping` | none | Gateway/API/DB latency, uptime, server count |
 | `!afk [reason]` | none | Mark yourself away; auto-clears on your next message, notes it if someone mentions you |
 | `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | none | Fun stuff |

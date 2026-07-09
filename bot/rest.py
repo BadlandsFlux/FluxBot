@@ -167,6 +167,14 @@ class FluxerREST:
         and nothing else, regardless of what else is in the message content."""
         return {"parse": [], "users": [str(uid) for uid in user_ids]}
 
+    async def create_dm(self, user_id: str) -> dict:
+        """Opens (or fetches the existing) DM channel with a user, Discord
+        convention (best-effort assumption, not confirmed against Fluxer's
+        own docs, like most endpoints in this file). Used for replies
+        containing anything a person might not want posted in a public
+        channel, e.g. !mydata's warning history."""
+        return await self.request("POST", "/users/@me/channels", json={"recipient_id": user_id})
+
     async def send_message(self, channel_id: str, content: Optional[str] = None,
                             embeds: Optional[list] = None, allowed_mentions: Optional[dict] = None) -> dict:
         payload: dict = {"allowed_mentions": allowed_mentions or self.SAFE_ALLOWED_MENTIONS}
