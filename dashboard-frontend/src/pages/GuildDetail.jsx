@@ -17,6 +17,7 @@ import OnboardingChecklist from "../components/OnboardingChecklist";
 import DangerZone from "../components/DangerZone";
 import AnnouncementBuilder from "../components/AnnouncementBuilder";
 import BarChart from "../components/BarChart";
+import HeatmapGrid from "../components/HeatmapGrid";
 import GuildSidebar from "../components/GuildSidebar";
 import useRolesChannels from "../hooks/useRolesChannels";
 import usePolling from "../hooks/usePolling";
@@ -286,6 +287,14 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {stats && stats.heatmap.length > 0 && (
+        <div className="card">
+          <h2>When the server's actually busy</h2>
+          <p className="muted small">Message activity by hour and day, all-time, in UTC. Useful for picking event times.</p>
+          <HeatmapGrid data={stats.heatmap} />
         </div>
       )}
 

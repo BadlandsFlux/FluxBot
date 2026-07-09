@@ -254,3 +254,16 @@ CREATE TABLE IF NOT EXISTS bot_status (
     gateway_latency_ms  DOUBLE PRECISION,
     guild_count         INTEGER NOT NULL DEFAULT 0
 );
+
+-- One row per (day of week, hour) bucket, 168 max per guild, not per
+-- individual message, so this stays small regardless of server activity
+-- volume. day_of_week follows Postgres's EXTRACT(DOW ...) convention:
+-- 0 = Sunday ... 6 = Saturday. Bucketed in UTC (same as everything else in
+-- this project), not each admin's local time.
+CREATE TABLE IF NOT EXISTS activity_heatmap (
+    guild_id       TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    day_of_week    SMALLINT NOT NULL,
+    hour           SMALLINT NOT NULL,
+    message_count  BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, day_of_week, hour)
+);

@@ -461,6 +461,20 @@ async def record_message(guild_id: str, user_id: str) -> None:
         """,
         guild_id, user_id,
     )
+    await pool().execute(
+        """
+        INSERT INTO activity_heatmap (guild_id, day_of_week, hour, message_count)
+        VALUES ($1, EXTRACT(DOW FROM now())::smallint, EXTRACT(HOUR FROM now())::smallint, 1)
+        ON CONFLICT (guild_id, day_of_week, hour) DO UPDATE SET message_count = activity_heatmap.message_count + 1
+        """,
+        guild_id,
+    )
+
+
+async def get_activity_heatmap(guild_id: str) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT day_of_week, hour, message_count FROM activity_heatmap WHERE guild_id=$1", guild_id,
+    )
 
 
 async def get_daily_stats(guild_id: str, days: int = 14) -> list[asyncpg.Record]:
