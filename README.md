@@ -340,6 +340,7 @@ Kick/ban/timeout/warn (chat commands and the dashboard's Members tab alike, both
 | `!rank [@user]` | none | Visual rank card (avatar, level, XP bar, stats), falls back to a text embed if image rendering ever fails |
 | `!leaderboard` | none | Server XP leaderboard |
 | `!achievements [@user]` | none | Milestone badges earned (messages, level, voice time) |
+| `!mydata` | none | Everything the bot has stored about you in this server (DMs it, staff notes never included) |
 | `!ping` | none | Gateway/API/DB latency, uptime, server count |
 | `!afk [reason]` | none | Mark yourself away; auto-clears on your next message, notes it if someone mentions you |
 | `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | none | Fun stuff |
