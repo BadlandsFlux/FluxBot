@@ -806,6 +806,7 @@ async def api_guild_stats(request: Request, guild_id: str, days: int = 14):
     top_voice_members = await db.get_top_voice_members(guild_id, 5)
     total = await db.get_total_messages(guild_id, 30)
     top_commands = await db.get_top_commands(guild_id, 8)
+    heatmap = await db.get_activity_heatmap(guild_id)
 
     all_ids = list({r["user_id"] for r in top_members} | {r["user_id"] for r in top_voice_members})
     names = await _resolve_usernames(guild_id, all_ids)
@@ -826,6 +827,10 @@ async def api_guild_stats(request: Request, guild_id: str, days: int = 14):
         ],
         "total_messages_30d": total,
         "top_commands": [{"name": r["command_name"], "count": r["count"]} for r in top_commands],
+        # day_of_week follows Postgres's EXTRACT(DOW ...) convention:
+        # 0 = Sunday ... 6 = Saturday. Same as JS's Date#getDay(), so the
+        # frontend can index straight into it without remapping.
+        "heatmap": [{"day": r["day_of_week"], "hour": r["hour"], "count": r["message_count"]} for r in heatmap],
     }
 
 
