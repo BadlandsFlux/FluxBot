@@ -508,7 +508,7 @@ function WarningsTab({ guildId, warnings, onCleared }) {
     if (statusFilter === "cleared" && w.active) return false;
     if (query.trim()) {
       const q = query.trim().toLowerCase();
-      const haystack = `${w.user_id} ${w.moderator_id} ${w.reason || ""}`.toLowerCase();
+      const haystack = `${w.username} ${w.user_id} ${w.moderator_username} ${w.moderator_id} ${w.reason || ""}`.toLowerCase();
       if (!haystack.includes(q)) return false;
     }
     return true;
@@ -522,7 +522,7 @@ function WarningsTab({ guildId, warnings, onCleared }) {
           <Search size={16} className="search-icon" />
           <input
             type="text"
-            placeholder="Search by user ID, moderator ID, or reason…"
+            placeholder="Search by username, ID, or reason…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -545,8 +545,14 @@ function WarningsTab({ guildId, warnings, onCleared }) {
           <tbody>
             {filtered.map((w) => (
               <tr key={w.id}>
-                <td><code>{w.user_id}</code></td>
-                <td><code>{w.moderator_id}</code></td>
+                <td>
+                  <div>{w.username}</div>
+                  <div className="muted small"><code>{w.user_id}</code></div>
+                </td>
+                <td>
+                  <div>{w.moderator_username}</div>
+                  <div className="muted small"><code>{w.moderator_id}</code></div>
+                </td>
                 <td>{w.reason}</td>
                 <td>{fmt(w.created_at)}</td>
                 <td>
@@ -579,7 +585,7 @@ function ModLogTab({ actions }) {
     if (actionFilter !== "all" && a.action !== actionFilter) return false;
     if (query.trim()) {
       const q = query.trim().toLowerCase();
-      const haystack = `${a.user_id || ""} ${a.moderator_id || ""} ${a.reason || ""}`.toLowerCase();
+      const haystack = `${a.username || ""} ${a.user_id || ""} ${a.moderator_username || ""} ${a.moderator_id || ""} ${a.reason || ""}`.toLowerCase();
       if (!haystack.includes(q)) return false;
     }
     return true;
@@ -593,7 +599,7 @@ function ModLogTab({ actions }) {
           <Search size={16} className="search-icon" />
           <input
             type="text"
-            placeholder="Search by user ID, moderator ID, or reason…"
+            placeholder="Search by username, ID, or reason…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -618,8 +624,26 @@ function ModLogTab({ actions }) {
             {filtered.map((a) => (
               <tr key={a.id}>
                 <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
-                <td><code>{a.user_id || "none"}</code></td>
-                <td><code>{a.moderator_id || "system"}</code></td>
+                <td>
+                  {a.user_id ? (
+                    <>
+                      <div>{a.username}</div>
+                      <div className="muted small"><code>{a.user_id}</code></div>
+                    </>
+                  ) : (
+                    <span className="muted">none</span>
+                  )}
+                </td>
+                <td>
+                  {a.moderator_id ? (
+                    <>
+                      <div>{a.moderator_username}</div>
+                      <div className="muted small"><code>{a.moderator_id}</code></div>
+                    </>
+                  ) : (
+                    <span className="muted">system</span>
+                  )}
+                </td>
                 <td>{a.reason}</td>
                 <td>{fmt(a.created_at)}</td>
               </tr>
