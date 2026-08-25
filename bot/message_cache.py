@@ -15,17 +15,19 @@ history would be a much bigger, more invasive feature (and its own
 privacy consideration) than "recent edits/deletes while the bot's been
 running."
 
-Bounded globally (not per-guild) so memory use has a hard ceiling
-regardless of how many guilds or how much traffic.
+Bounded globally (not per-guild) via bot/bounded_cache.py, so memory use
+has a hard ceiling regardless of how many guilds, how much traffic, or
+how long the process has been up without a restart.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
 from typing import Optional
+
+from bot.bounded_cache import BoundedDict
 
 MAX_CACHED_MESSAGES = 5000
 
-_cache: "OrderedDict[str, dict]" = OrderedDict()
+_cache: BoundedDict[str, dict] = BoundedDict(max_size=MAX_CACHED_MESSAGES)
 
 
 def remember(message_id: str, *, guild_id: str, channel_id: str,
@@ -37,9 +39,6 @@ def remember(message_id: str, *, guild_id: str, channel_id: str,
         "author_username": author_username,
         "content": content,
     }
-    _cache.move_to_end(message_id)
-    while len(_cache) > MAX_CACHED_MESSAGES:
-        _cache.popitem(last=False)
 
 
 def get(message_id: str) -> Optional[dict]:
