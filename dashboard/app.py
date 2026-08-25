@@ -306,17 +306,22 @@ def _guild_to_json(row) -> dict:
     }
 
 
-def _warning_to_json(row) -> dict:
+def _warning_to_json(row, names: dict) -> dict:
     return {
-        "id": row["id"], "user_id": row["user_id"], "moderator_id": row["moderator_id"],
+        "id": row["id"], "user_id": row["user_id"], "username": names.get(row["user_id"], row["user_id"]),
+        "moderator_id": row["moderator_id"],
+        "moderator_username": names.get(row["moderator_id"], row["moderator_id"]),
         "reason": row["reason"], "active": row["active"],
         "created_at": row["created_at"].isoformat(),
     }
 
 
-def _action_to_json(row) -> dict:
+def _action_to_json(row, names: dict) -> dict:
     return {
-        "id": row["id"], "user_id": row["user_id"], "moderator_id": row["moderator_id"],
+        "id": row["id"], "user_id": row["user_id"],
+        "username": names.get(row["user_id"], row["user_id"]) if row["user_id"] else None,
+        "moderator_id": row["moderator_id"],
+        "moderator_username": names.get(row["moderator_id"], row["moderator_id"]) if row["moderator_id"] else None,
         "action": row["action"], "reason": row["reason"],
         "created_at": row["created_at"].isoformat(),
     }
@@ -349,10 +354,14 @@ async def api_guild_detail(request: Request, guild_id: str):
     reaction_roles = await db.list_reaction_roles(guild_id)
     guild_tags = await db.list_tags(guild_id)
 
+    all_ids = {a["user_id"] for a in actions if a["user_id"]} | {a["moderator_id"] for a in actions if a["moderator_id"]}
+    all_ids |= {w["user_id"] for w in warnings} | {w["moderator_id"] for w in warnings}
+    names = await _resolve_usernames(guild_id, list(all_ids))
+
     return {
         "guild": _guild_to_json(guild_cfg),
-        "actions": [_action_to_json(a) for a in actions],
-        "warnings": [_warning_to_json(w) for w in warnings],
+        "actions": [_action_to_json(a, names) for a in actions],
+        "warnings": [_warning_to_json(w, names) for w in warnings],
         "autoroles": autoroles,
         "reaction_roles": [_reaction_role_to_json(r) for r in reaction_roles],
         "tags": [_tag_to_json(t) for t in guild_tags],
@@ -404,12 +413,8 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
 async def api_clear_warnings(request: Request, guild_id: str, user_id: str):
     await _require_manage(request, guild_id)
     cleared = await db.clear_warnings(guild_id, user_id)
-    warnings = await db.list_warnings(guild_id)
-    return {
-        "cleared": cleared,
-        "warnings": [_warning_to_json(w) for w in warnings],
-        "active_warning_count": sum(1 for w in warnings if w["active"]),
-    }
+    response = await _warnings_response(guild_id)
+    return {"cleared": cleared, **response}
 
 
 class AutoroleAddPayload(BaseModel):
@@ -707,12 +712,8 @@ async def api_warn_member(request: Request, guild_id: str, user_id: str, payload
         raise _ApiError(403, str(e))
     except FluxerAPIError as e:
         raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}).")
-    warnings = await db.list_warnings(guild_id)
-    return {
-        "result": result,
-        "warnings": [_warning_to_json(w) for w in warnings],
-        "active_warning_count": sum(1 for w in warnings if w["active"]),
-    }
+    response = await _warnings_response(guild_id)
+    return {"result": result, **response}
 
 
 # --------------------------------------------------------------- staff notes --
@@ -796,6 +797,16 @@ async def _resolve_usernames(guild_id: str, user_ids: list[str]) -> dict[str, st
 
     results = await asyncio.gather(*(_one(uid) for uid in user_ids))
     return dict(results)
+
+
+async def _warnings_response(guild_id: str) -> dict:
+    warnings = await db.list_warnings(guild_id)
+    all_ids = list({w["user_id"] for w in warnings} | {w["moderator_id"] for w in warnings})
+    names = await _resolve_usernames(guild_id, all_ids)
+    return {
+        "warnings": [_warning_to_json(w, names) for w in warnings],
+        "active_warning_count": sum(1 for w in warnings if w["active"]),
+    }
 
 
 @app.get("/api/guilds/{guild_id}/stats")
