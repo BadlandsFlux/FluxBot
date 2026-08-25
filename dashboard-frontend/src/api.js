@@ -71,6 +71,12 @@ export const api = {
     request(`/api/guilds/${id}/levels/multipliers`, { method: "POST", body: { role_id: roleId, multiplier } }),
   removeXpMultiplier: (id, roleId) =>
     request(`/api/guilds/${id}/levels/multipliers/${roleId}`, { method: "DELETE" }),
+  getActivityLog: (id) => request(`/api/guilds/${id}/activity-log`),
+  setActivityLog: (id, payload) => request(`/api/guilds/${id}/activity-log`, { method: "POST", body: payload }),
+  addIgnoredLogUser: (id, userId) =>
+    request(`/api/guilds/${id}/activity-log/ignored-users`, { method: "POST", body: { user_id: userId } }),
+  removeIgnoredLogUser: (id, userId) =>
+    request(`/api/guilds/${id}/activity-log/ignored-users/${userId}`, { method: "DELETE" }),
   announce: (id, payload) => request(`/api/guilds/${id}/announce`, { method: "POST", body: payload }),
   dangerClearAllWarnings: (id) => request(`/api/guilds/${id}/danger/clear-all-warnings`, { method: "POST" }),
   dangerResetAllXp: (id) => request(`/api/guilds/${id}/danger/reset-all-xp`, { method: "POST" }),

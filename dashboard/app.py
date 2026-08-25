@@ -409,6 +409,79 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
     return {"guild": _guild_to_json(guild_cfg)}
 
 
+def _activity_log_to_json(row, ignored_users: list[str]) -> dict:
+    if row is None:
+        return {
+            "log_channel_id": None, "log_message_edits": False, "log_message_deletes": False,
+            "log_member_joins": False, "log_member_leaves": False, "log_channel_changes": False,
+            "log_role_changes": False, "log_voice_activity": False, "ignored_users": ignored_users,
+        }
+    return {
+        "log_channel_id": row["log_channel_id"],
+        "log_message_edits": row["log_message_edits"], "log_message_deletes": row["log_message_deletes"],
+        "log_member_joins": row["log_member_joins"], "log_member_leaves": row["log_member_leaves"],
+        "log_channel_changes": row["log_channel_changes"], "log_role_changes": row["log_role_changes"],
+        "log_voice_activity": row["log_voice_activity"], "ignored_users": ignored_users,
+    }
+
+
+async def _activity_log_response(guild_id: str) -> dict:
+    row = await db.get_activity_log_settings(guild_id)
+    ignored = await db.list_ignored_log_users(guild_id)
+    return _activity_log_to_json(row, ignored)
+
+
+@app.get("/api/guilds/{guild_id}/activity-log")
+async def api_get_activity_log(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
+    return await _activity_log_response(guild_id)
+
+
+class ActivityLogPayload(BaseModel):
+    log_channel_id: str = ""
+    log_message_edits: bool = False
+    log_message_deletes: bool = False
+    log_member_joins: bool = False
+    log_member_leaves: bool = False
+    log_channel_changes: bool = False
+    log_role_changes: bool = False
+    log_voice_activity: bool = False
+
+
+@app.post("/api/guilds/{guild_id}/activity-log")
+async def api_set_activity_log(request: Request, guild_id: str, payload: ActivityLogPayload):
+    await _require_manage(request, guild_id)
+    await db.set_activity_log_settings(
+        guild_id, log_channel_id=payload.log_channel_id or None,
+        log_message_edits=payload.log_message_edits, log_message_deletes=payload.log_message_deletes,
+        log_member_joins=payload.log_member_joins, log_member_leaves=payload.log_member_leaves,
+        log_channel_changes=payload.log_channel_changes, log_role_changes=payload.log_role_changes,
+        log_voice_activity=payload.log_voice_activity,
+    )
+    return await _activity_log_response(guild_id)
+
+
+class IgnoredUserPayload(BaseModel):
+    user_id: str
+
+
+@app.post("/api/guilds/{guild_id}/activity-log/ignored-users")
+async def api_add_ignored_log_user(request: Request, guild_id: str, payload: IgnoredUserPayload):
+    await _require_manage(request, guild_id)
+    user_id = payload.user_id.strip()
+    if not user_id.isdigit():
+        raise _ApiError(400, "User ID must be numeric.")
+    await db.add_ignored_log_user(guild_id, user_id)
+    return await _activity_log_response(guild_id)
+
+
+@app.delete("/api/guilds/{guild_id}/activity-log/ignored-users/{user_id}")
+async def api_remove_ignored_log_user(request: Request, guild_id: str, user_id: str):
+    await _require_manage(request, guild_id)
+    await db.remove_ignored_log_user(guild_id, user_id)
+    return await _activity_log_response(guild_id)
+
+
 @app.post("/api/guilds/{guild_id}/warnings/{user_id}/clear")
 async def api_clear_warnings(request: Request, guild_id: str, user_id: str):
     await _require_manage(request, guild_id)
