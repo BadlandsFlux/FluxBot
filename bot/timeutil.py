@@ -4,7 +4,7 @@ CAVEAT on `snowflake_to_datetime`: Fluxer IDs are snowflake-shaped
 (large integers, sortable by creation time), matching the Discord
 convention Fluxer mirrors elsewhere, but the exact custom epoch used
 isn't confirmed from public docs. This defaults to Discord's epoch
-(2015-01-01T00:00:00.000Z) as the best available guess — if your
+(2015-01-01T00:00:00.000Z) as the best available guess, if your
 instance uses a different epoch, account-age/creation-date output
 here will be off by a constant amount. Update `FLUXER_EPOCH_MS` if you
 find the real value (e.g. via a self-hosted instance's source).

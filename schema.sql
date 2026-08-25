@@ -268,6 +268,27 @@ CREATE TABLE IF NOT EXISTS activity_heatmap (
     PRIMARY KEY (guild_id, day_of_week, hour)
 );
 
+-- Configurable server-activity logging (message edits/deletes, member
+-- join/leave, channel/role changes, voice activity), distinct from the
+-- existing mod_actions log which only covers actions this bot itself took.
+-- Everything defaults OFF: a brand new guild row shouldn't suddenly start
+-- posting to a channel that was never actually configured.
+CREATE TABLE IF NOT EXISTS activity_log_settings (
+    guild_id             TEXT PRIMARY KEY REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    log_channel_id       TEXT,
+    log_message_edits    BOOLEAN NOT NULL DEFAULT FALSE,
+    log_message_deletes  BOOLEAN NOT NULL DEFAULT FALSE,
+    log_member_joins     BOOLEAN NOT NULL DEFAULT FALSE,
+    log_member_leaves    BOOLEAN NOT NULL DEFAULT FALSE,
+    log_channel_changes  BOOLEAN NOT NULL DEFAULT FALSE,
+    log_role_changes     BOOLEAN NOT NULL DEFAULT FALSE,
+    log_voice_activity   BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS activity_log_ignored_users (
+    guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
 -- Singleton row, same pattern as bot_status: the bot's own avatar (set via
 -- the dashboard, applied to the bot's Fluxer profile) and the dashboard's
 -- favicon are the same uploaded image, stored here so the favicon can be

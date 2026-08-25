@@ -1118,6 +1118,18 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
 }
 .heatmap-cell.empty { background: var(--border); }
 
+/* ----------------------------------------------------------- activity log */
+.activity-log-toggles { display: flex; flex-direction: column; gap: 4px; margin: 18px 0; }
+.activity-log-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
 /* -------------------------------------------------------------- bot profile */
 .bot-profile-card { max-width: 480px; margin: 20px auto; }
 .bot-profile-card h2 { display: flex; align-items: center; gap: 8px; }

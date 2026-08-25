@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users,
-  Tag as TagIcon, TrendingUp, Megaphone, Search,
+  Tag as TagIcon, TrendingUp, Megaphone, Search, FileClock,
 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "../components/Flash";
@@ -13,6 +13,7 @@ import Switch from "../components/Switch";
 import MembersTab from "../components/MembersTab";
 import TagsTab from "../components/TagsTab";
 import LevelsTab from "../components/LevelsTab";
+import ActivityLogTab from "../components/ActivityLogTab";
 import OnboardingChecklist from "../components/OnboardingChecklist";
 import DangerZone from "../components/DangerZone";
 import AnnouncementBuilder from "../components/AnnouncementBuilder";
@@ -30,6 +31,7 @@ const TABS = [
   { id: "settings", label: "Settings", icon: Settings, category: "Configuration" },
   { id: "autoroles", label: "Autoroles", icon: UserPlus, category: "Configuration" },
   { id: "reactionroles", label: "Reaction Roles", icon: Smile, category: "Configuration" },
+  { id: "activitylog", label: "Activity Log", icon: FileClock, category: "Configuration" },
   { id: "levels", label: "Levels", icon: TrendingUp, category: "Engagement" },
   { id: "tags", label: "Tags", icon: TagIcon, category: "Engagement" },
   { id: "announce", label: "Announce", icon: Megaphone, category: "Engagement" },
@@ -166,6 +168,7 @@ export default function GuildDetail() {
             <ReactionRolesTab guildId={id} reactionRoles={reactionRoles} roles={roles} channels={channels}
                               onChange={(r) => setData((d) => ({ ...d, reaction_roles: r }))} />
           )}
+          {tab === "activitylog" && <ActivityLogTab guildId={id} channels={channels} />}
           {tab === "tags" && (
             <TagsTab guildId={id} tags={tags} prefix={guild.command_prefix || "!"}
                      onChange={(t) => setData((d) => ({ ...d, tags: t }))} />

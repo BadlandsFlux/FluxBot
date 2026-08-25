@@ -802,6 +802,61 @@ async def get_bot_status() -> Optional[asyncpg.Record]:
     return await pool().fetchrow("SELECT * FROM bot_status WHERE id='bot'")
 
 
+# -------------------------------------------------------------- activity log --
+async def get_activity_log_settings(guild_id: str) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow("SELECT * FROM activity_log_settings WHERE guild_id=$1", guild_id)
+
+
+async def set_activity_log_settings(
+    guild_id: str, *, log_channel_id: Optional[str],
+    log_message_edits: bool, log_message_deletes: bool,
+    log_member_joins: bool, log_member_leaves: bool,
+    log_channel_changes: bool, log_role_changes: bool, log_voice_activity: bool,
+) -> None:
+    await pool().execute(
+        """
+        INSERT INTO activity_log_settings (
+            guild_id, log_channel_id, log_message_edits, log_message_deletes,
+            log_member_joins, log_member_leaves, log_channel_changes, log_role_changes, log_voice_activity
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (guild_id) DO UPDATE SET
+            log_channel_id = EXCLUDED.log_channel_id,
+            log_message_edits = EXCLUDED.log_message_edits,
+            log_message_deletes = EXCLUDED.log_message_deletes,
+            log_member_joins = EXCLUDED.log_member_joins,
+            log_member_leaves = EXCLUDED.log_member_leaves,
+            log_channel_changes = EXCLUDED.log_channel_changes,
+            log_role_changes = EXCLUDED.log_role_changes,
+            log_voice_activity = EXCLUDED.log_voice_activity
+        """,
+        guild_id, log_channel_id, log_message_edits, log_message_deletes,
+        log_member_joins, log_member_leaves, log_channel_changes, log_role_changes, log_voice_activity,
+    )
+
+
+async def add_ignored_log_user(guild_id: str, user_id: str) -> None:
+    await pool().execute(
+        "INSERT INTO activity_log_ignored_users (guild_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        guild_id, user_id,
+    )
+
+
+async def remove_ignored_log_user(guild_id: str, user_id: str) -> None:
+    await pool().execute(
+        "DELETE FROM activity_log_ignored_users WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
+    )
+
+
+async def list_ignored_log_users(guild_id: str) -> list[str]:
+    rows = await pool().fetch("SELECT user_id FROM activity_log_ignored_users WHERE guild_id=$1", guild_id)
+    return [r["user_id"] for r in rows]
+
+
+async def is_ignored_log_user(guild_id: str, user_id: str) -> bool:
+    row = await pool().fetchrow(
+        "SELECT 1 FROM activity_log_ignored_users WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
+    )
+    return row is not None
 async def set_bot_avatar(image_bytes: bytes, mimetype: str) -> None:
     await pool().execute(
         """
