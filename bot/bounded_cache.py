@@ -29,7 +29,7 @@ V = TypeVar("V")
 
 
 class BoundedDict(OrderedDict, Generic[K, V]):
-    def __init__(self, max_size: int, *args, **kwargs):
+    def __init__(self, *args, max_size: int, **kwargs):
         self.max_size = max_size
         super().__init__(*args, **kwargs)
 
