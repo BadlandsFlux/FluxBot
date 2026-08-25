@@ -267,3 +267,14 @@ CREATE TABLE IF NOT EXISTS activity_heatmap (
     message_count  BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (guild_id, day_of_week, hour)
 );
+
+-- Singleton row, same pattern as bot_status: the bot's own avatar (set via
+-- the dashboard, applied to the bot's Fluxer profile) and the dashboard's
+-- favicon are the same uploaded image, stored here so the favicon can be
+-- served dynamically without a frontend rebuild.
+CREATE TABLE IF NOT EXISTS bot_profile (
+    id               TEXT PRIMARY KEY DEFAULT 'bot',
+    avatar_bytes     BYTEA NOT NULL,
+    avatar_mimetype  TEXT NOT NULL,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);

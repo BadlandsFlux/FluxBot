@@ -175,6 +175,14 @@ class FluxerREST:
         channel, e.g. !mydata's warning history."""
         return await self.request("POST", "/users/@me/channels", json={"recipient_id": user_id})
 
+    async def update_own_avatar(self, image_bytes: bytes, mimetype: str) -> dict:
+        """Sets the bot's own avatar. Discord convention: PATCH /users/@me
+        with the avatar as a base64 data URI, not a multipart upload (best-
+        effort assumption, not confirmed against Fluxer's own docs)."""
+        import base64
+        data_uri = f"data:{mimetype};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+        return await self.request("PATCH", "/users/@me", json={"avatar": data_uri})
+
     async def send_message(self, channel_id: str, content: Optional[str] = None,
                             embeds: Optional[list] = None, allowed_mentions: Optional[dict] = None) -> dict:
         payload: dict = {"allowed_mentions": allowed_mentions or self.SAFE_ALLOWED_MENTIONS}

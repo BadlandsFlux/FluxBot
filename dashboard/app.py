@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
@@ -34,7 +34,7 @@ log = logging.getLogger("fluxbot.dashboard")
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIST = BASE_DIR.parent / "dashboard-frontend" / "dist"
 
-# A REST client authenticated as the bot itself — used for dashboard actions
+# A REST client authenticated as the bot itself, used for dashboard actions
 # that need to act *as* the bot (sending the reaction-role embed message,
 # reacting to it). This talks to Fluxer over plain HTTP; it doesn't need the
 # bot's gateway connection, so it works whether or not the bot process is
@@ -44,7 +44,7 @@ bot_rest = FluxerREST(config.bot_token)
 
 def _build_command_catalog() -> list:
     """Build the command list by actually registering every command module
-    against a throwaway Bot instance — so /api/commands can never drift from
+    against a throwaway Bot instance, so /api/commands can never drift from
     what the bot really responds to. No network calls happen here; Bot() and
     command registration are both purely in-memory."""
     catalog_bot = BotFramework("catalog-builder-unused-token")
@@ -170,6 +170,20 @@ async def _require_manage(request: Request, guild_id: str) -> None:
         raise _ApiError(403, "You don't have permission to manage this server.")
 
 
+def _is_owner(user: Optional[dict]) -> bool:
+    return bool(user and config.owner_id and str(user.get("id")) == config.owner_id)
+
+
+def _require_owner(request: Request) -> dict:
+    """Bot-wide settings (the avatar, elsewhere anything else that isn't
+    scoped to one server) are gated to whoever BOT_OWNER_ID is configured
+    as, not just anyone who happens to manage some server the bot is in."""
+    user = require_login(request)
+    if not _is_owner(user):
+        raise _ApiError(403, "This is restricted to the bot owner.")
+    return user
+
+
 # -------------------------------------------------------------------- auth --
 @app.get("/login")
 async def login(request: Request):
@@ -210,7 +224,7 @@ async def api_me(request: Request):
     user = current_user(request)
     if not user:
         return JSONResponse({"user": None}, status_code=200)
-    return {"user": user, "bot_name": config.bot_name}
+    return {"user": user, "bot_name": config.bot_name, "is_owner": _is_owner(user)}
 
 
 @app.get("/api/guilds")
@@ -426,7 +440,7 @@ async def api_add_autorole(request: Request, guild_id: str, payload: AutoroleAdd
     await _require_manage(request, guild_id)
     role_id = payload.role_id.strip()
     if not role_id.isdigit():
-        raise _ApiError(400, "Role ID must be numeric — copy it from Fluxer with Developer Mode on.")
+        raise _ApiError(400, "Role ID must be numeric, copy it from Fluxer with Developer Mode on.")
     try:
         guild = await bot_rest.get_guild(guild_id)
     except FluxerAPIError as e:
@@ -487,7 +501,7 @@ async def api_create_reaction_role(request: Request, guild_id: str, payload: Rea
                               "can't hand them out to anyone who clicks. Assign them manually instead.")
 
     def _line(emoji: str, label: str, role: str) -> str:
-        return f"{emoji} **{label}** — <@&{role}>" if label else f"{emoji} — <@&{role}>"
+        return f"{emoji} **{label}**, <@&{role}>" if label else f"{emoji}, <@&{role}>"
 
     lines = "\n".join(_line(emoji, label, role) for emoji, label, role in pairs)
     embed = {
@@ -505,14 +519,14 @@ async def api_create_reaction_role(request: Request, guild_id: str, payload: Rea
                 await bot_rest.add_reaction(channel_id, message_id, emoji)
             except FluxerAPIError:
                 # Emoji format the instance expects may differ (unicode vs
-                # custom emoji id) — the mapping is still stored below so
+                # custom emoji id), the mapping is still stored below so
                 # reactions added manually will still grant the role. We
                 # surface this back to the dashboard instead of hiding it.
                 failed_reactions.append(emoji)
             await db.add_reaction_role(guild_id, channel_id, message_id, emoji, role_id, label)
     except FluxerAPIError as e:
         log.warning("Failed to send reaction-role embed: %s", e)
-        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}) — check the bot can post in that channel.")
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}), check the bot can post in that channel.")
 
     return {
         "reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)],
@@ -770,7 +784,7 @@ async def api_add_tag(request: Request, guild_id: str, payload: TagCreatePayload
     if not name or not content:
         raise _ApiError(400, "Give a tag name and content.")
     if name in {c.name for c in COMMAND_CATALOG}:
-        raise _ApiError(400, f'"{name}" is already a built-in command name — pick another.')
+        raise _ApiError(400, f'"{name}" is already a built-in command name, pick another.')
     await db.add_tag(guild_id, name, content, str(user.get("id")))
     return {"tags": [_tag_to_json(t) for t in await db.list_tags(guild_id)]}
 
@@ -1002,7 +1016,7 @@ async def api_announce(request: Request, guild_id: str, payload: AnnouncePayload
     try:
         await bot_rest.send_message(channel_id, embeds=[embed])
     except FluxerAPIError as e:
-        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}) — check the bot can post in that channel.")
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}), check the bot can post in that channel.")
 
     await db.log_action(guild_id, "announce", moderator_id=str(user.get("id")),
                          reason=f"Sent an announcement to <#{channel_id}>")
@@ -1038,6 +1052,49 @@ async def api_danger_wipe_reaction_roles(request: Request, guild_id: str):
     await db.log_action(guild_id, "danger_wipe_reaction_roles", moderator_id=str(user.get("id")),
                          reason=f"Wiped {count} reaction-role mapping(s) via Danger Zone")
     return {"wiped": count, "reaction_roles": []}
+
+
+# ---------------------------------------------------------------- bot profile --
+_ALLOWED_AVATAR_TYPES = {"image/png", "image/jpeg", "image/webp"}
+_MAX_AVATAR_BYTES = 8 * 1024 * 1024  # 8 MiB, matches Discord's own avatar upload cap
+
+
+@app.post("/api/bot-profile/avatar")
+async def api_set_bot_avatar(request: Request, file: UploadFile = File(...)):
+    _require_owner(request)
+    if file.content_type not in _ALLOWED_AVATAR_TYPES:
+        raise _ApiError(400, "Only PNG, JPEG, or WEBP images are accepted.")
+    data = await file.read()
+    if len(data) > _MAX_AVATAR_BYTES:
+        raise _ApiError(400, "That image is too large (8 MiB max).")
+    if not data:
+        raise _ApiError(400, "That file is empty.")
+
+    try:
+        await bot_rest.update_own_avatar(data, file.content_type)
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Fluxer rejected that image (HTTP {e.status}).")
+
+    # Only store it (and start serving it as the favicon) once Fluxer has
+    # actually accepted it, an image that Fluxer rejects shouldn't become
+    # the site's favicon either.
+    await db.set_bot_avatar(data, file.content_type)
+    return {"ok": True}
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Serves the same image set via /api/bot-profile/avatar, so uploading
+    a new bot avatar updates the browser tab icon too without a frontend
+    rebuild. Falls back to the static default if nothing's been uploaded
+    yet."""
+    row = await db.get_bot_avatar()
+    if row:
+        return Response(content=bytes(row["avatar_bytes"]), media_type=row["avatar_mimetype"])
+    static_favicon = FRONTEND_DIST / "favicon.svg"
+    if static_favicon.is_file():
+        return Response(content=static_favicon.read_bytes(), media_type="image/svg+xml")
+    return Response(status_code=404)
 
 
 # ------------------------------------------------------ serve the frontend --

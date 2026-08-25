@@ -4,7 +4,7 @@ import { api } from "../api";
 import GuildSwitcher from "./GuildSwitcher";
 import ThemeToggle from "./ThemeToggle";
 
-export default function TopBar({ user, botName, onLoggedOut }) {
+export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
   async function handleLogout() {
     await api.logout();
     onLoggedOut();
@@ -27,6 +27,11 @@ export default function TopBar({ user, botName, onLoggedOut }) {
           <Link to="/status" className="topbar-link">
             Status
           </Link>
+          {isOwner && (
+            <Link to="/bot-profile" className="topbar-link">
+              Bot Profile
+            </Link>
+          )}
         </nav>
       </div>
       <div className="topbar-right">
