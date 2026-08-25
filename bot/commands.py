@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
+from bot.bounded_cache import BoundedDict
 from bot.client import GatewayClient
 from bot.rest import FluxerREST, FluxerAPIError
 from common.config import config
@@ -77,7 +78,16 @@ class Bot:
         self.commands: dict[str, Command] = {}
         self.prefix = config.command_prefix
         self.started_at = time.monotonic()
-        self._member_cache: dict[tuple[str, str], tuple[dict, float]] = {}
+        # Bounded: this grows one entry per distinct (guild, user) that's
+        # ever had a permission check run, not per guild, so over weeks or
+        # months of uptime it could otherwise accumulate without limit. A
+        # cache miss just means the next check refetches from Fluxer, so
+        # eviction here has no correctness cost, only a bit of avoidable
+        # work for a long-dormant user's first command back.
+        self._member_cache: BoundedDict[tuple[str, str], tuple[dict, float]] = BoundedDict(max_size=10_000)
+        # Not bounded: naturally capped by how many guilds the bot is
+        # actually in, which doesn't grow over time the way distinct users
+        # does.
         self._guild_cache: dict[str, tuple[dict, float]] = {}
         self._prefix_cache: dict[str, tuple[str, float]] = {}  # guild_id -> (prefix, fetched_at)
 

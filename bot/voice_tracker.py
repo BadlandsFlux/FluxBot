@@ -1,7 +1,7 @@
 """Voice activity tracking.
 
 Tracks time connected to voice channels for the dashboard's activity
-stats and for voice XP — deliberately *presence* tracking only (who's
+stats and for voice XP, deliberately *presence* tracking only (who's
 connected, to which channel, for how long), not audio. That's a
 completely different, much simpler thing than actually receiving/
 transmitting audio, and only needs the `VOICE_STATE_UPDATE` gateway
@@ -10,7 +10,7 @@ event Fluxer already sends.
 Eligibility rules for earning voice time/XP (per-member, re-evaluated
 on every relevant state change):
   - at least 2 humans connected to the same channel (solo time doesn't
-    count — no farming XP by sitting alone)
+    count, no farming XP by sitting alone)
   - the member isn't self-deafened (a reasonable proxy for "not really
     here" without needing actual speaking detection, which would
     require the audio pipeline this deliberately avoids)
@@ -18,12 +18,12 @@ on every relevant state change):
 
 CAVEAT: the AFK-channel field name (`afk_channel_id` on the guild
 object) follows the Discord convention Fluxer mirrors elsewhere but
-isn't confirmed from public docs — if your instance names it
+isn't confirmed from public docs, if your instance names it
 differently, update `_afk_channel_id` below.
 
 Accrued time/XP is flushed (persisted to Postgres) whenever eligibility
 changes, AND periodically by the scheduler (see bot/scheduler.py) so a
-long-running call doesn't lose everything on a crash/restart — at most
+long-running call doesn't lose everything on a crash/restart, at most
 one scheduler interval's worth of credit is ever at risk.
 """
 from __future__ import annotations
@@ -41,9 +41,19 @@ log = logging.getLogger("fluxbot.voice_tracker")
 
 VOICE_XP_MIN_PER_MIN, VOICE_XP_MAX_PER_MIN = 3, 6  # lower than text's ~15-25/message
 
-# In-memory only — rebuilt from live VOICE_STATE_UPDATE events (and a
+# In-memory only, rebuilt from live VOICE_STATE_UPDATE events (and a
 # best-effort seed from GUILD_CREATE's voice_states, if present) rather
 # than persisted, since it's just bookkeeping for "currently connected".
+#
+# All four are self-bounding, but only because of explicit cleanup on
+# disconnect: _member_channel and _member_self_deaf are popped when a
+# user's channel_id goes null, _channel_occupants prunes a channel's
+# entry entirely once its occupant set empties out, and _accrual_start
+# is popped whenever eligibility turns off. Without that (this was true
+# of _member_self_deaf and _channel_occupants until this was found),
+# these would otherwise grow by one entry per distinct user or channel
+# that's EVER touched voice, for as long as the process stays up, fine
+# over an hour, a real problem over weeks of uptime without a restart.
 _channel_occupants: dict[tuple[str, str], set[str]] = {}
 _member_channel: dict[tuple[str, str], str] = {}
 _member_self_deaf: dict[tuple[str, str], bool] = {}
@@ -131,12 +141,26 @@ async def _process_voice_state(bot: Bot, data: dict) -> None:
 
     if old_channel != new_channel:
         if old_channel:
-            _channel_occupants.get((guild_id, old_channel), set()).discard(user_id)
+            occupants = _channel_occupants.get((guild_id, old_channel))
+            if occupants is not None:
+                occupants.discard(user_id)
+                if not occupants:
+                    # Otherwise every channel that's ever hosted a voice
+                    # session leaves a permanently-empty set behind for as
+                    # long as the process stays up, one more thing that
+                    # doesn't matter over an hour but does over weeks.
+                    _channel_occupants.pop((guild_id, old_channel), None)
         if new_channel:
             _channel_occupants.setdefault((guild_id, new_channel), set()).add(user_id)
             _member_channel[(guild_id, user_id)] = new_channel
         else:
             _member_channel.pop((guild_id, user_id), None)
+            # Otherwise this accumulates one entry per distinct user who's
+            # EVER touched voice in any tracked guild, checked once here on
+            # a full disconnect, never again until they rejoin (which
+            # re-populates it fresh from that join's own self_deaf field,
+            # so there's nothing lost by dropping it now).
+            _member_self_deaf.pop((guild_id, user_id), None)
             await _flush_member(bot, guild_id, user_id, now, keep_earning=False)
 
     if old_channel:
