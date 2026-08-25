@@ -288,7 +288,17 @@ def register(bot: Bot) -> None:
 
         key = (guild_id, user_id)
         old_channel = _last_channel.get(key)
-        _last_channel[key] = new_channel
+        if new_channel is None:
+            # Otherwise this accumulates one permanent entry per distinct
+            # user who's EVER touched voice, the exact same bug found and
+            # fixed in voice_tracker.py's _member_self_deaf, missed here at
+            # the time despite being the identical pattern. Nothing depends
+            # on retaining this after a full disconnect: a future rejoin
+            # correctly reports as a "join" either way, since a missing key
+            # and an explicit None value behave identically through .get().
+            _last_channel.pop(key, None)
+        else:
+            _last_channel[key] = new_channel
 
         if old_channel == new_channel:
             return  # a mute/deafen toggle, not a channel change
