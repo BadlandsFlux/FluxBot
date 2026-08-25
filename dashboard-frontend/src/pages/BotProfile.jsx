@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Bot, Upload } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "../components/Flash";
@@ -15,6 +15,16 @@ export default function BotProfile() {
     if (!file) return;
     setPreview(URL.createObjectURL(file));
   }
+
+  // Each createObjectURL() call holds a reference until explicitly revoked,
+  // without this, picking several files in a row (or leaving the page open)
+  // leaks memory. Runs before setting a new preview and on unmount, so the
+  // previous blob URL is always cleaned up, not just the last one.
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview);
+    };
+  }, [preview]);
 
   async function handleUpload(e) {
     e.preventDefault();
