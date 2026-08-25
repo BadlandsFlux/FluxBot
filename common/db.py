@@ -857,6 +857,22 @@ async def is_ignored_log_user(guild_id: str, user_id: str) -> bool:
         "SELECT 1 FROM activity_log_ignored_users WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
     )
     return row is not None
+async def set_bot_avatar(image_bytes: bytes, mimetype: str) -> None:
+    await pool().execute(
+        """
+        INSERT INTO bot_profile (id, avatar_bytes, avatar_mimetype, updated_at)
+        VALUES ('bot', $1, $2, now())
+        ON CONFLICT (id) DO UPDATE SET
+            avatar_bytes = EXCLUDED.avatar_bytes,
+            avatar_mimetype = EXCLUDED.avatar_mimetype,
+            updated_at = now()
+        """,
+        image_bytes, mimetype,
+    )
+
+
+async def get_bot_avatar() -> Optional[asyncpg.Record]:
+    return await pool().fetchrow("SELECT * FROM bot_profile WHERE id='bot'")
 
 
 if __name__ == "__main__":

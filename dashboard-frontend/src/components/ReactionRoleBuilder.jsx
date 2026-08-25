@@ -33,7 +33,7 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
     .filter((r) => r.emoji && r.role_id)
     .map((r) => {
       const roleName = roleNameById[r.role_id] || r.role_id;
-      return r.label ? `${r.emoji} **${r.label}** — @${roleName}` : `${r.emoji} — @${roleName}`;
+      return r.label ? `${r.emoji} **${r.label}**, @${roleName}` : `${r.emoji}, @${roleName}`;
     });
   const previewDescription = [description, previewLines.join("\n")].filter(Boolean).join("\n\n");
 

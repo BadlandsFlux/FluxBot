@@ -19,10 +19,27 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function uploadFile(path, file) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(path, { method: "POST", credentials: "include", body: form });
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {
+    // no body
+  }
+  if (!res.ok) {
+    throw new Error(data.detail || `Request failed (${res.status})`);
+  }
+  return data;
+}
+
 export const api = {
   me: () => request("/api/me"),
   logout: () => request("/api/logout", { method: "POST" }),
   guilds: () => request("/api/guilds"),
+  setBotAvatar: (file) => uploadFile("/api/bot-profile/avatar", file),
   commands: () => request("/api/commands"),
   status: () => request("/api/status"),
   guildDetail: (id) => request(`/api/guilds/${id}`),

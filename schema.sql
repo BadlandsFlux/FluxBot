@@ -289,4 +289,13 @@ CREATE TABLE IF NOT EXISTS activity_log_ignored_users (
     guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
     user_id     TEXT NOT NULL,
     PRIMARY KEY (guild_id, user_id)
+-- Singleton row, same pattern as bot_status: the bot's own avatar (set via
+-- the dashboard, applied to the bot's Fluxer profile) and the dashboard's
+-- favicon are the same uploaded image, stored here so the favicon can be
+-- served dynamically without a frontend rebuild.
+CREATE TABLE IF NOT EXISTS bot_profile (
+    id               TEXT PRIMARY KEY DEFAULT 'bot',
+    avatar_bytes     BYTEA NOT NULL,
+    avatar_mimetype  TEXT NOT NULL,
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );

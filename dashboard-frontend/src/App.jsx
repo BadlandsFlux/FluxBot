@@ -9,6 +9,7 @@ import GuildPicker from "./pages/GuildPicker";
 import GuildDetail from "./pages/GuildDetail";
 import Commands from "./pages/Commands";
 import Status from "./pages/Status";
+import BotProfile from "./pages/BotProfile";
 import { api } from "./api";
 
 export default function App() {
@@ -35,13 +36,18 @@ export default function App() {
     <BrowserRouter>
       <FlashProvider>
         <GuildsProvider enabled={!!me.user}>
-          <TopBar user={me.user} botName={botName} onLoggedOut={() => setMe({ user: null, bot_name: botName })} />
+          <TopBar user={me.user} isOwner={!!me.is_owner} botName={botName}
+                  onLoggedOut={() => setMe({ user: null, bot_name: botName })} />
           <main className="content">
             <Routes>
               <Route path="/" element={me.user ? <GuildPicker /> : <Login botName={botName} />} />
               <Route path="/guild/:id" element={me.user ? <GuildDetail /> : <Login botName={botName} />} />
               <Route path="/commands" element={<Commands />} />
               <Route path="/status" element={<Status />} />
+              <Route
+                path="/bot-profile"
+                element={me.user && me.is_owner ? <BotProfile /> : <Login botName={botName} />}
+              />
             </Routes>
           </main>
         </GuildsProvider>
