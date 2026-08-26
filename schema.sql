@@ -282,7 +282,14 @@ CREATE TABLE IF NOT EXISTS activity_log_settings (
     log_member_leaves    BOOLEAN NOT NULL DEFAULT FALSE,
     log_channel_changes  BOOLEAN NOT NULL DEFAULT FALSE,
     log_role_changes     BOOLEAN NOT NULL DEFAULT FALSE,
-    log_voice_activity   BOOLEAN NOT NULL DEFAULT FALSE
+    log_voice_activity   BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Distinct from log_role_changes: that one is about role OBJECTS
+    -- (created/updated/deleted), this is about a MEMBER gaining or
+    -- losing a role that carries elevated permissions (see
+    -- bot/permissions.py's PRIVILEGED_PERMISSION_BITS), a much smaller,
+    -- security-relevant subset worth being able to watch independently
+    -- of general role-object noise.
+    log_privileged_role_changes BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS activity_log_ignored_users (

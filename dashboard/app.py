@@ -428,14 +428,17 @@ def _activity_log_to_json(row, ignored_users: list[str]) -> dict:
         return {
             "log_channel_id": None, "log_message_edits": False, "log_message_deletes": False,
             "log_member_joins": False, "log_member_leaves": False, "log_channel_changes": False,
-            "log_role_changes": False, "log_voice_activity": False, "ignored_users": ignored_users,
+            "log_role_changes": False, "log_voice_activity": False, "log_privileged_role_changes": False,
+            "ignored_users": ignored_users,
         }
     return {
         "log_channel_id": row["log_channel_id"],
         "log_message_edits": row["log_message_edits"], "log_message_deletes": row["log_message_deletes"],
         "log_member_joins": row["log_member_joins"], "log_member_leaves": row["log_member_leaves"],
         "log_channel_changes": row["log_channel_changes"], "log_role_changes": row["log_role_changes"],
-        "log_voice_activity": row["log_voice_activity"], "ignored_users": ignored_users,
+        "log_voice_activity": row["log_voice_activity"],
+        "log_privileged_role_changes": row["log_privileged_role_changes"],
+        "ignored_users": ignored_users,
     }
 
 
@@ -460,6 +463,7 @@ class ActivityLogPayload(BaseModel):
     log_channel_changes: bool = False
     log_role_changes: bool = False
     log_voice_activity: bool = False
+    log_privileged_role_changes: bool = False
 
 
 @app.post("/api/guilds/{guild_id}/activity-log")
@@ -471,6 +475,7 @@ async def api_set_activity_log(request: Request, guild_id: str, payload: Activit
         log_member_joins=payload.log_member_joins, log_member_leaves=payload.log_member_leaves,
         log_channel_changes=payload.log_channel_changes, log_role_changes=payload.log_role_changes,
         log_voice_activity=payload.log_voice_activity,
+        log_privileged_role_changes=payload.log_privileged_role_changes,
     )
     return await _activity_log_response(guild_id)
 
