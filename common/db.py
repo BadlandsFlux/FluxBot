@@ -812,13 +812,15 @@ async def set_activity_log_settings(
     log_message_edits: bool, log_message_deletes: bool,
     log_member_joins: bool, log_member_leaves: bool,
     log_channel_changes: bool, log_role_changes: bool, log_voice_activity: bool,
+    log_privileged_role_changes: bool,
 ) -> None:
     await pool().execute(
         """
         INSERT INTO activity_log_settings (
             guild_id, log_channel_id, log_message_edits, log_message_deletes,
-            log_member_joins, log_member_leaves, log_channel_changes, log_role_changes, log_voice_activity
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            log_member_joins, log_member_leaves, log_channel_changes, log_role_changes, log_voice_activity,
+            log_privileged_role_changes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (guild_id) DO UPDATE SET
             log_channel_id = EXCLUDED.log_channel_id,
             log_message_edits = EXCLUDED.log_message_edits,
@@ -827,10 +829,12 @@ async def set_activity_log_settings(
             log_member_leaves = EXCLUDED.log_member_leaves,
             log_channel_changes = EXCLUDED.log_channel_changes,
             log_role_changes = EXCLUDED.log_role_changes,
-            log_voice_activity = EXCLUDED.log_voice_activity
+            log_voice_activity = EXCLUDED.log_voice_activity,
+            log_privileged_role_changes = EXCLUDED.log_privileged_role_changes
         """,
         guild_id, log_channel_id, log_message_edits, log_message_deletes,
         log_member_joins, log_member_leaves, log_channel_changes, log_role_changes, log_voice_activity,
+        log_privileged_role_changes,
     )
 
 

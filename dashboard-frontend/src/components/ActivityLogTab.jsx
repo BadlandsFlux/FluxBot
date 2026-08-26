@@ -7,13 +7,14 @@ import Switch from "./Switch";
 import Spinner from "./Spinner";
 
 const CATEGORIES = [
-  { key: "log_message_edits", label: "Message edits", description: "Shows the before and after text." },
+  { key: "log_message_edits", label: "Message edits", description: "Shows the before and after text, plus a jump link to the message." },
   { key: "log_message_deletes", label: "Message deletes", description: "Shows the deleted content, if the bot saw it get sent." },
   { key: "log_member_joins", label: "Member joins", description: "Includes how old the account is." },
   { key: "log_member_leaves", label: "Member leaves", description: "" },
-  { key: "log_channel_changes", label: "Channel changes", description: "Created, deleted, or updated." },
-  { key: "log_role_changes", label: "Role changes", description: "Created, deleted, or updated." },
+  { key: "log_channel_changes", label: "Channel changes", description: "Created, deleted, or updated, with who did it where determinable." },
+  { key: "log_role_changes", label: "Role changes", description: "Created, deleted, or updated, including the permission set and what changed." },
   { key: "log_voice_activity", label: "Voice activity", description: "Joins, leaves, and switching channels, not mute/deafen toggles." },
+  { key: "log_privileged_role_changes", label: "Privileged role changes", description: "A member gaining or losing a role with elevated permissions (kick, ban, manage roles, etc.), separate from general role-object changes above." },
 ];
 
 export default function ActivityLogTab({ guildId, channels }) {

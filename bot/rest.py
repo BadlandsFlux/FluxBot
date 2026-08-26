@@ -167,6 +167,21 @@ class FluxerREST:
         and nothing else, regardless of what else is in the message content."""
         return {"parse": [], "users": [str(uid) for uid in user_ids]}
 
+    async def get_audit_log(self, guild_id: str, action_type: Optional[int] = None, limit: int = 10) -> dict:
+        """Discord convention (best-effort assumption, unconfirmed for
+        Fluxer, same caveat as most endpoints in this file): GET
+        /guilds/{id}/audit-logs, optionally filtered by numeric
+        action_type. Needed to attribute WHO created/deleted a channel or
+        role, or changed a role's permissions, since none of those
+        gateway events carry an acting user themselves, only a separate
+        audit log does. Response shape assumed to be Discord's:
+        {"audit_log_entries": [...], "users": [...]}, entries reference
+        users by id rather than embedding them inline."""
+        params = f"?limit={limit}"
+        if action_type is not None:
+            params += f"&action_type={action_type}"
+        return await self.request("GET", f"/guilds/{guild_id}/audit-logs{params}")
+
     async def create_dm(self, user_id: str) -> dict:
         """Opens (or fetches the existing) DM channel with a user, Discord
         convention (best-effort assumption, not confirmed against Fluxer's
