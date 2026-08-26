@@ -31,12 +31,13 @@ _cache: BoundedDict[str, dict] = BoundedDict(max_size=MAX_CACHED_MESSAGES)
 
 
 def remember(message_id: str, *, guild_id: str, channel_id: str,
-             author_id: str, author_username: str, content: str) -> None:
+             author_id: str, author_username: str, author_avatar: Optional[str], content: str) -> None:
     _cache[message_id] = {
         "guild_id": guild_id,
         "channel_id": channel_id,
         "author_id": author_id,
         "author_username": author_username,
+        "author_avatar": author_avatar,
         "content": content,
     }
 
