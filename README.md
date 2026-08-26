@@ -1,8 +1,25 @@
 # FluxBot
 
-A Python moderation bot for [Fluxer](https://fluxer.app) with a FastAPI web dashboard. Works against the official instance or a self-hosted one, just change `FLUXER_API_BASE`.
+A self-hosted moderation and community bot for [Fluxer](https://fluxer.app), paired with a full web dashboard so most day-to-day admin work never needs a chat command. Works against the official instance or a self-hosted one, just point `FLUXER_API_BASE` wherever you'd like.
 
 > **AI Disclosure:** This bot was written with help from AI. I don't have the time to really dig into the API structure and build a proper bot at this moment. This is just a stopgap until a properly featured bot comes out (if ever). Continued support is "best effort" and at will, I promise no commitment.
+
+## What you get
+
+**Moderation:** kick, ban, timeout, purge, and a warning system that auto-escalates (warn → timeout → kick), all logged to a channel. Chat commands and the dashboard's Members tab share the exact same underlying logic, so behavior never drifts between the two.
+
+**Leveling & engagement:** XP from both chat and voice activity, level-up announcements, level-role rewards, achievements, a leaderboard, visual `!rank` cards, an all-time "wrapped" recap image, and live trivia.
+
+**Roles & welcomes:** autoroles, reaction roles, welcome and goodbye messages, custom `!tag` shortcuts, and a per-server command prefix.
+
+**Activity logging:** a detailed log for message edits/deletes, member joins/leaves, channel and role changes (including who did it, and exactly what changed), voice activity, and privileged-role grants, each independently togglable to its own channel.
+
+**A real dashboard, not just a control panel:** a full React app with a left sidebar, live search, near-real-time updates from chat, a Members tab you can moderate straight from, a leaderboard/level-role editor, a custom embed builder, a public status page, and more. See "What's editable from the dashboard vs. chat-only" below for the full tour.
+
+**Self-hostable end to end:** the bot and dashboard both talk to the Fluxer REST API directly (no third-party wrapper's undocumented internals to work around), Postgres for storage, and every Fluxer-specific URL is a config value, not a hardcoded assumption.
+
+<details>
+<summary><strong>Full feature list</strong> (click to expand, this is the complete technical rundown)</summary>
 
 - **Bot**: kick / ban / unban / timeout / purge, a warning system with auto-escalation (warn to auto-timeout to auto-kick), mod-action logging to a channel, autoroles, reaction roles, welcome **and goodbye** messages, custom tags (`!tagname` shortcuts), per-server command prefixes, info commands (`!avatar`, `!serverinfo`, `!userinfo`, owner-only `!info`), reminders (`!remind`), a leveling/XP system covering **both text and voice activity** (chat XP with a cooldown, plus voice-time XP at a lower rate that only counts when 2+ people are connected, no one's self-deafened, and it's not the AFK channel) with level-up announcements and level-role rewards (`!rank`, `!leaderboard`), timed polls that auto-close with a results tally (`!poll ... 1h`), `!ping` with real gateway/API/DB latency and uptime stats, and fun commands (dice, coinflip, wheel spin). A background scheduler delivers due reminders, closes due polls, and periodically flushes in-progress voice sessions, all independent of the gateway connection. Moderation logic (REST calls, logging, warn escalation) lives in one shared module (`bot/moderation_actions.py`) used by both chat commands and the dashboard's Members tab, so behavior can't drift between the two.
 - **Dashboard**: a React SPA (Vite) served by FastAPI as static files, talking to a JSON API (`/api/*`), with real client-side routing, no full-page reloads, live search on the commands page, and a quiet 8-second poll on each server's page so kicks/bans/warnings from chat show up without a manual refresh. A top-bar server switcher shows the current server's name/icon and lets you jump between manageable servers without going back to the picker. Per-server navigation is a left sidebar grouped into categories (Moderation, Configuration, Engagement, plus Overview on its own), with a sliding accent indicator that glides to whichever section is active, a quiet fade-in when the content switches, and a collapse toggle for a narrower icon-only mode, all persisted per browser. Sections: Overview, Settings, Members, Warnings, Mod Log, Autoroles, Reaction Roles, **Levels**, Tags, **Announce**, with searchable role/channel pickers everywhere instead of raw ID text boxes, real server icons in the picker, a Members tab to search and kick/ban/timeout/warn directly from the browser, welcome/goodbye message configuration behind toggle switches, a leveling tab (leaderboard + level-role reward setup), a custom embed/announcement builder, a reaction-role builder (emoji picker, per-choice label, role picker, embed color) that posts the embed, reacts to it, and starts listening for you, and an Overview tab with **separate 14-day charts for message and voice activity** plus most-active-members lists for each. A public `/commands` page lists every command, always in sync with the bot since it's generated from the same code. A public `/status` page (also no login required) shows whether the bot is currently online, uptime, gateway latency, and server count, "is it down or is it just me" shouldn't need an account to check. The Overview tab also shows each server's most-used commands, and an all-time activity heatmap (message volume by hour and day of week, in UTC) for picking good event times. A **Bot Profile** page, linked in the top bar only for whoever `BOT_OWNER_ID` is set to, lets you upload one image that becomes both the bot's Fluxer avatar and the dashboard's favicon. Access to the rest of the dashboard is via "Login with Fluxer" OAuth2, see "Dashboard access" below.
@@ -10,9 +27,10 @@ A Python moderation bot for [Fluxer](https://fluxer.app) with a FastAPI web dash
 
 Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohttp`/gateway handshake) rather than depending on a third-party wrapper's undocumented internals, so self-hosting support is just config.
 
+</details>
+
 ## Table of contents
 
-- [Project layout](#project-layout)
 - [Setup](#setup)
 - [Updating](#updating)
 - [Running at startup on Ubuntu (systemd)](#running-at-startup-on-ubuntu-systemd)
@@ -20,70 +38,10 @@ Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohtt
 - [Creating the bot application on Fluxer](#creating-the-bot-application-on-fluxer)
 - [Self-hosting a Fluxer instance](#self-hosting-a-fluxer-instance)
 - [Dashboard access](#dashboard-access)
-- [On API completeness](#on-api-completeness)
 - [Commands](#commands)
 - [What's editable from the dashboard vs. chat-only](#whats-editable-from-the-dashboard-vs-chat-only)
-
-## Project layout
-
-```
-common/                config + the shared Postgres data layer (used by both processes)
-  config.py            env-driven settings
-  db.py                asyncpg pool + all queries (guilds, warnings, mod_actions,
-                        reaction_roles, autoroles, tags, reminders, polls,
-                        levels, level_roles, activity stats)
-  discovery.py         instance discovery + CDN URL helpers (guild icons, avatars)
-bot/
-  rest.py              REST client (self-host aware, base URL from config)
-  client.py            gateway (WebSocket) client, handshake, heartbeats, reconnect
-  commands.py          tiny prefix-command framework + dispatcher (also falls back
-                        to custom tags when a message doesn't match a built-in command)
-  permissions.py       role/permission bit checks
-  timeutil.py          snowflake to date, duration + shared duration-string parsing
-  moderation_actions.py  shared kick/ban/timeout/warn logic, used by both chat
-                        commands and the dashboard's Members tab
-  scheduler.py          background loop: delivers due reminders, closes and
-                        tallies due polls, flushes in-progress voice sessions,
-                        independent of the gateway connection
-  voice_tracker.py       voice channel presence tracking for activity stats
-                        and voice XP (join/leave/mute events only, no audio)
-  modules/
-    moderation.py       kick/ban/unban/timeout/purge/warn/warnings/modlog (thin
-                        wrappers around moderation_actions.py)
-    roles.py            autorole + reaction roles + welcome/goodbye messages
-    fun.py              roll/coinflip/wheel/poll (with optional auto-close)
-    info.py             avatar/serverinfo/userinfo/info (owner-only)
-    tags.py             !tag add/remove/list
-    reminders.py         !remind/!reminders/!delreminder
-    leveling.py          XP gain on message, level-up + role rewards, !rank/!leaderboard
-    activity.py          per-day/per-member message counters for dashboard stats
-    utility.py          help/ping
-    logging_mod.py       writes mod_actions rows + posts to the log channel
-  main.py                entrypoint, also starts the scheduler task
-dashboard/
-  app.py                FastAPI app, JSON API (/api/*) + serves the built SPA
-  oauth.py              OAuth2 "Login with Fluxer" flow
-dashboard-frontend/      React SPA (Vite)
-  src/
-    api.js               fetch wrapper for the backend's /api/* routes
-    App.jsx               routing + auth-gate
-    context/              GuildsContext (shared guild-list fetch for the picker
-                          and the top-bar switcher)
-    pages/                Login, GuildPicker, GuildDetail, Commands
-    components/           TopBar, GuildSwitcher, Flash (toasts), Spinner, Switch,
-                          Combobox (role/channel picker), EmojiPicker, BarChart,
-                          ReactionRoleBuilder, AnnouncementBuilder, MembersTab,
-                          TagsTab, LevelsTab
-    hooks/                useRolesChannels (fetch once per guild), usePolling
-                          (visibility-aware interval)
-  dist/                  production build, FastAPI serves this (git-ignored,
-                          build it yourself)
-schema.sql              Postgres schema (idempotent, CREATE TABLE IF NOT EXISTS,
-                        plus ALTER TABLE ADD COLUMN IF NOT EXISTS migrations)
-run_bot.py / run_dashboard.py
-deploy/                systemd unit files + nginx reverse proxy config for running
-                        both processes at boot on Ubuntu
-```
+- [Project layout](#project-layout)
+- [On API completeness](#on-api-completeness)
 
 ## Setup
 
@@ -288,25 +246,6 @@ Anyone can log in with "Login with Fluxer", that just proves who they are. What 
 
 If you want to restrict the dashboard further (e.g. only the bot owner, or an explicit allowlist of user IDs), that check lives in `_require_manage()` in `dashboard/app.py`, straightforward to tighten.
 
-## On API completeness
-
-Fluxer's public API reference is still being filled in (as of mid-2026), and some routes here, particularly the exact moderation endpoints (`ban`/`timeout`/`purge`), member-list pagination, and the OAuth2 guild-list response shape, are implemented following the Discord-like conventions Fluxer is modeled on, since that's the best information available. Everything funnels through a small number of methods:
-
-- REST calls (including member list/kick/ban/timeout): `bot/rest.py`
-- Permission bit values: `bot/permissions.py`
-- OAuth2 guild permission check: `dashboard/oauth.py::can_manage`
-- Media/CDN URL paths (guild icons, avatars) and snowflake to date epoch: `common/discovery.py`, `bot/timeutil.py`
-- The guild's AFK-channel field name (assumed `afk_channel_id`, Discord convention) used to exclude AFK-channel time from voice XP/stats: `bot/voice_tracker.py`
-- Mention suppression (`allowed_mentions` on outgoing messages, Discord convention): `bot/rest.py`
-
-If your instance's OpenAPI spec (usually at `<api_base>/openapi.json`, or your instance's own `/api-reference` page) disagrees with a path or bit value here, that's the source of truth, the fix is a one-line change in one of those files, not a rewrite.
-
-One concrete limit worth knowing: the dashboard's Members tab fetches up to 500 members per request (Fluxer's member-list endpoint is paginated like Discord's). Large servers won't show every member in search, searching by exact user ID still works around that.
-
-**On that `allowed_mentions` point specifically**: several messages the bot sends embed free text a member fully controls, `!remind`'s reminder text, a member's own username in welcome/goodbye/level-up messages, so every outgoing message defaults to pinging nobody at all (`bot/rest.py`'s `FluxerREST.SAFE_ALLOWED_MENTIONS`) unless the calling code explicitly allow-lists the one specific user ID it intends to notify (`FluxerREST.mention_only(user_id)`). This closes off a real mass-ping griefing path: without it, any member (no special permission needed) could type `@everyone` or mention other members inside free-text fields and have the bot actually broadcast it, especially if the bot's invite permission includes mention-everyone, which Administrator (an option here, but not the recommended default) does. If you add new code that sends a message with plain `content`, don't forget to either accept the default (nobody gets pinged) or pass `allowed_mentions=bot.rest.mention_only(the_one_user_id)` if a ping is genuinely intended, don't rely on Fluxer's own default, since we don't know what that default is on any given instance.
-
-P.P.S. The [dashboard-frontend](https://github.com/BadlandsFlux/FluxBot/tree/main/dashboard-frontend) page has a readme with all the API endpoints I use. This frontend can be ripped out and used for other projects if you so wish.
-
 ## Commands
 
 Run `!help` in Fluxer once the bot is running for the live, per-server list (it shows your server's actual prefix and groups commands by category), or visit the dashboard's `/commands` page, same source, always in sync.
@@ -358,7 +297,7 @@ Most day-to-day admin work can be done entirely from the dashboard, no need to t
 - **Settings tab**: mod-log channel, command prefix, mute role, welcome/goodbye channel and message (toggle switches), leveling on/off + level-up channel/message, warning-escalation thresholds, all with searchable role/channel pickers instead of raw IDs.
 - **Members tab**: search members, sort by username/join date/messages sent, kick/ban/timeout/warn with a reason, goes through the same shared logic as chat commands, so it's logged and escalates identically either way.
 - **Autoroles / Reaction Roles tabs**: add/remove autoroles, and build reaction-role embeds (the dashboard posts the message, reacts to it, and stores the mapping for you). Reaction-role messages are managed as a unit: delete removes the whole message and every mapping on it, not one emoji at a time. Neither feature will target a role that itself carries moderation/admin permissions (Administrator, Manage Guild, Kick/Ban/Moderate Members, Manage Messages), that's a privilege-escalation path (self-promotion via autorole-on-join or reacting), not a config choice, so it's blocked outright rather than just warned about.
-- **Levels tab**: view the XP leaderboard and configure level-role rewards (level N grants role X). Also configure channels excluded from XP (e.g. a bot-commands channel) and per-role XP multipliers (highest applicable one wins if a member has more than one, they don't stack). Also configure channels excluded from earning XP (a bot-commands or spam channel, say) and role-based XP multipliers (a supporter role earning faster, for instance, highest applicable multiplier wins if a member has more than one, they don't stack).
+- **Levels tab**: view the XP leaderboard and configure level-role rewards (level N grants role X). Also configure channels excluded from earning XP (a bot-commands or spam channel, say) and role-based XP multipliers (a supporter role earning faster, for instance, highest applicable multiplier wins if a member has more than one, they don't stack).
 - **Tags tab**: add/remove custom `!tagname` shortcuts.
 - **Announce tab**: compose and send a custom embed (title, description, color, image, footer) to any channel.
 - **Warnings / Mod Log tabs**: view and clear warnings, browse full history.
@@ -369,3 +308,83 @@ Most day-to-day admin work can be done entirely from the dashboard, no need to t
 - **Staff notes**: view, add, and remove private notes on any member directly from the Members tab.
 
 A few things are chat-only for now (no dashboard equivalent yet): `!purge`, `!roll`/`!coinflip`/`!wheel`, `!avatar`/`!serverinfo`/`!userinfo`/`!info`, and reminders (`!remind`/`!reminders`/`!delreminder`, inherently personal/ephemeral rather than server config). Starting a poll (`!poll`) is chat-only too, though its auto-close and results tally happen automatically via the background scheduler regardless of how it was started.
+## Project layout
+
+```
+common/                config + the shared Postgres data layer (used by both processes)
+  config.py            env-driven settings
+  db.py                asyncpg pool + all queries (guilds, warnings, mod_actions,
+                        reaction_roles, autoroles, tags, reminders, polls,
+                        levels, level_roles, activity stats)
+  discovery.py         instance discovery + CDN URL helpers (guild icons, avatars)
+bot/
+  rest.py              REST client (self-host aware, base URL from config)
+  client.py            gateway (WebSocket) client, handshake, heartbeats, reconnect
+  commands.py          tiny prefix-command framework + dispatcher (also falls back
+                        to custom tags when a message doesn't match a built-in command)
+  permissions.py       role/permission bit checks
+  timeutil.py          snowflake to date, duration + shared duration-string parsing
+  moderation_actions.py  shared kick/ban/timeout/warn logic, used by both chat
+                        commands and the dashboard's Members tab
+  scheduler.py          background loop: delivers due reminders, closes and
+                        tallies due polls, flushes in-progress voice sessions,
+                        independent of the gateway connection
+  voice_tracker.py       voice channel presence tracking for activity stats
+                        and voice XP (join/leave/mute events only, no audio)
+  modules/
+    moderation.py       kick/ban/unban/timeout/purge/warn/warnings/modlog (thin
+                        wrappers around moderation_actions.py)
+    roles.py            autorole + reaction roles + welcome/goodbye messages
+    fun.py              roll/coinflip/wheel/poll (with optional auto-close)
+    info.py             avatar/serverinfo/userinfo/info (owner-only)
+    tags.py             !tag add/remove/list
+    reminders.py         !remind/!reminders/!delreminder
+    leveling.py          XP gain on message, level-up + role rewards, !rank/!leaderboard
+    activity.py          per-day/per-member message counters for dashboard stats
+    utility.py          help/ping
+    logging_mod.py       writes mod_actions rows + posts to the log channel
+  main.py                entrypoint, also starts the scheduler task
+dashboard/
+  app.py                FastAPI app, JSON API (/api/*) + serves the built SPA
+  oauth.py              OAuth2 "Login with Fluxer" flow
+dashboard-frontend/      React SPA (Vite)
+  src/
+    api.js               fetch wrapper for the backend's /api/* routes
+    App.jsx               routing + auth-gate
+    context/              GuildsContext (shared guild-list fetch for the picker
+                          and the top-bar switcher)
+    pages/                Login, GuildPicker, GuildDetail, Commands
+    components/           TopBar, GuildSwitcher, Flash (toasts), Spinner, Switch,
+                          Combobox (role/channel picker), EmojiPicker, BarChart,
+                          ReactionRoleBuilder, AnnouncementBuilder, MembersTab,
+                          TagsTab, LevelsTab
+    hooks/                useRolesChannels (fetch once per guild), usePolling
+                          (visibility-aware interval)
+  dist/                  production build, FastAPI serves this (git-ignored,
+                          build it yourself)
+schema.sql              Postgres schema (idempotent, CREATE TABLE IF NOT EXISTS,
+                        plus ALTER TABLE ADD COLUMN IF NOT EXISTS migrations)
+run_bot.py / run_dashboard.py
+deploy/                systemd unit files + nginx reverse proxy config for running
+                        both processes at boot on Ubuntu
+```
+
+## On API completeness
+
+Fluxer's public API reference is still being filled in (as of mid-2026), and some routes here, particularly the exact moderation endpoints (`ban`/`timeout`/`purge`), member-list pagination, and the OAuth2 guild-list response shape, are implemented following the Discord-like conventions Fluxer is modeled on, since that's the best information available. Everything funnels through a small number of methods:
+
+- REST calls (including member list/kick/ban/timeout): `bot/rest.py`
+- Permission bit values: `bot/permissions.py`
+- OAuth2 guild permission check: `dashboard/oauth.py::can_manage`
+- Media/CDN URL paths (guild icons, avatars) and snowflake to date epoch: `common/discovery.py`, `bot/timeutil.py`
+- The guild's AFK-channel field name (assumed `afk_channel_id`, Discord convention) used to exclude AFK-channel time from voice XP/stats: `bot/voice_tracker.py`
+- Mention suppression (`allowed_mentions` on outgoing messages, Discord convention): `bot/rest.py`
+
+If your instance's OpenAPI spec (usually at `<api_base>/openapi.json`, or your instance's own `/api-reference` page) disagrees with a path or bit value here, that's the source of truth, the fix is a one-line change in one of those files, not a rewrite.
+
+One concrete limit worth knowing: the dashboard's Members tab fetches up to 500 members per request (Fluxer's member-list endpoint is paginated like Discord's). Large servers won't show every member in search, searching by exact user ID still works around that.
+
+**On that `allowed_mentions` point specifically**: several messages the bot sends embed free text a member fully controls, `!remind`'s reminder text, a member's own username in welcome/goodbye/level-up messages, so every outgoing message defaults to pinging nobody at all (`bot/rest.py`'s `FluxerREST.SAFE_ALLOWED_MENTIONS`) unless the calling code explicitly allow-lists the one specific user ID it intends to notify (`FluxerREST.mention_only(user_id)`). This closes off a real mass-ping griefing path: without it, any member (no special permission needed) could type `@everyone` or mention other members inside free-text fields and have the bot actually broadcast it, especially if the bot's invite permission includes mention-everyone, which Administrator (an option here, but not the recommended default) does. If you add new code that sends a message with plain `content`, don't forget to either accept the default (nobody gets pinged) or pass `allowed_mentions=bot.rest.mention_only(the_one_user_id)` if a ping is genuinely intended, don't rely on Fluxer's own default, since we don't know what that default is on any given instance.
+
+P.P.S. The [dashboard-frontend](https://github.com/BadlandsFlux/FluxBot/tree/main/dashboard-frontend) page has a readme with all the API endpoints I use. This frontend can be ripped out and used for other projects if you so wish.
+
