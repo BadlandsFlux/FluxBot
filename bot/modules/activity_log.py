@@ -19,15 +19,26 @@ Bot-authored messages are always excluded from edit/delete logging
 (a bot editing its own embed, e.g. a live poll count, isn't useful
 transparency information and would flood the log). There's no
 separate toggle for this, it's just always off.
+
+Every embed carries a native Discord/Fluxer embed timestamp (renders
+in the viewer's own locale/format, with a hover for the exact time),
+an author block with avatar where a specific user is involved, and a
+footer with the relevant raw ID(s) for anyone who needs to reference
+the exact user/message/channel/role. Message edits/deletes also get a
+jump link straight to the message, built from FLUXER_WEB_BASE, so this
+still points at the right place on a self-hosted instance.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from bot.commands import Bot
 from bot import message_cache
 from bot.timeutil import format_date, snowflake_to_datetime
 from common import db
+from common.config import config
+from common.discovery import get_media_base, user_avatar_url
 
 # Independent of voice_tracker.py's own per-member channel tracking
 # (that one's about XP eligibility/accrual, this one's just "did they
@@ -43,6 +54,27 @@ _last_channel: dict[tuple[str, str], Optional[str]] = {}
 def _truncate(text: str, max_chars: int = 1000) -> str:
     text = text or ""
     return text if len(text) <= max_chars else text[: max_chars - 1] + "…"
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _jump_link(guild_id: str, channel_id: str, message_id: str) -> str:
+    return f"{config.web_base}/channels/{guild_id}/{channel_id}/{message_id}"
+
+
+async def _author_field(user_id: str, username: str, avatar_hash: Optional[str]) -> dict:
+    field = {"name": f"{username} ({user_id})"}
+    if avatar_hash:
+        try:
+            media_base = await get_media_base()
+            icon = user_avatar_url(media_base, user_id, avatar_hash)
+            if icon:
+                field["icon_url"] = icon
+        except Exception:
+            pass  # cosmetic only, the log entry still goes out without an icon
+    return field
 
 
 async def _send_log(bot: Bot, channel_id: str, embed: dict) -> None:
@@ -73,6 +105,7 @@ def register(bot: Bot) -> None:
         message_cache.remember(
             str(message_id), guild_id=str(guild_id), channel_id=str(data.get("channel_id")),
             author_id=str(author.get("id")), author_username=author.get("username", "unknown"),
+            author_avatar=author.get("avatar"),
             content=data.get("content", "") or "",
         )
 
@@ -95,14 +128,19 @@ def register(bot: Bot) -> None:
         if await db.is_ignored_log_user(guild_id, cached["author_id"]):
             return
 
+        jump = _jump_link(guild_id, cached["channel_id"], str(message_id))
         embed = {
-            "title": "Message edited",
+            "title": "Message Edited",
             "color": 0xF5A623,
-            "description": f"<@{cached['author_id']}> in <#{cached['channel_id']}>",
+            "author": await _author_field(cached["author_id"], cached["author_username"], cached.get("author_avatar")),
             "fields": [
                 {"name": "Before", "value": _truncate(cached["content"]) or "*(empty)*", "inline": False},
                 {"name": "After", "value": _truncate(new_content) or "*(empty)*", "inline": False},
+                {"name": "Channel", "value": f"<#{cached['channel_id']}>", "inline": True},
+                {"name": "Jump to Message", "value": f"[Click here]({jump})", "inline": True},
             ],
+            "footer": {"text": f"User ID: {cached['author_id']} • Message ID: {message_id}"},
+            "timestamp": _now_iso(),
         }
         await _send_log(bot, settings["log_channel_id"], embed)
         message_cache.update_content(str(message_id), new_content)
@@ -124,18 +162,25 @@ def register(bot: Bot) -> None:
                 message_cache.forget(str(message_id))
                 return
             embed = {
-                "title": "Message deleted",
+                "title": "Message Deleted",
                 "color": 0xE0245E,
-                "description": f"<@{cached['author_id']}> in <#{cached['channel_id']}>",
-                "fields": [{"name": "Content", "value": _truncate(cached["content"]) or "*(empty)*", "inline": False}],
+                "author": await _author_field(cached["author_id"], cached["author_username"], cached.get("author_avatar")),
+                "fields": [
+                    {"name": "Content", "value": _truncate(cached["content"]) or "*(empty)*", "inline": False},
+                    {"name": "Channel", "value": f"<#{cached['channel_id']}>", "inline": True},
+                ],
+                "footer": {"text": f"User ID: {cached['author_id']} • Message ID: {message_id}"},
+                "timestamp": _now_iso(),
             }
         else:
             channel_id = data.get("channel_id")
             embed = {
-                "title": "Message deleted",
+                "title": "Message Deleted",
                 "color": 0xE0245E,
-                "description": (f"In <#{channel_id}>. " if channel_id else "")
-                + "Content not available (not cached during this bot session).",
+                "description": "Content not available (not cached during this bot session).",
+                "fields": [{"name": "Channel", "value": f"<#{channel_id}>" if channel_id else "unknown", "inline": True}],
+                "footer": {"text": f"Message ID: {message_id}"},
+                "timestamp": _now_iso(),
             }
         await _send_log(bot, settings["log_channel_id"], embed)
         message_cache.forget(str(message_id))
@@ -153,11 +198,15 @@ def register(bot: Bot) -> None:
         if await db.is_ignored_log_user(guild_id, str(user["id"])):
             return
         created_at = snowflake_to_datetime(str(user["id"]))
-        age_note = f"\nAccount created {format_date(created_at)}" if created_at else ""
         embed = {
-            "title": "Member joined",
+            "title": "Member Joined",
             "color": 0x4ADE80,
-            "description": f"<@{user['id']}> ({user.get('username', 'unknown')}){age_note}",
+            "author": await _author_field(str(user["id"]), user.get("username", "unknown"), user.get("avatar")),
+            "fields": [
+                {"name": "Account Created", "value": format_date(created_at) if created_at else "unknown", "inline": True},
+            ],
+            "footer": {"text": f"User ID: {user['id']}"},
+            "timestamp": _now_iso(),
         }
         await _send_log(bot, settings["log_channel_id"], embed)
 
@@ -173,9 +222,11 @@ def register(bot: Bot) -> None:
         if await db.is_ignored_log_user(guild_id, str(user["id"])):
             return
         embed = {
-            "title": "Member left",
+            "title": "Member Left",
             "color": 0xF16565,
-            "description": f"<@{user['id']}> ({user.get('username', 'unknown')})",
+            "author": await _author_field(str(user["id"]), user.get("username", "unknown"), user.get("avatar")),
+            "footer": {"text": f"User ID: {user['id']}"},
+            "timestamp": _now_iso(),
         }
         await _send_log(bot, settings["log_channel_id"], embed)
 
@@ -189,9 +240,11 @@ def register(bot: Bot) -> None:
         if not settings or not settings["log_channel_id"] or not settings["log_channel_changes"]:
             return
         embed = {
-            "title": "Channel created",
+            "title": "Channel Created",
             "color": 0x4ADE80,
-            "description": f"#{data.get('name', 'unknown')} (`{data.get('id')}`)",
+            "fields": [{"name": "Channel", "value": f"<#{data.get('id')}>", "inline": True}],
+            "footer": {"text": f"Channel ID: {data.get('id')}"},
+            "timestamp": _now_iso(),
         }
         await _send_log(bot, settings["log_channel_id"], embed)
 
@@ -203,10 +256,16 @@ def register(bot: Bot) -> None:
         settings = await db.get_activity_log_settings(guild_id)
         if not settings or not settings["log_channel_id"] or not settings["log_channel_changes"]:
             return
+        # No mention here (unlike create/update): the channel is gone, and
+        # an unresolvable <#id> mention renders as a broken/blank reference
+        # in most clients rather than the last-known name. The plain name
+        # from the event payload is what's actually still readable.
         embed = {
-            "title": "Channel deleted",
+            "title": "Channel Deleted",
             "color": 0xE0245E,
-            "description": f"#{data.get('name', 'unknown')} (`{data.get('id')}`)",
+            "fields": [{"name": "Name", "value": f"#{data.get('name', 'unknown')}", "inline": True}],
+            "footer": {"text": f"Channel ID: {data.get('id')}"},
+            "timestamp": _now_iso(),
         }
         await _send_log(bot, settings["log_channel_id"], embed)
 
@@ -224,9 +283,11 @@ def register(bot: Bot) -> None:
         # undertaking than this feature's current scope. Just notes that
         # something about the channel changed.
         embed = {
-            "title": "Channel updated",
+            "title": "Channel Updated",
             "color": 0xF5A623,
-            "description": f"#{data.get('name', 'unknown')} (`{data.get('id')}`)",
+            "fields": [{"name": "Channel", "value": f"<#{data.get('id')}>", "inline": True}],
+            "footer": {"text": f"Channel ID: {data.get('id')}"},
+            "timestamp": _now_iso(),
         }
         await _send_log(bot, settings["log_channel_id"], embed)
 
@@ -241,9 +302,11 @@ def register(bot: Bot) -> None:
         if not settings or not settings["log_channel_id"] or not settings["log_role_changes"]:
             return
         embed = {
-            "title": "Role created",
+            "title": "Role Created",
             "color": 0x4ADE80,
-            "description": f"@{role.get('name', 'unknown')} (`{role.get('id')}`)",
+            "fields": [{"name": "Role", "value": f"<@&{role.get('id')}>", "inline": True}],
+            "footer": {"text": f"Role ID: {role.get('id')}"},
+            "timestamp": _now_iso(),
         }
         await _send_log(bot, settings["log_channel_id"], embed)
 
@@ -256,7 +319,12 @@ def register(bot: Bot) -> None:
         settings = await db.get_activity_log_settings(guild_id)
         if not settings or not settings["log_channel_id"] or not settings["log_role_changes"]:
             return
-        embed = {"title": "Role deleted", "color": 0xE0245E, "description": f"Role ID `{role_id}`"}
+        embed = {
+            "title": "Role Deleted",
+            "color": 0xE0245E,
+            "footer": {"text": f"Role ID: {role_id}"},
+            "timestamp": _now_iso(),
+        }
         await _send_log(bot, settings["log_channel_id"], embed)
 
     @bot.on("GUILD_ROLE_UPDATE")
@@ -269,9 +337,11 @@ def register(bot: Bot) -> None:
         if not settings or not settings["log_channel_id"] or not settings["log_role_changes"]:
             return
         embed = {
-            "title": "Role updated",
+            "title": "Role Updated",
             "color": 0xF5A623,
-            "description": f"@{role.get('name', 'unknown')} (`{role.get('id')}`)",
+            "fields": [{"name": "Role", "value": f"<@&{role.get('id')}>", "inline": True}],
+            "footer": {"text": f"Role ID: {role.get('id')}"},
+            "timestamp": _now_iso(),
         }
         await _send_log(bot, settings["log_channel_id"], embed)
 
@@ -290,12 +360,10 @@ def register(bot: Bot) -> None:
         old_channel = _last_channel.get(key)
         if new_channel is None:
             # Otherwise this accumulates one permanent entry per distinct
-            # user who's EVER touched voice, the exact same bug found and
-            # fixed in voice_tracker.py's _member_self_deaf, missed here at
-            # the time despite being the identical pattern. Nothing depends
-            # on retaining this after a full disconnect: a future rejoin
-            # correctly reports as a "join" either way, since a missing key
-            # and an explicit None value behave identically through .get().
+            # user who's EVER touched voice. Nothing depends on retaining
+            # this after a full disconnect: a future rejoin correctly
+            # reports as a "join" either way, since a missing key and an
+            # explicit None value behave identically through .get().
             _last_channel.pop(key, None)
         else:
             _last_channel[key] = new_channel
@@ -309,14 +377,30 @@ def register(bot: Bot) -> None:
         if await db.is_ignored_log_user(guild_id, user_id):
             return
 
-        if old_channel is None:
-            title, color = "Joined voice", 0x4ADE80
-            desc = f"<@{user_id}> joined <#{new_channel}>"
-        elif new_channel is None:
-            title, color = "Left voice", 0xF16565
-            desc = f"<@{user_id}> left <#{old_channel}>"
-        else:
-            title, color = "Switched voice channel", 0xF5A623
-            desc = f"<@{user_id}> moved from <#{old_channel}> to <#{new_channel}>"
+        try:
+            member = await bot.get_member(guild_id, user_id, fresh=False)
+            user_obj = member.get("user", member)
+            username = user_obj.get("username", "unknown")
+            avatar = user_obj.get("avatar")
+        except Exception:
+            username, avatar = "unknown", None
+        author = await _author_field(user_id, username, avatar)
 
-        await _send_log(bot, settings["log_channel_id"], {"title": title, "color": color, "description": desc})
+        if old_channel is None:
+            title, color = "Joined Voice", 0x4ADE80
+            fields = [{"name": "Channel", "value": f"<#{new_channel}>", "inline": True}]
+        elif new_channel is None:
+            title, color = "Left Voice", 0xF16565
+            fields = [{"name": "Channel", "value": f"<#{old_channel}>", "inline": True}]
+        else:
+            title, color = "Switched Voice Channel", 0xF5A623
+            fields = [
+                {"name": "From", "value": f"<#{old_channel}>", "inline": True},
+                {"name": "To", "value": f"<#{new_channel}>", "inline": True},
+            ]
+
+        embed = {
+            "title": title, "color": color, "author": author, "fields": fields,
+            "footer": {"text": f"User ID: {user_id}"}, "timestamp": _now_iso(),
+        }
+        await _send_log(bot, settings["log_channel_id"], embed)
