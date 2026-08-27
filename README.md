@@ -385,6 +385,7 @@ Fluxer's public API reference is still being filled in (as of mid-2026), and som
 - Media/CDN URL paths (guild icons, avatars) and snowflake to date epoch: `common/discovery.py`, `bot/timeutil.py`
 - The guild's AFK-channel field name (assumed `afk_channel_id`, Discord convention) used to exclude AFK-channel time from voice XP/stats: `bot/voice_tracker.py`
 - Mention suppression (`allowed_mentions` on outgoing messages, Discord convention): `bot/rest.py`
+- Updating the bot's own avatar (Bot Profile page): `dashboard/oauth.py::update_bot_avatar`. This one was actually confirmed, not just assumed, against Fluxer's own published API docs, and it's a genuinely different shape than Discord's convention: not `PATCH /users/@me` with the bot's own token, but `PATCH /oauth2/applications/{id}/bot`, authenticated as the *application owner's* OAuth2 Bearer token (the same one already sitting in the dashboard session from "Login with Fluxer"), with the avatar as raw base64 image data, no `data:mimetype;base64,` prefix. If you're hitting a 403 here, that mismatch is almost certainly why, worth checking Fluxer's current docs again in case this has moved since.
 
 If your instance's OpenAPI spec (usually at `<api_base>/openapi.json`, or your instance's own `/api-reference` page) disagrees with a path or bit value here, that's the source of truth, the fix is a one-line change in one of those files, not a rewrite.
 

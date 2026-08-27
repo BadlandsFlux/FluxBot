@@ -82,6 +82,28 @@ async def fetch_my_guilds(access_token: str) -> list[dict]:
         return resp.json()
 
 
+async def update_bot_avatar(access_token: str, application_id: str, avatar_base64: str) -> dict:
+    """PATCH /oauth2/applications/{id}/bot, the actual endpoint for a
+    bot's own profile (avatar/bio/username/etc), per Fluxer's published
+    API docs, distinct from the generic user-profile PATCH /users/@me
+    and NOT reachable with the bot's own Bot token (confirmed from
+    Fluxer's own auth examples: this family of endpoints is
+    Bearer-authenticated as the application owner, the same credential
+    already sitting in this dashboard session from "Login with
+    Fluxer"). avatar_base64 is the raw base64-encoded image data, no
+    data:mimetype;base64, prefix, per the documented Base64ImageType
+    schema, unlike Discord's data-URI convention this project assumed
+    at first."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.patch(
+            f"{config.api_base}/oauth2/applications/{application_id}/bot",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"avatar": avatar_base64},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 MANAGE_GUILD_BIT = 1 << 5
 ADMINISTRATOR_BIT = 1 << 3
 
