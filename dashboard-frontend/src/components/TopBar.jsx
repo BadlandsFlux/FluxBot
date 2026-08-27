@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Zap } from "lucide-react";
+import { Zap, Home } from "lucide-react";
 import { api } from "../api";
 import GuildSwitcher from "./GuildSwitcher";
 import ThemeToggle from "./ThemeToggle";
@@ -26,6 +26,12 @@ export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
           </span>
           <span className="brand-text">{botName}</span>
         </Link>
+        {user && (
+          <Link to="/" className="topbar-home-btn" title="All servers">
+            <Home size={15} />
+            <span>Servers</span>
+          </Link>
+        )}
         {user && <GuildSwitcher />}
         <nav className="topbar-nav">
           <Link to="/commands" className="topbar-link">

@@ -122,6 +122,20 @@ button { font-family: inherit; }
   object-fit: cover;
 }
 
+.topbar-home-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+}
+.topbar-home-btn:hover { color: var(--text); border-color: var(--border-hover); background: var(--bg-elevated); }
+
 .topbar-nav { display: flex; gap: 18px; }
 .topbar-link { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600; }
 .topbar-link:hover { color: var(--text); }
