@@ -6,8 +6,22 @@ the other way too, per mapping (see discord_relay_mappings.direction
 in schema.sql: 'discord_to_fluxer', 'fluxer_to_discord', or 'both').
 Also syncs edits and deletes across the bridge for anything it relayed
 (see discord_relay_message_links, pruned periodically by the
-scheduler), and can prefix relayed content with who actually sent it
-and from where (per-mapping show_attribution).
+scheduler).
+
+ATTRIBUTION (per-mapping show_attribution, on by default): relayed
+messages post through a webhook on the destination platform, showing
+the ORIGINAL author's real username and avatar, the same mechanism
+every real Discord/Fluxer bridge uses, since a regular bot-token-sent
+message always shows up as the bot itself and can't be made to look
+like anyone else. One webhook per destination channel, created lazily
+the first time it's needed and reused after that (discord_relay_
+webhooks table), recreated automatically if it ever goes missing
+(deleted from the channel's integrations directly). If webhook
+creation or execution fails for any reason (missing permission, etc),
+falls back to a plain bot-identity send with a "[Discord] username:"
+text prefix instead, so relaying itself never breaks just because the
+richer path isn't available. With show_attribution off, messages
+relay as plain bot-identity sends with no attribution at all.
 
 Uses a real Discord Bot application via discord.py, never a self-bot
 or user-token approach: automating a personal Discord account is
@@ -33,8 +47,10 @@ platform specifically: the Discord listener skips messages from this
 Discord bot's own user id, the Fluxer listener (registered on the main
 Fluxer bot, see register_fluxer_side below) skips messages from the
 main Fluxer bot's own user id, since that's the identity the relay
-posts through on that side. The same check applies to edit/delete
-syncing too, not just creates.
+posts through on that side when NOT using a webhook. Webhook-sent
+messages are authored by the webhook itself, a distinct identity
+neither listener's self-check would ever match, so they can't loop
+back either way on their own.
 
 Deliberately does NOT filter out other bot-authored Discord messages:
 the motivating use case is Discord's own channel-following/cross-post
@@ -60,6 +76,7 @@ from bot.commands import Bot
 from bot.rest import FluxerAPIError, FluxerREST
 from common import db
 from common.config import config
+from common.discovery import get_media_base, user_avatar_url
 
 log = logging.getLogger("fluxbot.discord_relay")
 
@@ -69,14 +86,13 @@ log = logging.getLogger("fluxbot.discord_relay")
 # are skipped with a log line rather than attempted and left to fail.
 MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
+WEBHOOK_NAME = "FluxBot Relay"
+
 # Discord permission bits requested by the invite link the dashboard
 # builds (see dashboard/app.py's discord-relay/invite-url endpoint):
-# View Channel, Send Messages, Read Message History. Enough for either
-# relay direction; a one-way Discord-to-Fluxer-only setup doesn't
-# technically need Send Messages, but there's little downside to
-# including it up front rather than making someone re-invite the bot
-# later if they turn on two-way.
-INVITE_PERMISSIONS = (1 << 10) | (1 << 11) | (1 << 16)
+# View Channel, Send Messages, Read Message History, Manage Webhooks
+# (needed to create the per-channel webhook attribution relies on).
+INVITE_PERMISSIONS = (1 << 10) | (1 << 11) | (1 << 16) | (1 << 29)
 
 
 def _convert_embed(embed: discord.Embed) -> dict:
@@ -143,6 +159,65 @@ async def _download(url: str, max_bytes: int) -> Optional[bytes]:
         return None
 
 
+async def _fluxer_avatar_url(user_id: str, avatar_hash: Optional[str]) -> Optional[str]:
+    if not avatar_hash:
+        return None
+    try:
+        media_base = await get_media_base()
+        return user_avatar_url(media_base, user_id, avatar_hash)
+    except Exception:
+        return None
+
+
+async def _get_or_create_fluxer_webhook(fluxer_rest: FluxerREST, channel_id: str) -> Optional[tuple[str, str]]:
+    """Returns (webhook_id, webhook_token) for the given Fluxer channel,
+    creating and persisting one the first time it's needed. Returns
+    None (never raises) if creation fails, e.g. the bot lacks Manage
+    Webhooks there, letting the caller fall back to a plain send
+    instead of failing outright."""
+    existing = await db.get_relay_webhook("fluxer", channel_id)
+    if existing:
+        return existing["webhook_id"], existing["webhook_token"]
+    try:
+        webhook = await fluxer_rest.create_channel_webhook(channel_id, WEBHOOK_NAME)
+        webhook_id, webhook_token = str(webhook["id"]), webhook["token"]
+        await db.save_relay_webhook("fluxer", channel_id, webhook_id, webhook_token)
+        return webhook_id, webhook_token
+    except Exception:
+        log.warning("Couldn't create a Fluxer webhook for channel %s, falling back to plain messages",
+                    channel_id, exc_info=True)
+        return None
+
+
+async def _send_via_fluxer_webhook(fluxer_rest: FluxerREST, channel_id: str, *, content: Optional[str],
+                                    embeds: Optional[list], files: Optional[list[tuple[str, bytes]]],
+                                    username: str, avatar_url: Optional[str]) -> Optional[dict]:
+    """None on any failure (never raises), the caller falls back to a
+    plain send in that case. On a 404 specifically (the webhook was
+    deleted from the channel's integrations directly, out from under
+    the stored record), clears that record and retries once with a
+    freshly created one before giving up."""
+    webhook = await _get_or_create_fluxer_webhook(fluxer_rest, channel_id)
+    if not webhook:
+        return None
+    webhook_id, webhook_token = webhook
+    try:
+        return await fluxer_rest.execute_webhook(webhook_id, webhook_token, content=content, embeds=embeds,
+                                                  files=files, username=username, avatar_url=avatar_url)
+    except FluxerAPIError as e:
+        if e.status != 404:
+            return None
+        await db.delete_relay_webhook("fluxer", channel_id)
+        webhook2 = await _get_or_create_fluxer_webhook(fluxer_rest, channel_id)
+        if not webhook2:
+            return None
+        try:
+            return await fluxer_rest.execute_webhook(webhook2[0], webhook2[1], content=content, embeds=embeds,
+                                                       files=files, username=username, avatar_url=avatar_url)
+        except FluxerAPIError:
+            return None
+
+
 class RelayClient(discord.Client):
     def __init__(self, fluxer_rest: FluxerREST):
         intents = discord.Intents.default()
@@ -152,6 +227,17 @@ class RelayClient(discord.Client):
 
     def _is_self(self, user_id) -> bool:
         return bool(self.user and str(user_id) == str(self.user.id))
+
+    async def _is_own_webhook(self, platform: str, channel_id: str, webhook_id) -> bool:
+        """Deliberately scoped to THIS relay's own stored webhook for
+        that specific channel, not "is this any webhook at all". Other
+        webhooks legitimately posting content (the original motivating
+        use case: Discord's own channel-following/cross-post feature,
+        which can arrive via a webhook depending on the source) still
+        need to relay normally, only this relay's own echo of something
+        it already sent should be excluded."""
+        own = await db.get_relay_webhook(platform, channel_id)
+        return bool(own and str(webhook_id) == str(own["webhook_id"]))
 
     async def on_ready(self) -> None:
         log.info("Discord relay connected as %s", self.user)
@@ -166,6 +252,8 @@ class RelayClient(discord.Client):
     async def on_message(self, message: discord.Message) -> None:
         if self._is_self(message.author.id):
             return  # this relay's own post (from the fluxer_to_discord direction), never re-relay it
+        if message.webhook_id and await self._is_own_webhook("discord", str(message.channel.id), message.webhook_id):
+            return  # this relay's own webhook echo, same loop risk as above, just a different identity
         mappings = await db.list_discord_relay_mappings_for_discord_channel(str(message.channel.id))
         if not mappings:
             return
@@ -188,21 +276,37 @@ class RelayClient(discord.Client):
         if not raw_content and not embeds and not files:
             return  # nothing worth forwarding (e.g. a sticker-only message, not supported here)
 
+        display_name = message.author.display_name
+        avatar_url = message.author.display_avatar.url if message.author.display_avatar else None
+
         for mapping in mappings:
             target = mapping["fluxer_channel_id"]
-            prefix = f"**[Discord] {message.author.display_name}:**" if mapping["show_attribution"] else None
-            content = _with_attribution(raw_content, prefix)
-            try:
-                if files:
-                    result = await self._fluxer_rest.send_message_with_files(target, files, content=content, embeds=embeds)
-                else:
-                    result = await self._fluxer_rest.send_message(target, content=content, embeds=embeds)
-                if result and result.get("id"):
-                    await db.add_relay_message_link(mapping["id"], "discord", str(message.id),
-                                                      "fluxer", str(result["id"]), target)
-            except FluxerAPIError:
-                log.warning("Failed to relay Discord message %s to Fluxer channel %s",
-                            message.id, target, exc_info=True)
+            result, sent_via_webhook = None, False
+
+            if mapping["show_attribution"]:
+                result = await _send_via_fluxer_webhook(
+                    self._fluxer_rest, target, content=raw_content, embeds=embeds, files=files,
+                    username=display_name, avatar_url=avatar_url,
+                )
+                sent_via_webhook = result is not None
+
+            if result is None:
+                prefix = f"**[Discord] {display_name}:**" if mapping["show_attribution"] else None
+                content = _with_attribution(raw_content, prefix)
+                try:
+                    if files:
+                        result = await self._fluxer_rest.send_message_with_files(target, files, content=content, embeds=embeds)
+                    else:
+                        result = await self._fluxer_rest.send_message(target, content=content, embeds=embeds)
+                except FluxerAPIError:
+                    log.warning("Failed to relay Discord message %s to Fluxer channel %s",
+                                message.id, target, exc_info=True)
+                    continue
+
+            if result and result.get("id"):
+                await db.add_relay_message_link(mapping["id"], "discord", str(message.id),
+                                                  "fluxer", str(result["id"]), target,
+                                                  sent_via_webhook=sent_via_webhook)
 
     async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent) -> None:
         author = (payload.data or {}).get("author", {})
@@ -215,14 +319,22 @@ class RelayClient(discord.Client):
         for link in links:
             if link["target_platform"] != "fluxer":
                 continue
-            mapping = await db.get_discord_relay_mapping_by_id(link["mapping_id"]) if link["mapping_id"] else None
-            prefix = None
-            if mapping and mapping["show_attribution"]:
-                display_name = author.get("global_name") or author.get("username", "unknown")
-                prefix = f"**[Discord] {display_name}:**"
-            content = _with_attribution(new_content, prefix)
             try:
-                await self._fluxer_rest.edit_message(link["target_channel_id"], link["target_message_id"], content=content)
+                if link["sent_via_webhook"]:
+                    webhook = await db.get_relay_webhook("fluxer", link["target_channel_id"])
+                    if not webhook:
+                        continue  # webhook's gone, nothing to edit through, leave the original as-is
+                    await self._fluxer_rest.edit_webhook_message(
+                        webhook["webhook_id"], webhook["webhook_token"], link["target_message_id"], content=new_content,
+                    )
+                else:
+                    mapping = await db.get_discord_relay_mapping_by_id(link["mapping_id"]) if link["mapping_id"] else None
+                    prefix = None
+                    if mapping and mapping["show_attribution"]:
+                        display_name = author.get("global_name") or author.get("username", "unknown")
+                        prefix = f"**[Discord] {display_name}:**"
+                    content = _with_attribution(new_content, prefix)
+                    await self._fluxer_rest.edit_message(link["target_channel_id"], link["target_message_id"], content=content)
             except FluxerAPIError:
                 log.warning("Failed to sync a Discord edit to Fluxer message %s", link["target_message_id"], exc_info=True)
 
@@ -232,30 +344,90 @@ class RelayClient(discord.Client):
             if link["target_platform"] != "fluxer":
                 continue
             try:
-                await self._fluxer_rest.delete_message(link["target_channel_id"], link["target_message_id"])
+                if link["sent_via_webhook"]:
+                    webhook = await db.get_relay_webhook("fluxer", link["target_channel_id"])
+                    if webhook:
+                        await self._fluxer_rest.delete_webhook_message(
+                            webhook["webhook_id"], webhook["webhook_token"], link["target_message_id"],
+                        )
+                else:
+                    await self._fluxer_rest.delete_message(link["target_channel_id"], link["target_message_id"])
             except FluxerAPIError:
                 log.warning("Failed to sync a Discord delete to Fluxer message %s", link["target_message_id"], exc_info=True)
             await db.delete_relay_message_link(link["id"])
 
-    async def send_to_discord(self, discord_channel_id: str, *, content: Optional[str],
-                               embeds: Optional[list[dict]], files: Optional[list[tuple[str, bytes]]] = None) -> Optional[str]:
-        channel = self.get_channel(int(discord_channel_id))
+    async def _get_channel(self, channel_id: str):
+        channel = self.get_channel(int(channel_id))
+        if channel is not None:
+            return channel
+        try:
+            return await self.fetch_channel(int(channel_id))
+        except discord.HTTPException:
+            return None
+
+    async def _get_or_create_discord_webhook(self, channel_id: str) -> Optional[discord.Webhook]:
+        existing = await db.get_relay_webhook("discord", channel_id)
+        if existing:
+            return discord.Webhook.partial(int(existing["webhook_id"]), existing["webhook_token"], client=self)
+        channel = await self._get_channel(channel_id)
         if channel is None:
-            # Not in this client's cache, most often means the bot isn't
-            # actually a member of the server that channel belongs to, or
-            # the channel id is wrong. fetch_channel hits the REST API
-            # directly rather than relying on gateway-populated cache, a
-            # slower but more definitive check before giving up.
-            try:
-                channel = await self.fetch_channel(int(discord_channel_id))
-            except discord.HTTPException:
-                log.warning("Can't reach Discord channel %s, is the relay bot actually in that server?",
-                            discord_channel_id)
-                return None
+            log.warning("Can't reach Discord channel %s, is the relay bot actually in that server?", channel_id)
+            return None
+        try:
+            webhook = await channel.create_webhook(name=WEBHOOK_NAME)
+            await db.save_relay_webhook("discord", channel_id, str(webhook.id), webhook.token)
+            return webhook
+        except discord.HTTPException:
+            log.warning("Couldn't create a Discord webhook for channel %s, falling back to plain messages",
+                        channel_id, exc_info=True)
+            return None
+
+    async def send_to_discord(self, discord_channel_id: str, *, content: Optional[str],
+                               embeds: Optional[list[dict]], files: Optional[list[tuple[str, bytes]]] = None,
+                               username: Optional[str] = None, avatar_url: Optional[str] = None,
+                               fallback_content: Optional[str] = None) -> tuple[Optional[str], bool]:
+        """Returns (sent_message_id, sent_via_webhook). Tries a webhook
+        first (shows the real username/avatar) when username is given,
+        falling back to a plain bot-identity send using fallback_content
+        (typically the same content with a "[Fluxer] username:" prefix
+        re-applied, since a plain send can't show the real identity any
+        other way) if that fails, same graceful-degradation shape as
+        the Fluxer side."""
         discord_embeds = [discord.Embed.from_dict(e) for e in embeds] if embeds else None
+
+        if username:
+            webhook = await self._get_or_create_discord_webhook(discord_channel_id)
+            if webhook:
+                discord_files = [discord.File(fp=io.BytesIO(b), filename=name) for name, b in (files or [])]
+                try:
+                    sent = await webhook.send(content=content or None, embeds=discord_embeds or [],
+                                               files=discord_files or [], username=username,
+                                               avatar_url=avatar_url, wait=True)
+                    return str(sent.id), True
+                except discord.NotFound:
+                    await db.delete_relay_webhook("discord", discord_channel_id)
+                    webhook2 = await self._get_or_create_discord_webhook(discord_channel_id)
+                    if webhook2:
+                        try:
+                            discord_files2 = [discord.File(fp=io.BytesIO(b), filename=name) for name, b in (files or [])]
+                            sent = await webhook2.send(content=content or None, embeds=discord_embeds or [],
+                                                        files=discord_files2 or [], username=username,
+                                                        avatar_url=avatar_url, wait=True)
+                            return str(sent.id), True
+                        except discord.HTTPException:
+                            pass
+                except discord.HTTPException:
+                    pass
+
+        channel = await self._get_channel(discord_channel_id)
+        if channel is None:
+            log.warning("Can't reach Discord channel %s, is the relay bot actually in that server?",
+                        discord_channel_id)
+            return None, False
         discord_files = [discord.File(fp=io.BytesIO(b), filename=name) for name, b in (files or [])]
-        sent = await channel.send(content=content or None, embeds=discord_embeds or [], files=discord_files or [])
-        return str(sent.id)
+        plain_content = fallback_content if fallback_content is not None else content
+        sent = await channel.send(content=plain_content or None, embeds=discord_embeds or [], files=discord_files or [])
+        return str(sent.id), False
 
 
 def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
@@ -278,6 +450,11 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
         self_id = _self_fluxer_id()
         if self_id and str(author.get("id")) == str(self_id):
             return  # this relay's own post (from the discord_to_fluxer direction), never re-relay it
+        webhook_id = data.get("webhook_id")  # Discord convention (message object shape), assumed mirrored on Fluxer
+        if webhook_id:
+            own_webhook = await db.get_relay_webhook("fluxer", str(channel_id))
+            if own_webhook and str(webhook_id) == str(own_webhook["webhook_id"]):
+                return  # this relay's own webhook echo, same loop risk as above, just a different identity
 
         mappings = await db.list_discord_relay_mappings_for_fluxer_channel(str(channel_id))
         if not mappings:
@@ -305,15 +482,23 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
         if not raw_content and not embeds and not files:
             return
 
+        username = author.get("username", "unknown")
+        avatar_url = await _fluxer_avatar_url(str(author.get("id")), author.get("avatar")) if mappings and any(m["show_attribution"] for m in mappings) else None
+
         for mapping in mappings:
             target = mapping["discord_channel_id"]
-            prefix = f"**[Fluxer] {author.get('username', 'unknown')}:**" if mapping["show_attribution"] else None
-            content = _with_attribution(raw_content, prefix)
             try:
-                sent_id = await relay_client.send_to_discord(target, content=content, embeds=embeds, files=files)
+                if mapping["show_attribution"]:
+                    fallback_content = _with_attribution(raw_content, f"**[Fluxer] {username}:**")
+                    sent_id, sent_via_webhook = await relay_client.send_to_discord(
+                        target, content=raw_content, embeds=embeds, files=files,
+                        username=username, avatar_url=avatar_url, fallback_content=fallback_content,
+                    )
+                else:
+                    sent_id, sent_via_webhook = await relay_client.send_to_discord(target, content=raw_content, embeds=embeds, files=files)
                 if sent_id:
                     await db.add_relay_message_link(mapping["id"], "fluxer", str(message_id),
-                                                      "discord", sent_id, target)
+                                                      "discord", sent_id, target, sent_via_webhook=sent_via_webhook)
             except Exception:
                 log.warning("Failed to relay Fluxer message to Discord channel %s", target, exc_info=True)
 
@@ -331,17 +516,24 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
         for link in links:
             if link["target_platform"] != "discord":
                 continue
-            mapping = await db.get_discord_relay_mapping_by_id(link["mapping_id"]) if link["mapping_id"] else None
-            prefix = None
-            if mapping and mapping["show_attribution"]:
-                prefix = f"**[Fluxer] {author.get('username', 'unknown')}:**"
-            content = _with_attribution(new_content, prefix)
             try:
-                channel = relay_client.get_channel(int(link["target_channel_id"]))
+                channel = await relay_client._get_channel(link["target_channel_id"])
                 if channel is None:
-                    channel = await relay_client.fetch_channel(int(link["target_channel_id"]))
-                discord_msg = await channel.fetch_message(int(link["target_message_id"]))
-                await discord_msg.edit(content=content)
+                    continue
+                if link["sent_via_webhook"]:
+                    webhook_row = await db.get_relay_webhook("discord", link["target_channel_id"])
+                    if not webhook_row:
+                        continue
+                    webhook = discord.Webhook.partial(int(webhook_row["webhook_id"]), webhook_row["webhook_token"], client=relay_client)
+                    await webhook.edit_message(int(link["target_message_id"]), content=new_content)
+                else:
+                    mapping = await db.get_discord_relay_mapping_by_id(link["mapping_id"]) if link["mapping_id"] else None
+                    prefix = None
+                    if mapping and mapping["show_attribution"]:
+                        prefix = f"**[Fluxer] {author.get('username', 'unknown')}:**"
+                    content = _with_attribution(new_content, prefix)
+                    discord_msg = await channel.fetch_message(int(link["target_message_id"]))
+                    await discord_msg.edit(content=content)
             except Exception:
                 log.warning("Failed to sync a Fluxer edit to Discord message %s", link["target_message_id"], exc_info=True)
 
@@ -355,11 +547,16 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
             if link["target_platform"] != "discord":
                 continue
             try:
-                channel = relay_client.get_channel(int(link["target_channel_id"]))
-                if channel is None:
-                    channel = await relay_client.fetch_channel(int(link["target_channel_id"]))
-                discord_msg = await channel.fetch_message(int(link["target_message_id"]))
-                await discord_msg.delete()
+                if link["sent_via_webhook"]:
+                    webhook_row = await db.get_relay_webhook("discord", link["target_channel_id"])
+                    if webhook_row:
+                        webhook = discord.Webhook.partial(int(webhook_row["webhook_id"]), webhook_row["webhook_token"], client=relay_client)
+                        await webhook.delete_message(int(link["target_message_id"]))
+                else:
+                    channel = await relay_client._get_channel(link["target_channel_id"])
+                    if channel is not None:
+                        discord_msg = await channel.fetch_message(int(link["target_message_id"]))
+                        await discord_msg.delete()
             except Exception:
                 log.warning("Failed to sync a Fluxer delete to Discord message %s", link["target_message_id"], exc_info=True)
             await db.delete_relay_message_link(link["id"])

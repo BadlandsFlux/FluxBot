@@ -28,7 +28,7 @@ const STEPS = [
   },
   {
     title: "Invite it to your server",
-    body: "Under OAuth2 → URL Generator, check the bot scope, then View Channels and Read Message History under Bot Permissions (add Send Messages too if you want two-way relaying). Open the generated URL and add it to your server.",
+    body: "Under OAuth2 → URL Generator, check the bot scope, then View Channels, Read Message History, and Manage Webhooks under Bot Permissions (the last one is what lets relayed messages show the real sender's avatar and username; add Send Messages too if you want two-way relaying). Open the generated URL and add it to your server.",
   },
   {
     title: "Get a channel ID",

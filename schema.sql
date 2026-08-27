@@ -407,6 +407,30 @@ CREATE TABLE IF NOT EXISTS discord_relay_message_links (
     target_platform      TEXT NOT NULL CHECK (target_platform IN ('discord', 'fluxer')),
     target_message_id    TEXT NOT NULL,
     target_channel_id    TEXT NOT NULL,
+    -- Webhook-sent messages have to be edited/deleted through the
+    -- webhook's own endpoint (PATCH/DELETE /webhooks/{id}/{token}/
+    -- messages/{message_id}), not the regular message endpoint, the
+    -- bot doesn't "own" a message a webhook sent the way it owns one
+    -- it sent directly.
+    sent_via_webhook     BOOLEAN NOT NULL DEFAULT FALSE,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_relay_links_source ON discord_relay_message_links(source_platform, source_message_id);
+
+-- One row per (platform, channel), a webhook the relay created so it
+-- can post messages showing the ORIGINAL author's real username and
+-- avatar (Discord and Fluxer both support this on webhook-sent
+-- messages, not on regular bot-token-sent ones, matching how every
+-- real Discord bridge does this). Lazily created the first time a
+-- channel needs one, reused after that. Deleted and recreated here if
+-- execution ever fails with a "this webhook doesn't exist anymore"
+-- error (someone removed it from the channel's integrations directly).
+CREATE TABLE IF NOT EXISTS discord_relay_webhooks (
+    id              BIGSERIAL PRIMARY KEY,
+    platform        TEXT NOT NULL CHECK (platform IN ('discord', 'fluxer')),
+    channel_id      TEXT NOT NULL,
+    webhook_id      TEXT NOT NULL,
+    webhook_token   TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (platform, channel_id)
+);

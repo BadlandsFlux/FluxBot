@@ -1033,14 +1033,15 @@ async def get_discord_relay_status() -> Optional[asyncpg.Record]:
 
 # ----------------------------------------- discord relay: message linking --
 async def add_relay_message_link(mapping_id: int, source_platform: str, source_message_id: str,
-                                  target_platform: str, target_message_id: str, target_channel_id: str) -> None:
+                                  target_platform: str, target_message_id: str, target_channel_id: str,
+                                  sent_via_webhook: bool = False) -> None:
     await pool().execute(
         """
         INSERT INTO discord_relay_message_links
-            (mapping_id, source_platform, source_message_id, target_platform, target_message_id, target_channel_id)
-        VALUES ($1, $2, $3, $4, $5, $6)
+            (mapping_id, source_platform, source_message_id, target_platform, target_message_id, target_channel_id, sent_via_webhook)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         """,
-        mapping_id, source_platform, source_message_id, target_platform, target_message_id, target_channel_id,
+        mapping_id, source_platform, source_message_id, target_platform, target_message_id, target_channel_id, sent_via_webhook,
     )
 
 
@@ -1055,6 +1056,32 @@ async def get_relay_message_links(source_platform: str, source_message_id: str) 
 
 async def delete_relay_message_link(link_id: int) -> None:
     await pool().execute("DELETE FROM discord_relay_message_links WHERE id=$1", link_id)
+
+
+# --------------------------------------------------- discord relay: webhooks --
+async def get_relay_webhook(platform: str, channel_id: str) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow(
+        "SELECT * FROM discord_relay_webhooks WHERE platform=$1 AND channel_id=$2", platform, channel_id,
+    )
+
+
+async def save_relay_webhook(platform: str, channel_id: str, webhook_id: str, webhook_token: str) -> None:
+    await pool().execute(
+        """
+        INSERT INTO discord_relay_webhooks (platform, channel_id, webhook_id, webhook_token)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (platform, channel_id) DO UPDATE SET webhook_id = EXCLUDED.webhook_id, webhook_token = EXCLUDED.webhook_token
+        """,
+        platform, channel_id, webhook_id, webhook_token,
+    )
+
+
+async def delete_relay_webhook(platform: str, channel_id: str) -> None:
+    """Called when execution fails because the webhook no longer
+    exists (deleted from the channel's integrations directly), so the
+    next attempt creates a fresh one instead of retrying a dead one
+    forever."""
+    await pool().execute("DELETE FROM discord_relay_webhooks WHERE platform=$1 AND channel_id=$2", platform, channel_id)
 
 
 async def prune_old_relay_message_links(older_than_days: int = 30) -> int:
