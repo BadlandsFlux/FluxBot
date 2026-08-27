@@ -1330,12 +1330,11 @@ async def api_set_bot_avatar(request: Request, file: UploadFile = File(...)):
     return {"ok": True, "fluxer_updated": fluxer_updated, "fluxer_error": fluxer_error}
 
 
-@app.get("/favicon.ico")
-async def favicon():
-    """Serves the same image set via /api/bot-profile/avatar, so uploading
-    a new bot avatar updates the browser tab icon too without a frontend
-    rebuild. Falls back to the static default if nothing's been uploaded
-    yet."""
+async def _serve_bot_avatar_or_default() -> Response:
+    """Shared by /favicon.ico and /api/bot-profile/icon: both display the
+    same uploaded image (or the same static default if nothing's been
+    uploaded yet), just in two different UI spots (the browser tab and
+    the dashboard's own top bar)."""
     row = await db.get_bot_avatar()
     if row:
         return Response(content=bytes(row["avatar_bytes"]), media_type=row["avatar_mimetype"])
@@ -1343,6 +1342,27 @@ async def favicon():
     if static_favicon.is_file():
         return Response(content=static_favicon.read_bytes(), media_type="image/svg+xml")
     return Response(status_code=404)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Serves the same image set via /api/bot-profile/avatar, so uploading
+    a new bot avatar updates the browser tab icon too without a frontend
+    rebuild. Falls back to the static default if nothing's been uploaded
+    yet."""
+    return await _serve_bot_avatar_or_default()
+
+
+@app.get("/api/bot-profile/icon")
+async def bot_profile_icon():
+    """Same image as the favicon, served under a stable, semantically
+    clear path for the dashboard's own UI to reference directly (the
+    small icon next to the bot's name in the top bar), rather than
+    pointing app code at the browser-tab-icon convention. No auth
+    required: this is the same image already publicly visible as the
+    favicon and, once set, as the bot's own Fluxer avatar, nothing
+    sensitive about serving it here too."""
+    return await _serve_bot_avatar_or_default()
 
 
 # ---------------------------------------------------------- discord relay --
