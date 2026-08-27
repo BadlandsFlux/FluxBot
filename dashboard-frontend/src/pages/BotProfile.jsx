@@ -37,10 +37,10 @@ export default function BotProfile() {
     try {
       const result = await api.setBotAvatar(file);
       if (result.fluxer_updated) {
-        flash("Updated the bot's Fluxer avatar and the dashboard favicon. You may need a hard refresh to see the favicon change in your tab.");
+        flash("Updated the bot's Fluxer avatar, the dashboard favicon, and the top bar icon. A hard refresh may be needed to see the favicon change in your tab.");
       } else {
         flash(
-          `Dashboard favicon updated. Couldn't update the bot's Fluxer avatar automatically: ${result.fluxer_error || "unknown error"}. ` +
+          `Updated the dashboard favicon and top bar icon. Couldn't update the bot's Fluxer avatar automatically: ${result.fluxer_error || "unknown error"}. ` +
           "You can set that manually from Fluxer's Bot Application page instead.",
           "error",
         );
