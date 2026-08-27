@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Zap } from "lucide-react";
 import { api } from "../api";
@@ -5,6 +6,8 @@ import GuildSwitcher from "./GuildSwitcher";
 import ThemeToggle from "./ThemeToggle";
 
 export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
+  const [iconFailed, setIconFailed] = useState(false);
+
   async function handleLogout() {
     await api.logout();
     onLoggedOut();
@@ -15,7 +18,11 @@ export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
       <div className="topbar-left">
         <Link className="brand" to="/">
           <span className="brand-mark">
-            <Zap size={16} strokeWidth={2.5} />
+            {iconFailed ? (
+              <Zap size={16} strokeWidth={2.5} />
+            ) : (
+              <img src="/api/bot-profile/icon" alt="" onError={() => setIconFailed(true)} />
+            )}
           </span>
           <span className="brand-text">{botName}</span>
         </Link>
