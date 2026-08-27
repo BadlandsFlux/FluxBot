@@ -881,7 +881,8 @@ async def get_bot_avatar() -> Optional[asyncpg.Record]:
 
 # ------------------------------------------------------------ discord relay --
 async def add_discord_relay_mapping(fluxer_guild_id: str, discord_channel_id: str, fluxer_channel_id: str,
-                                     direction: str = "discord_to_fluxer", show_attribution: bool = True) -> None:
+                                     direction: str = "discord_to_fluxer", show_attribution: bool = True,
+                                     created_by: Optional[str] = None) -> None:
     # The UNIQUE constraint is on (discord_channel_id, fluxer_channel_id)
     # alone, not scoped to a guild, since a mapping legitimately belongs
     # to whichever Fluxer guild owns that fluxer_channel_id, not
@@ -899,12 +900,13 @@ async def add_discord_relay_mapping(fluxer_guild_id: str, discord_channel_id: st
         raise ValueError("This exact Discord/Fluxer channel pairing is already mapped under a different server.")
     await pool().execute(
         """
-        INSERT INTO discord_relay_mappings (fluxer_guild_id, discord_channel_id, fluxer_channel_id, direction, show_attribution)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO discord_relay_mappings (fluxer_guild_id, discord_channel_id, fluxer_channel_id, direction, show_attribution, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (discord_channel_id, fluxer_channel_id)
-        DO UPDATE SET direction = EXCLUDED.direction, show_attribution = EXCLUDED.show_attribution, enabled = TRUE
+        DO UPDATE SET direction = EXCLUDED.direction, show_attribution = EXCLUDED.show_attribution,
+            enabled = TRUE, created_by = EXCLUDED.created_by
         """,
-        fluxer_guild_id, discord_channel_id, fluxer_channel_id, direction, show_attribution,
+        fluxer_guild_id, discord_channel_id, fluxer_channel_id, direction, show_attribution, created_by,
     )
 
 

@@ -451,14 +451,13 @@ def _relay_mapping_to_json(row) -> dict:
         "direction": row["direction"],
         "enabled": row["enabled"],
         "show_attribution": row["show_attribution"],
+        "created_by": row["created_by"],
         "created_at": row["created_at"].isoformat(),
     }
 
 
 def _discord_invite_url(bot_id: str) -> str:
-    # View Channel, Send Messages, Read Message History, see
-    # bot/discord_relay.py's INVITE_PERMISSIONS for exactly which bits.
-    return f"https://discord.com/api/oauth2/authorize?client_id={bot_id}&permissions=68608&scope=bot"
+    return f"https://discord.com/api/oauth2/authorize?client_id={bot_id}&permissions={DISCORD_RELAY_INVITE_PERMISSIONS}&scope=bot"
 
 
 @app.get("/api/guilds/{guild_id}/discord-relay")
@@ -503,9 +502,11 @@ async def api_add_discord_relay(request: Request, guild_id: str, payload: Discor
         raise _ApiError(400, "Fluxer channel ID must be numeric.")
     if payload.direction not in _VALID_RELAY_DIRECTIONS:
         raise _ApiError(400, f"direction must be one of {sorted(_VALID_RELAY_DIRECTIONS)}.")
+    creator = current_user(request)
     try:
         await db.add_discord_relay_mapping(guild_id, discord_channel_id, fluxer_channel_id,
-                                            direction=payload.direction, show_attribution=payload.show_attribution)
+                                            direction=payload.direction, show_attribution=payload.show_attribution,
+                                            created_by=str(creator["id"]) if creator else None)
     except ValueError as e:
         raise _ApiError(409, str(e))
     mappings = await db.list_discord_relay_mappings_for_guild(guild_id)

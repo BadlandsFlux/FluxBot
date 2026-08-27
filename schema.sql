@@ -1,4 +1,4 @@
--- Fluxer moderation bot — Postgres schema
+-- Fluxer moderation bot, Postgres schema
 -- Apply with: psql "$DATABASE_URL" -f schema.sql
 -- (or just run `python -m common.db` once, which executes this same DDL)
 
@@ -338,6 +338,20 @@ CREATE TABLE IF NOT EXISTS discord_relay_mappings (
     -- from one-way mappings either, someone forwarding an announcement
     -- channel may still want to know who originally posted it.
     show_attribution     BOOLEAN NOT NULL DEFAULT TRUE,
+    -- The Fluxer user id of whoever configured this mapping. Not an
+    -- access-control mechanism, this is a SHARED relay bot: nothing in
+    -- this schema verifies that whoever adds a fluxer_to_discord (or
+    -- both) mapping actually has any real claim to discord_channel_id,
+    -- only that they manage the Fluxer guild the mapping is filed
+    -- under. If this bot is ever hosted for multiple UNRELATED Fluxer
+    -- communities, any of their managers can direct the shared bot to
+    -- post into any Discord channel it happens to have access to
+    -- (Discord channel ids aren't secret in any strong sense), a real
+    -- trust boundary worth understanding before enabling that for
+    -- people you don't already trust with each other. This column is
+    -- purely for after-the-fact accountability if that's ever misused,
+    -- it doesn't prevent it.
+    created_by           TEXT,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (discord_channel_id, fluxer_channel_id)
 );
