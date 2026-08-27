@@ -1289,31 +1289,45 @@ async def api_set_bot_avatar(request: Request, file: UploadFile = File(...)):
     if not data:
         raise _ApiError(400, "That file is empty.")
 
+    # The dashboard's own favicon/branding is a purely local asset, it
+    # doesn't need Fluxer's cooperation at all, so it's stored and
+    # served unconditionally once the image itself is valid. Setting
+    # the bot's actual Fluxer avatar (a separate concern entirely, that
+    # image showing up as the bot's profile picture on Fluxer) is
+    # attempted as best-effort below and reported back on its own,
+    # rather than blocking the favicon update if it fails, e.g. some
+    # instances currently reject this call outright (see
+    # oauth.update_bot_avatar's docstring), and there's no reason a
+    # Fluxer-side rejection should prevent updating this site's own
+    # favicon, someone can always set the bot's actual Fluxer avatar by
+    # hand from Fluxer's own Bot Application page in the meantime.
+    await db.set_bot_avatar(data, file.content_type)
+
+    fluxer_updated = False
+    fluxer_error: Optional[str] = None
     access_token = request.session.get("access_token")
     if not access_token:
-        raise _ApiError(401, "Not logged in.")
+        fluxer_error = "Not logged in with a Fluxer session, favicon updated, bot avatar not attempted."
+    else:
+        try:
+            # Fluxer's own docs put the bot's avatar under the
+            # application's bot-profile endpoint, not the generic user
+            # profile, and that endpoint is Bearer-authenticated as
+            # whoever owns the application (this session), not the
+            # bot's own Bot token, see oauth.update_bot_avatar's
+            # docstring for the full story.
+            bot_user = await bot_rest.get_current_user()
+            application_id = str(bot_user["id"])
+            avatar_base64 = base64.b64encode(data).decode("ascii")
+            await oauth.update_bot_avatar(access_token, application_id, avatar_base64)
+            fluxer_updated = True
+        except httpx.HTTPStatusError as e:
+            detail = e.response.text[:300] if e.response is not None else ""
+            fluxer_error = f"Fluxer rejected that image (HTTP {e.response.status_code}): {detail}"
+        except FluxerAPIError as e:
+            fluxer_error = f"Couldn't look up the bot's own account (HTTP {e.status}): {str(e.body)[:300]}"
 
-    try:
-        # Fluxer's own docs put the bot's avatar under the application's
-        # bot-profile endpoint, not the generic user profile, and that
-        # endpoint is Bearer-authenticated as whoever owns the
-        # application (this session), not the bot's own Bot token, see
-        # oauth.update_bot_avatar's docstring for the full story.
-        bot_user = await bot_rest.get_current_user()
-        application_id = str(bot_user["id"])
-        avatar_base64 = base64.b64encode(data).decode("ascii")
-        await oauth.update_bot_avatar(access_token, application_id, avatar_base64)
-    except httpx.HTTPStatusError as e:
-        detail = e.response.text[:300] if e.response is not None else ""
-        raise _ApiError(502, f"Fluxer rejected that image (HTTP {e.response.status_code}): {detail}")
-    except FluxerAPIError as e:
-        raise _ApiError(502, f"Couldn't look up the bot's own account (HTTP {e.status}): {str(e.body)[:300]}")
-
-    # Only store it (and start serving it as the favicon) once Fluxer has
-    # actually accepted it, an image that Fluxer rejects shouldn't become
-    # the site's favicon either.
-    await db.set_bot_avatar(data, file.content_type)
-    return {"ok": True}
+    return {"ok": True, "fluxer_updated": fluxer_updated, "fluxer_error": fluxer_error}
 
 
 @app.get("/favicon.ico")

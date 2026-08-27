@@ -35,8 +35,16 @@ export default function BotProfile() {
     }
     setUploading(true);
     try {
-      await api.setBotAvatar(file);
-      flash("Updated. This also changed the favicon, you may need a hard refresh to see it in your tab.");
+      const result = await api.setBotAvatar(file);
+      if (result.fluxer_updated) {
+        flash("Updated the bot's Fluxer avatar and the dashboard favicon. You may need a hard refresh to see the favicon change in your tab.");
+      } else {
+        flash(
+          `Dashboard favicon updated. Couldn't update the bot's Fluxer avatar automatically: ${result.fluxer_error || "unknown error"}. ` +
+          "You can set that manually from Fluxer's Bot Application page instead.",
+          "error",
+        );
+      }
     } catch (err) {
       flash(err.message, "error");
     } finally {
@@ -50,8 +58,9 @@ export default function BotProfile() {
         <Bot size={18} /> Bot profile
       </h2>
       <p className="muted small">
-        Owner-only. Changes the bot's avatar on Fluxer and the dashboard's favicon, both from the same image.
-        PNG, JPEG, or WEBP, 8 MiB max.
+        Owner-only. Updates the dashboard's own favicon right away, and tries to update the bot's avatar on
+        Fluxer too, though that part isn't guaranteed to work on every instance right now, in which case set it
+        manually from Fluxer's Bot Application page. PNG, JPEG, or WEBP, 8 MiB max.
       </p>
 
       <form onSubmit={handleUpload} className="bot-profile-form">
