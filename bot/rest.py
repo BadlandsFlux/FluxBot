@@ -190,13 +190,19 @@ class FluxerREST:
         channel, e.g. !mydata's warning history."""
         return await self.request("POST", "/users/@me/channels", json={"recipient_id": user_id})
 
-    async def update_own_avatar(self, image_bytes: bytes, mimetype: str) -> dict:
-        """Sets the bot's own avatar. Discord convention: PATCH /users/@me
-        with the avatar as a base64 data URI, not a multipart upload (best-
-        effort assumption, not confirmed against Fluxer's own docs)."""
-        import base64
-        data_uri = f"data:{mimetype};base64,{base64.b64encode(image_bytes).decode('ascii')}"
-        return await self.request("PATCH", "/users/@me", json={"avatar": data_uri})
+    # NOTE: there used to be an update_own_avatar() here that called
+    # PATCH /users/@me with the bot's own token. Confirmed wrong on two
+    # counts, from Fluxer's actual published API docs (fluxer.app's
+    # OpenAPI-derived reference): bots have their own separate profile
+    # object (BotProfileUpdateRequest, distinct from the generic user
+    # PATCH /users/@me schema), updated via PATCH
+    # /oauth2/applications/{id}/bot, and that endpoint is authenticated
+    # with the APPLICATION OWNER's own OAuth2 Bearer access token, not
+    # the bot's own Bot token, mirroring how Discord's bot avatar is set
+    # from the Developer Portal (your own account) rather than via the
+    # bot's own API access. Only dashboard/app.py has the owner's
+    # session token available, so that's where this now lives (see
+    # oauth.update_bot_avatar there), not here.
 
     async def send_message(self, channel_id: str, content: Optional[str] = None,
                             embeds: Optional[list] = None, allowed_mentions: Optional[dict] = None) -> dict:

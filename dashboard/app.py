@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -1288,10 +1289,25 @@ async def api_set_bot_avatar(request: Request, file: UploadFile = File(...)):
     if not data:
         raise _ApiError(400, "That file is empty.")
 
+    access_token = request.session.get("access_token")
+    if not access_token:
+        raise _ApiError(401, "Not logged in.")
+
     try:
-        await bot_rest.update_own_avatar(data, file.content_type)
+        # Fluxer's own docs put the bot's avatar under the application's
+        # bot-profile endpoint, not the generic user profile, and that
+        # endpoint is Bearer-authenticated as whoever owns the
+        # application (this session), not the bot's own Bot token, see
+        # oauth.update_bot_avatar's docstring for the full story.
+        bot_user = await bot_rest.get_current_user()
+        application_id = str(bot_user["id"])
+        avatar_base64 = base64.b64encode(data).decode("ascii")
+        await oauth.update_bot_avatar(access_token, application_id, avatar_base64)
+    except httpx.HTTPStatusError as e:
+        detail = e.response.text[:300] if e.response is not None else ""
+        raise _ApiError(502, f"Fluxer rejected that image (HTTP {e.response.status_code}): {detail}")
     except FluxerAPIError as e:
-        raise _ApiError(502, f"Fluxer rejected that image (HTTP {e.status}).")
+        raise _ApiError(502, f"Couldn't look up the bot's own account (HTTP {e.status}): {str(e.body)[:300]}")
 
     # Only store it (and start serving it as the favicon) once Fluxer has
     # actually accepted it, an image that Fluxer rejects shouldn't become
