@@ -274,6 +274,76 @@ class FluxerREST:
             json={"reason": reason} if reason else None,
         )
 
+    # ---------------------------------------------------------- webhooks --
+    # Used by the Discord relay to post messages that show the ORIGINAL
+    # author's real username and avatar, something only webhook-sent
+    # messages support on either platform, not regular bot-token-sent
+    # ones. Creation needs the bot's own auth (Manage Webhooks), but per
+    # Fluxer's own docs, execution/editing/deleting THROUGH a webhook
+    # explicitly does NOT need or want the bot token, the webhook's own
+    # token in the URL is the credential, so those three go through a
+    # fresh, plain session rather than self._session (which always
+    # carries the bot's Authorization header by default).
+    async def create_channel_webhook(self, channel_id: str, name: str) -> dict:
+        return await self.request("POST", f"/channels/{channel_id}/webhooks", json={"name": name})
+
+    async def execute_webhook(self, webhook_id: str, webhook_token: str, *, content: Optional[str] = None,
+                               embeds: Optional[list] = None, username: Optional[str] = None,
+                               avatar_url: Optional[str] = None, files: Optional[list[tuple[str, bytes]]] = None) -> dict:
+        payload: dict = {"allowed_mentions": self.SAFE_ALLOWED_MENTIONS}
+        if content:
+            payload["content"] = content
+        if embeds:
+            payload["embeds"] = embeds
+        if username:
+            payload["username"] = username
+        if avatar_url:
+            payload["avatar_url"] = avatar_url
+        # wait=true (Discord convention, not directly confirmed against
+        # Fluxer's docs the way the rest of this method's shape was):
+        # without it, a webhook execute typically returns 204 No
+        # Content rather than the created message, and the caller here
+        # needs the message id back for message-link tracking (so a
+        # later edit/delete can find it again).
+        url = f"{self.base_url}/webhooks/{webhook_id}/{webhook_token}?wait=true"
+
+        async with aiohttp.ClientSession() as session:
+            if files:
+                form = aiohttp.FormData()
+                form.add_field("payload_json", json.dumps(payload), content_type="application/json")
+                for i, (filename, file_bytes) in enumerate(files):
+                    form.add_field(f"files[{i}]", file_bytes, filename=filename, content_type="application/octet-stream")
+                async with session.post(url, data=form) as resp:
+                    if resp.status >= 400:
+                        raise FluxerAPIError(resp.status, "POST", f"/webhooks/{webhook_id}/***", await resp.text())
+                    return await resp.json(content_type=None)
+            else:
+                async with session.post(url, json=payload) as resp:
+                    if resp.status >= 400:
+                        raise FluxerAPIError(resp.status, "POST", f"/webhooks/{webhook_id}/***", await resp.text())
+                    return await resp.json(content_type=None)
+
+    async def edit_webhook_message(self, webhook_id: str, webhook_token: str, message_id: str,
+                                    content: Optional[str] = None, embeds: Optional[list] = None) -> dict:
+        payload: dict = {}
+        if content is not None:
+            payload["content"] = content
+        if embeds is not None:
+            payload["embeds"] = embeds
+        url = f"{self.base_url}/webhooks/{webhook_id}/{webhook_token}/messages/{message_id}"
+        async with aiohttp.ClientSession() as session:
+            async with session.patch(url, json=payload) as resp:
+                if resp.status >= 400:
+                    raise FluxerAPIError(resp.status, "PATCH", f"/webhooks/{webhook_id}/***/messages/{message_id}", await resp.text())
+                return await resp.json(content_type=None)
+
+    async def delete_webhook_message(self, webhook_id: str, webhook_token: str, message_id: str) -> None:
+        url = f"{self.base_url}/webhooks/{webhook_id}/{webhook_token}/messages/{message_id}"
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(url) as resp:
+                if resp.status >= 400:
+                    raise FluxerAPIError(resp.status, "DELETE", f"/webhooks/{webhook_id}/***/messages/{message_id}", await resp.text())
+
     async def bulk_delete_messages(self, channel_id: str, message_ids: list[str]) -> None:
         await self.request(
             "POST", f"/channels/{channel_id}/messages/bulk-delete",

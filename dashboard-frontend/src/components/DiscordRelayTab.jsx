@@ -101,8 +101,9 @@ export default function DiscordRelayTab({ guildId, channels }) {
       <h2>Discord Relay</h2>
       <p className="muted small">
         Watches specific channels on a Discord server and forwards new messages, text, embeds, and attachments,
-        into a channel here, or the other way too if you pick a two-way mapping. Edits and deletes sync too for
-        anything the relay itself sent. Needs its own Discord Bot application, separate from this bot's Fluxer bot.
+        into a channel here, or the other way too if you pick a two-way mapping. With attribution on, relayed
+        messages show the original sender's real avatar and username. Edits and deletes sync too for anything
+        the relay itself sent. Needs its own Discord Bot application, separate from this bot's Fluxer bot.
       </p>
 
       {data.relay_status && (
