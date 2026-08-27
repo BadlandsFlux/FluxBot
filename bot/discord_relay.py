@@ -66,6 +66,7 @@ import asyncio
 import io
 import ipaddress
 import logging
+import re
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -109,6 +110,124 @@ def _with_attribution(content: Optional[str], prefix: Optional[str]) -> Optional
     if not prefix:
         return content
     return f"{prefix} {content}" if content else prefix
+
+
+_USER_MENTION_RE = re.compile(r"<@!?(\d+)>")
+_CHANNEL_MENTION_RE = re.compile(r"<#(\d+)>")
+_ROLE_MENTION_RE = re.compile(r"<@&(\d+)>")
+
+
+def _translate_mentions(content: Optional[str], *, users: dict, channels: dict, roles: dict) -> Optional[str]:
+    """Replaces Discord/Fluxer-style <@id>/<#id>/<@&id> mention tokens
+    with plain "@name"/"#name" text. Necessary because these tokens
+    encode a PLATFORM-SPECIFIC id: Discord and Fluxer are entirely
+    separate id spaces, so passing a raw token straight through to the
+    other platform would either render as a dead, unparsed token or,
+    in the unlikely case the numeric id happens to coincide with
+    something real over there, silently mention the wrong person
+    entirely. This can't produce a live, clickable mention on the
+    other platform either way, there's no cross-platform id mapping
+    that would make one possible, so plain readable text is the best
+    available outcome. Falls back to "unknown-user"/"unknown-channel"/
+    "unknown-role" for an id this particular lookup couldn't resolve
+    (a deleted channel, a role from before the bot had that guild
+    cached, etc), rather than leaving the broken raw token in place.
+    Role pattern is substituted before the user pattern deliberately
+    (even though <@&id> can't actually match the user regex, & isn't
+    ! and isn't a digit, so there's no real collision) just to keep
+    the more specific pattern resolved first, in case that ever
+    changes."""
+    if not content:
+        return content
+    content = _ROLE_MENTION_RE.sub(lambda m: f"@{roles.get(m.group(1), 'unknown-role')}", content)
+    content = _USER_MENTION_RE.sub(lambda m: f"@{users.get(m.group(1), 'unknown-user')}", content)
+    content = _CHANNEL_MENTION_RE.sub(lambda m: f"#{channels.get(m.group(1), 'unknown-channel')}", content)
+    return content
+
+
+def _discord_mention_maps(message: discord.Message) -> tuple[dict, dict, dict]:
+    """The create path: discord.py has already parsed and resolved
+    these straight from the full Message object, no extra lookups
+    needed."""
+    users = {str(u.id): u.display_name for u in message.mentions}
+    channels = {str(c.id): c.name for c in message.channel_mentions}
+    roles = {str(r.id): r.name for r in message.role_mentions}
+    return users, channels, roles
+
+
+def _discord_mention_maps_from_raw(relay_client: "RelayClient", guild_id, content: str, data: dict) -> tuple[dict, dict, dict]:
+    """The edit path: a raw gateway payload, not a full Message object,
+    so no pre-resolved mention lists here. User mentions still come
+    resolved in the raw payload itself (Discord convention); channels
+    and roles don't, so those are looked up from discord.py's own
+    guild cache (already populated from the initial connection, not a
+    fresh API call), and only bothered with at all if the content
+    actually contains that kind of token."""
+    users = {str(u["id"]): u.get("global_name") or u.get("username", "unknown") for u in (data.get("mentions") or [])}
+    channels: dict = {}
+    roles: dict = {}
+    if guild_id:
+        guild = relay_client.get_guild(int(guild_id))
+        if guild:
+            if _CHANNEL_MENTION_RE.search(content or ""):
+                channels = {str(c.id): c.name for c in guild.channels}
+            if _ROLE_MENTION_RE.search(content or ""):
+                roles = {str(r.id): r.name for r in guild.roles}
+    return users, channels, roles
+
+
+async def _fluxer_mention_maps(bot: Bot, guild_id, content: str, data: dict) -> tuple[dict, dict, dict]:
+    """Same shape as the Discord side: user mentions are assumed to
+    come pre-resolved in the raw payload (Discord convention, same
+    caveat as everywhere this project relies on Fluxer mirroring it),
+    channels and roles aren't, so those come from the guild's own
+    cached fetch (bot.get_guild, TTL-cached already, not a fresh call
+    per message), and only fetched at all if the content actually has
+    that kind of token."""
+    users = {str(u["id"]): u.get("username", "unknown") for u in (data.get("mentions") or [])}
+    channels: dict = {}
+    roles: dict = {}
+    if guild_id and (_CHANNEL_MENTION_RE.search(content or "") or _ROLE_MENTION_RE.search(content or "")):
+        try:
+            guild = await bot.get_guild(guild_id)
+        except Exception:
+            guild = None
+        if guild:
+            channels = {str(c["id"]): c.get("name", "unknown") for c in guild.get("channels", [])}
+            roles = {str(r["id"]): r.get("name", "unknown") for r in guild.get("roles", [])}
+    return users, channels, roles
+
+
+def _translate_embed_mentions(embed: dict, *, users: dict, channels: dict, roles: dict) -> dict:
+    """Same translation, applied to the handful of embed text fields
+    that can realistically carry a mention token: description, each
+    field's name/value, the footer text, and the author name. Title,
+    image/thumbnail URLs, and colors don't take mention syntax, left
+    alone. Returns a new dict rather than mutating the one passed in,
+    since the caller may still need the original for other targets in
+    a fan-out."""
+    if not any((users, channels, roles)):
+        return embed
+    out = dict(embed)
+    if out.get("description"):
+        out["description"] = _translate_mentions(out["description"], users=users, channels=channels, roles=roles)
+    if out.get("fields"):
+        out["fields"] = [
+            {**f, "name": _translate_mentions(f.get("name"), users=users, channels=channels, roles=roles) or f.get("name", ""),
+             "value": _translate_mentions(f.get("value"), users=users, channels=channels, roles=roles) or f.get("value", "")}
+            for f in out["fields"]
+        ]
+    if out.get("footer", {}).get("text"):
+        out["footer"] = {**out["footer"], "text": _translate_mentions(out["footer"]["text"], users=users, channels=channels, roles=roles)}
+    if out.get("author", {}).get("name"):
+        out["author"] = {**out["author"], "name": _translate_mentions(out["author"]["name"], users=users, channels=channels, roles=roles)}
+    return out
+
+
+def _translate_embeds_mentions(embeds: Optional[list], *, users: dict, channels: dict, roles: dict) -> Optional[list]:
+    if not embeds or not any((users, channels, roles)):
+        return embeds
+    return [_translate_embed_mentions(e, users=users, channels=channels, roles=roles) for e in embeds]
 
 
 def _is_safe_download_url(url: str) -> bool:
@@ -259,7 +378,12 @@ class RelayClient(discord.Client):
             return
 
         raw_content = message.content or None
+        users, channels, roles = ({}, {}, {})
+        if raw_content or message.embeds:
+            users, channels, roles = _discord_mention_maps(message)
+            raw_content = _translate_mentions(raw_content, users=users, channels=channels, roles=roles)
         embeds = [_convert_embed(e) for e in message.embeds] if message.embeds else None
+        embeds = _translate_embeds_mentions(embeds, users=users, channels=channels, roles=roles)
 
         files: list[tuple[str, bytes]] = []
         for attachment in message.attachments:
@@ -315,6 +439,8 @@ class RelayClient(discord.Client):
         new_content = payload.data.get("content") if payload.data else None
         if new_content is None:
             return  # not a content-bearing update
+        users, channels, roles = _discord_mention_maps_from_raw(self, payload.guild_id, new_content, payload.data or {})
+        new_content = _translate_mentions(new_content, users=users, channels=channels, roles=roles)
         links = await db.get_relay_message_links("discord", str(payload.message_id))
         for link in links:
             if link["target_platform"] != "fluxer":
@@ -462,6 +588,9 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
 
         raw_content = data.get("content") or None
         embeds = data.get("embeds") or None
+        users, channels, roles = await _fluxer_mention_maps(bot, guild_id, raw_content or "", data)
+        raw_content = _translate_mentions(raw_content, users=users, channels=channels, roles=roles)
+        embeds = _translate_embeds_mentions(embeds, users=users, channels=channels, roles=roles)
 
         files: list[tuple[str, bytes]] = []
         for attachment in data.get("attachments", []) or []:
@@ -512,6 +641,9 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
         new_content = data.get("content")
         if not message_id or new_content is None:
             return
+        guild_id = data.get("guild_id")
+        users, channels, roles = await _fluxer_mention_maps(bot, guild_id, new_content, data)
+        new_content = _translate_mentions(new_content, users=users, channels=channels, roles=roles)
         links = await db.get_relay_message_links("fluxer", str(message_id))
         for link in links:
             if link["target_platform"] != "discord":
