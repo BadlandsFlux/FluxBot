@@ -6,7 +6,7 @@ A single polling loop (checked every ~15s) that:
     and editing the original message with final results
 
 Runs as its own asyncio task alongside the gateway connection in
-bot/main.py — deliberately simple (poll-the-DB) rather than precise
+bot/main.py, deliberately simple (poll-the-DB) rather than precise
 per-item scheduling, since a bot's reminder/poll volume doesn't need
 sub-second accuracy.
 """
@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from bot.commands import Bot
 from bot.modules.fun import NUMBER_EMOJI
@@ -70,7 +71,7 @@ async def _close_polls(bot: Bot) -> None:
                 lines.append(f"{NUMBER_EMOJI[i]} {opt}\n{_bar(pct)} {n} vote{'s' if n != 1 else ''} ({pct:.0f}%)")
 
             embed = {
-                "title": f"📊 {p['question']} — Poll closed",
+                "title": f"📊 {p['question']}, Poll closed",
                 "description": "\n\n".join(lines),
                 "color": 0x95A5A6,
                 "footer": {"text": f"{total if total != 1 or sum(counts.values()) else 0} total votes"},
@@ -123,6 +124,24 @@ async def _update_bot_status(bot: Bot) -> None:
     await db.update_bot_status(started_at_wall, bot.gateway.latency_ms, guild_count)
 
 
+_last_relay_link_prune: Optional[datetime] = None
+_RELAY_LINK_PRUNE_INTERVAL = timedelta(hours=24)
+
+
+async def _prune_relay_message_links() -> None:
+    # A maintenance task, not something that needs to run on every 15s
+    # tick, gated to roughly once a day regardless of how often this
+    # function itself gets called.
+    global _last_relay_link_prune
+    now = datetime.now(timezone.utc)
+    if _last_relay_link_prune and now - _last_relay_link_prune < _RELAY_LINK_PRUNE_INTERVAL:
+        return
+    pruned = await db.prune_old_relay_message_links()
+    if pruned:
+        log.info("Pruned %d old Discord relay message links", pruned)
+    _last_relay_link_prune = now
+
+
 async def run_scheduler(bot: Bot) -> None:
     while True:
         try:
@@ -131,6 +150,7 @@ async def run_scheduler(bot: Bot) -> None:
             await _close_trivia(bot)
             await voice_tracker.flush_all(bot)
             await _update_bot_status(bot)
+            await _prune_relay_message_links()
         except Exception:
             log.exception("Scheduler tick failed")
         await asyncio.sleep(CHECK_INTERVAL)

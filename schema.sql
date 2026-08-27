@@ -327,6 +327,17 @@ CREATE TABLE IF NOT EXISTS discord_relay_mappings (
     -- it's not the motivating use case.
     direction            TEXT NOT NULL DEFAULT 'discord_to_fluxer'
                           CHECK (direction IN ('discord_to_fluxer', 'fluxer_to_discord', 'both')),
+    -- Pause a mapping without losing its configuration (and without the
+    -- UNIQUE constraint below fighting you if you want to briefly stop,
+    -- then resume, the exact same pairing).
+    enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Prefixes relayed content with "[Discord] username:" (or the Fluxer
+    -- equivalent), so it's clear who actually said something and from
+    -- where. Defaults on: the safer, more transparent default, most
+    -- relevant for two-way (a live conversation bridge) but not withheld
+    -- from one-way mappings either, someone forwarding an announcement
+    -- channel may still want to know who originally posted it.
+    show_attribution     BOOLEAN NOT NULL DEFAULT TRUE,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (discord_channel_id, fluxer_channel_id)
 );
@@ -356,8 +367,32 @@ CREATE TABLE IF NOT EXISTS discord_relay_status (
     id                   TEXT PRIMARY KEY DEFAULT 'relay',
     connected            BOOLEAN NOT NULL DEFAULT FALSE,
     discord_username     TEXT,
+    -- The bot's own Discord user id, same value as its OAuth2 client id
+    -- for practically every real Discord bot, used to build the invite
+    -- link shown to other guild managers (see discord_relay_invite_url
+    -- in dashboard/app.py). Populated once available in on_ready.
+    discord_bot_id       TEXT,
     last_connected_at    TIMESTAMPTZ,
     last_error           TEXT,
     last_error_at        TIMESTAMPTZ,
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Links a relayed message back to its source, so an edit or delete on
+-- one platform can find and mirror the change on the other. One source
+-- message can have several rows here (fanning out to multiple targets,
+-- same as mappings themselves can). Pruned periodically by the
+-- scheduler (see bot/scheduler.py) rather than kept forever, a message
+-- from months ago being edited is vanishingly unlikely to matter and
+-- there's no value in an unbounded, ever-growing table for it.
+CREATE TABLE IF NOT EXISTS discord_relay_message_links (
+    id                   BIGSERIAL PRIMARY KEY,
+    mapping_id           BIGINT REFERENCES discord_relay_mappings(id) ON DELETE SET NULL,
+    source_platform      TEXT NOT NULL CHECK (source_platform IN ('discord', 'fluxer')),
+    source_message_id    TEXT NOT NULL,
+    target_platform      TEXT NOT NULL CHECK (target_platform IN ('discord', 'fluxer')),
+    target_message_id    TEXT NOT NULL,
+    target_channel_id    TEXT NOT NULL,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_relay_links_source ON discord_relay_message_links(source_platform, source_message_id);

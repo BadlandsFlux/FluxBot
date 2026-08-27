@@ -20,6 +20,7 @@ from bot import moderation_actions
 from bot.moderation_actions import ModerationBlocked
 from bot import voice_tracker
 from bot.commands import Bot as BotFramework
+from bot.discord_relay import INVITE_PERMISSIONS as DISCORD_RELAY_INVITE_PERMISSIONS
 from bot.modules import achievements, fun, info as info_module, leveling, moderation, mydata, reminders, roles, staffnotes, tags, trivia, utility
 from bot.modules import afk as afk_module
 from bot.permissions import permission_name, role_is_privileged
@@ -448,8 +449,16 @@ def _relay_mapping_to_json(row) -> dict:
         "discord_channel_id": row["discord_channel_id"],
         "fluxer_channel_id": row["fluxer_channel_id"],
         "direction": row["direction"],
+        "enabled": row["enabled"],
+        "show_attribution": row["show_attribution"],
         "created_at": row["created_at"].isoformat(),
     }
+
+
+def _discord_invite_url(bot_id: str) -> str:
+    # View Channel, Send Messages, Read Message History, see
+    # bot/discord_relay.py's INVITE_PERMISSIONS for exactly which bits.
+    return f"https://discord.com/api/oauth2/authorize?client_id={bot_id}&permissions=68608&scope=bot"
 
 
 @app.get("/api/guilds/{guild_id}/discord-relay")
@@ -465,6 +474,11 @@ async def api_get_discord_relay(request: Request, guild_id: str):
             "connected": status["connected"],
             "discord_username": status["discord_username"],
         } if status else None,
+        # Any guild manager can grab this to invite the shared relay bot
+        # into their own Discord server, not just the owner, that's the
+        # whole point of surfacing it here rather than only on the
+        # owner-only setup page.
+        "invite_url": _discord_invite_url(status["discord_bot_id"]) if status and status["discord_bot_id"] else None,
     }
 
 
@@ -475,6 +489,7 @@ class DiscordRelayAddPayload(BaseModel):
     discord_channel_id: str
     fluxer_channel_id: str
     direction: str = "discord_to_fluxer"
+    show_attribution: bool = True
 
 
 @app.post("/api/guilds/{guild_id}/discord-relay")
@@ -488,7 +503,11 @@ async def api_add_discord_relay(request: Request, guild_id: str, payload: Discor
         raise _ApiError(400, "Fluxer channel ID must be numeric.")
     if payload.direction not in _VALID_RELAY_DIRECTIONS:
         raise _ApiError(400, f"direction must be one of {sorted(_VALID_RELAY_DIRECTIONS)}.")
-    await db.add_discord_relay_mapping(guild_id, discord_channel_id, fluxer_channel_id, direction=payload.direction)
+    try:
+        await db.add_discord_relay_mapping(guild_id, discord_channel_id, fluxer_channel_id,
+                                            direction=payload.direction, show_attribution=payload.show_attribution)
+    except ValueError as e:
+        raise _ApiError(409, str(e))
     mappings = await db.list_discord_relay_mappings_for_guild(guild_id)
     return {"mappings": [_relay_mapping_to_json(m) for m in mappings]}
 
@@ -499,6 +518,67 @@ async def api_remove_discord_relay(request: Request, guild_id: str, mapping_id: 
     await db.remove_discord_relay_mapping(mapping_id, guild_id)
     mappings = await db.list_discord_relay_mappings_for_guild(guild_id)
     return {"mappings": [_relay_mapping_to_json(m) for m in mappings]}
+
+
+class DiscordRelayTogglePayload(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/guilds/{guild_id}/discord-relay/{mapping_id}/toggle")
+async def api_toggle_discord_relay(request: Request, guild_id: str, mapping_id: int, payload: DiscordRelayTogglePayload):
+    await _require_manage(request, guild_id)
+    await db.set_discord_relay_mapping_enabled(mapping_id, guild_id, payload.enabled)
+    mappings = await db.list_discord_relay_mappings_for_guild(guild_id)
+    return {"mappings": [_relay_mapping_to_json(m) for m in mappings]}
+
+
+@app.post("/api/guilds/{guild_id}/discord-relay/{mapping_id}/test")
+async def api_test_discord_relay(request: Request, guild_id: str, mapping_id: int):
+    """Sends a clearly-labeled test message directly to whichever
+    channel(s) this mapping targets, bypassing the relay's own event
+    handling entirely. This confirms the bot actually has permission
+    and the channel id is correct on each end, the most common failure
+    mode, not a full round-trip through the live relay logic (that
+    would mean actually posting a real message on the source platform
+    and waiting to observe it arrive, more integration test than a
+    button click). Said plainly in the response so this isn't mistaken
+    for more than it is."""
+    await _require_manage(request, guild_id)
+    mapping = await db.get_discord_relay_mapping(mapping_id, guild_id)
+    if mapping is None:
+        raise _ApiError(404, "That mapping doesn't exist (or doesn't belong to this server).")
+
+    results = {}
+    if mapping["direction"] in ("discord_to_fluxer", "both"):
+        try:
+            await bot_rest.send_message(mapping["fluxer_channel_id"],
+                                         content="Test message from FluxBot's Discord Relay. If you can see this, "
+                                                 "the bot can post here successfully.")
+            results["fluxer"] = "sent"
+        except FluxerAPIError as e:
+            results["fluxer"] = f"failed (HTTP {e.status}), check the bot's permissions in that channel"
+
+    if mapping["direction"] in ("fluxer_to_discord", "both"):
+        token = await db.get_discord_relay_token() or config.discord_bot_token
+        if not token:
+            results["discord"] = "skipped, no relay token configured yet"
+        else:
+            try:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.post(
+                        f"https://discord.com/api/v10/channels/{mapping['discord_channel_id']}/messages",
+                        headers={"Authorization": f"Bot {token}"},
+                        json={"content": "Test message from FluxBot's Discord Relay. If you can see this, "
+                                         "the bot can post here successfully."},
+                    )
+                if resp.status_code < 300:
+                    results["discord"] = "sent"
+                else:
+                    results["discord"] = f"failed (HTTP {resp.status_code}), check the bot is actually in that server with permission to post there"
+            except Exception as e:
+                results["discord"] = f"failed ({type(e).__name__}), couldn't reach Discord"
+
+    return {"results": results}
 
 
 async def _activity_log_response(guild_id: str) -> dict:

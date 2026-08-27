@@ -881,14 +881,30 @@ async def get_bot_avatar() -> Optional[asyncpg.Record]:
 
 # ------------------------------------------------------------ discord relay --
 async def add_discord_relay_mapping(fluxer_guild_id: str, discord_channel_id: str, fluxer_channel_id: str,
-                                     direction: str = "discord_to_fluxer") -> None:
+                                     direction: str = "discord_to_fluxer", show_attribution: bool = True) -> None:
+    # The UNIQUE constraint is on (discord_channel_id, fluxer_channel_id)
+    # alone, not scoped to a guild, since a mapping legitimately belongs
+    # to whichever Fluxer guild owns that fluxer_channel_id, not
+    # something a second guild should ever be able to reassign. Checked
+    # explicitly rather than letting ON CONFLICT DO UPDATE blindly take
+    # over an existing row: found this exact gap via testing (two
+    # different test guilds happened to reuse the same fake channel ids,
+    # and the second guild's "add" silently repointed the first guild's
+    # mapping, not just updated its own).
+    existing = await pool().fetchrow(
+        "SELECT fluxer_guild_id FROM discord_relay_mappings WHERE discord_channel_id=$1 AND fluxer_channel_id=$2",
+        discord_channel_id, fluxer_channel_id,
+    )
+    if existing and existing["fluxer_guild_id"] != fluxer_guild_id:
+        raise ValueError("This exact Discord/Fluxer channel pairing is already mapped under a different server.")
     await pool().execute(
         """
-        INSERT INTO discord_relay_mappings (fluxer_guild_id, discord_channel_id, fluxer_channel_id, direction)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (discord_channel_id, fluxer_channel_id) DO UPDATE SET direction = EXCLUDED.direction
+        INSERT INTO discord_relay_mappings (fluxer_guild_id, discord_channel_id, fluxer_channel_id, direction, show_attribution)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (discord_channel_id, fluxer_channel_id)
+        DO UPDATE SET direction = EXCLUDED.direction, show_attribution = EXCLUDED.show_attribution, enabled = TRUE
         """,
-        fluxer_guild_id, discord_channel_id, fluxer_channel_id, direction,
+        fluxer_guild_id, discord_channel_id, fluxer_channel_id, direction, show_attribution,
     )
 
 
@@ -901,22 +917,46 @@ async def remove_discord_relay_mapping(mapping_id: int, fluxer_guild_id: str) ->
     )
 
 
+async def set_discord_relay_mapping_enabled(mapping_id: int, fluxer_guild_id: str, enabled: bool) -> None:
+    # Same guild-scoping as remove, above, for the same reason.
+    await pool().execute(
+        "UPDATE discord_relay_mappings SET enabled=$3 WHERE id=$1 AND fluxer_guild_id=$2",
+        mapping_id, fluxer_guild_id, enabled,
+    )
+
+
 async def list_discord_relay_mappings_for_guild(fluxer_guild_id: str) -> list[asyncpg.Record]:
+    # Deliberately not filtered by enabled here, the dashboard needs to
+    # show (and let someone re-enable) a paused mapping, not just active
+    # ones.
     return await pool().fetch(
         "SELECT * FROM discord_relay_mappings WHERE fluxer_guild_id=$1 ORDER BY created_at", fluxer_guild_id,
     )
 
 
+async def get_discord_relay_mapping(mapping_id: int, fluxer_guild_id: str) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow(
+        "SELECT * FROM discord_relay_mappings WHERE id=$1 AND fluxer_guild_id=$2", mapping_id, fluxer_guild_id,
+    )
+
+
+async def get_discord_relay_mapping_by_id(mapping_id: int) -> Optional[asyncpg.Record]:
+    """Unscoped lookup, used internally by the relay's own edit/delete
+    sync (bot/discord_relay.py), not exposed through any dashboard
+    endpoint. Those go through the guild-scoped version above instead."""
+    return await pool().fetchrow("SELECT * FROM discord_relay_mappings WHERE id=$1", mapping_id)
+
+
 async def list_discord_relay_mappings_for_discord_channel(discord_channel_id: str) -> list[asyncpg.Record]:
     """What the relay calls on every incoming DISCORD message: which
     Fluxer channel(s), if any, is this Discord channel mapped to, and in
-    which direction. Only rows with direction 'discord_to_fluxer' or
-    'both' actually forward that way, filtered here rather than by the
-    caller so every call site can't forget the check."""
+    which direction. Only enabled rows with direction 'discord_to_fluxer'
+    or 'both' actually forward that way, filtered here rather than by
+    the caller so every call site can't forget the check."""
     return await pool().fetch(
         """
         SELECT * FROM discord_relay_mappings
-        WHERE discord_channel_id=$1 AND direction IN ('discord_to_fluxer', 'both')
+        WHERE discord_channel_id=$1 AND direction IN ('discord_to_fluxer', 'both') AND enabled
         """,
         discord_channel_id,
     )
@@ -925,23 +965,23 @@ async def list_discord_relay_mappings_for_discord_channel(discord_channel_id: st
 async def list_discord_relay_mappings_for_fluxer_channel(fluxer_channel_id: str) -> list[asyncpg.Record]:
     """The Fluxer-side mirror of the function above: what the relay
     calls on every incoming FLUXER message, to find which Discord
-    channel(s) it should also go to. Same direction filtering, just the
-    other two values."""
+    channel(s) it should also go to. Same direction and enabled
+    filtering, just the other two direction values."""
     return await pool().fetch(
         """
         SELECT * FROM discord_relay_mappings
-        WHERE fluxer_channel_id=$1 AND direction IN ('fluxer_to_discord', 'both')
+        WHERE fluxer_channel_id=$1 AND direction IN ('fluxer_to_discord', 'both') AND enabled
         """,
         fluxer_channel_id,
     )
 
 
 async def list_all_watched_discord_channels() -> list[str]:
-    """Every distinct Discord channel ID with at least one Discord-to-
-    Fluxer (or both-direction) mapping, called once at relay startup so
-    the client knows what it's supposed to be watching for."""
+    """Every distinct Discord channel ID with at least one enabled
+    Discord-to-Fluxer (or both-direction) mapping, called once at relay
+    startup so the client knows what it's supposed to be watching for."""
     rows = await pool().fetch(
-        "SELECT DISTINCT discord_channel_id FROM discord_relay_mappings WHERE direction IN ('discord_to_fluxer', 'both')",
+        "SELECT DISTINCT discord_channel_id FROM discord_relay_mappings WHERE direction IN ('discord_to_fluxer', 'both') AND enabled",
     )
     return [r["discord_channel_id"] for r in rows]
 
@@ -966,26 +1006,69 @@ async def set_discord_relay_token(token: Optional[str]) -> None:
 
 # --------------------------------------------------- discord relay: status --
 async def update_discord_relay_status(*, connected: bool, discord_username: Optional[str] = None,
-                                       error: Optional[str] = None) -> None:
+                                       discord_bot_id: Optional[str] = None, error: Optional[str] = None) -> None:
     await pool().execute(
         """
-        INSERT INTO discord_relay_status (id, connected, discord_username, last_connected_at, last_error, last_error_at, updated_at)
-        VALUES ('relay', $1::boolean, $2::text, CASE WHEN $1::boolean THEN now() ELSE NULL END,
+        INSERT INTO discord_relay_status (id, connected, discord_username, discord_bot_id, last_connected_at, last_error, last_error_at, updated_at)
+        VALUES ('relay', $1::boolean, $2::text, $4::text, CASE WHEN $1::boolean THEN now() ELSE NULL END,
                 $3::text, CASE WHEN $3::text IS NOT NULL THEN now() ELSE NULL END, now())
         ON CONFLICT (id) DO UPDATE SET
             connected = EXCLUDED.connected,
             discord_username = COALESCE(EXCLUDED.discord_username, discord_relay_status.discord_username),
+            discord_bot_id = COALESCE(EXCLUDED.discord_bot_id, discord_relay_status.discord_bot_id),
             last_connected_at = CASE WHEN EXCLUDED.connected THEN now() ELSE discord_relay_status.last_connected_at END,
             last_error = COALESCE(EXCLUDED.last_error, discord_relay_status.last_error),
             last_error_at = CASE WHEN EXCLUDED.last_error IS NOT NULL THEN now() ELSE discord_relay_status.last_error_at END,
             updated_at = now()
         """,
-        connected, discord_username, error,
+        connected, discord_username, error, discord_bot_id,
     )
 
 
 async def get_discord_relay_status() -> Optional[asyncpg.Record]:
     return await pool().fetchrow("SELECT * FROM discord_relay_status WHERE id='relay'")
+
+
+# ----------------------------------------- discord relay: message linking --
+async def add_relay_message_link(mapping_id: int, source_platform: str, source_message_id: str,
+                                  target_platform: str, target_message_id: str, target_channel_id: str) -> None:
+    await pool().execute(
+        """
+        INSERT INTO discord_relay_message_links
+            (mapping_id, source_platform, source_message_id, target_platform, target_message_id, target_channel_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        mapping_id, source_platform, source_message_id, target_platform, target_message_id, target_channel_id,
+    )
+
+
+async def get_relay_message_links(source_platform: str, source_message_id: str) -> list[asyncpg.Record]:
+    """Every relayed copy of a given source message, so an edit or
+    delete can find and mirror the change wherever it landed."""
+    return await pool().fetch(
+        "SELECT * FROM discord_relay_message_links WHERE source_platform=$1 AND source_message_id=$2",
+        source_platform, source_message_id,
+    )
+
+
+async def delete_relay_message_link(link_id: int) -> None:
+    await pool().execute("DELETE FROM discord_relay_message_links WHERE id=$1", link_id)
+
+
+async def prune_old_relay_message_links(older_than_days: int = 30) -> int:
+    """Called periodically by the scheduler. An edit/delete arriving for
+    a message old enough to have already been pruned just doesn't get
+    mirrored, the same graceful-miss behavior as message_cache.py's
+    aged-out entries, not an error condition."""
+    result = await pool().execute(
+        "DELETE FROM discord_relay_message_links WHERE created_at < now() - ($1 || ' days')::interval",
+        str(older_than_days),
+    )
+    # asyncpg's execute() returns a string like "DELETE 42"
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
 
 
 if __name__ == "__main__":
