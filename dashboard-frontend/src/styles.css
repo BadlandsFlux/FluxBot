@@ -116,6 +116,19 @@ button { font-family: inherit; }
   color: white;
   overflow: hidden;
 }
+/* A real image (the uploaded avatar, or the default SVG mark when
+   nothing's been uploaded) is its own self-contained graphic with its
+   own colors, not a plain icon that needs a colored backdrop for
+   contrast the way the Zap fallback below does. Sitting it on the
+   SAME purple gradient the rest of the brand accent uses left it with
+   no visible edge, the two blended into one blob whenever the image's
+   own palette happened to be a similar hue. A neutral surface plus an
+   explicit border gives it a clear boundary regardless of what color
+   the image actually is. */
+.brand-mark-custom {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-hover);
+}
 .brand-mark img {
   width: 100%;
   height: 100%;

@@ -17,7 +17,7 @@ export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
     <header className="topbar">
       <div className="topbar-left">
         <Link className="brand" to="/">
-          <span className="brand-mark">
+          <span className={`brand-mark${iconFailed ? "" : " brand-mark-custom"}`}>
             {iconFailed ? (
               <Zap size={16} strokeWidth={2.5} />
             ) : (
