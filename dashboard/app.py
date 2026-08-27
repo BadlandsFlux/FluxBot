@@ -442,6 +442,65 @@ def _activity_log_to_json(row, ignored_users: list[str]) -> dict:
     }
 
 
+def _relay_mapping_to_json(row) -> dict:
+    return {
+        "id": row["id"],
+        "discord_channel_id": row["discord_channel_id"],
+        "fluxer_channel_id": row["fluxer_channel_id"],
+        "direction": row["direction"],
+        "created_at": row["created_at"].isoformat(),
+    }
+
+
+@app.get("/api/guilds/{guild_id}/discord-relay")
+async def api_get_discord_relay(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
+    mappings = await db.list_discord_relay_mappings_for_guild(guild_id)
+    relay_token = await db.get_discord_relay_token()
+    status = await db.get_discord_relay_status()
+    return {
+        "mappings": [_relay_mapping_to_json(m) for m in mappings],
+        "relay_configured": bool(relay_token or config.discord_bot_token),
+        "relay_status": {
+            "connected": status["connected"],
+            "discord_username": status["discord_username"],
+        } if status else None,
+    }
+
+
+_VALID_RELAY_DIRECTIONS = {"discord_to_fluxer", "fluxer_to_discord", "both"}
+
+
+class DiscordRelayAddPayload(BaseModel):
+    discord_channel_id: str
+    fluxer_channel_id: str
+    direction: str = "discord_to_fluxer"
+
+
+@app.post("/api/guilds/{guild_id}/discord-relay")
+async def api_add_discord_relay(request: Request, guild_id: str, payload: DiscordRelayAddPayload):
+    await _require_manage(request, guild_id)
+    discord_channel_id = payload.discord_channel_id.strip()
+    fluxer_channel_id = payload.fluxer_channel_id.strip()
+    if not discord_channel_id.isdigit():
+        raise _ApiError(400, "Discord channel ID must be numeric, copy it with Developer Mode on in Discord.")
+    if not fluxer_channel_id.isdigit():
+        raise _ApiError(400, "Fluxer channel ID must be numeric.")
+    if payload.direction not in _VALID_RELAY_DIRECTIONS:
+        raise _ApiError(400, f"direction must be one of {sorted(_VALID_RELAY_DIRECTIONS)}.")
+    await db.add_discord_relay_mapping(guild_id, discord_channel_id, fluxer_channel_id, direction=payload.direction)
+    mappings = await db.list_discord_relay_mappings_for_guild(guild_id)
+    return {"mappings": [_relay_mapping_to_json(m) for m in mappings]}
+
+
+@app.delete("/api/guilds/{guild_id}/discord-relay/{mapping_id}")
+async def api_remove_discord_relay(request: Request, guild_id: str, mapping_id: int):
+    await _require_manage(request, guild_id)
+    await db.remove_discord_relay_mapping(mapping_id, guild_id)
+    mappings = await db.list_discord_relay_mappings_for_guild(guild_id)
+    return {"mappings": [_relay_mapping_to_json(m) for m in mappings]}
+
+
 async def _activity_log_response(guild_id: str) -> dict:
     row = await db.get_activity_log_settings(guild_id)
     ignored = await db.list_ignored_log_users(guild_id)
@@ -1173,6 +1232,40 @@ async def favicon():
     if static_favicon.is_file():
         return Response(content=static_favicon.read_bytes(), media_type="image/svg+xml")
     return Response(status_code=404)
+
+
+# ---------------------------------------------------------- discord relay --
+@app.get("/api/discord-relay/config")
+async def api_get_discord_relay_config(request: Request):
+    _require_owner(request)
+    token = await db.get_discord_relay_token()
+    status = await db.get_discord_relay_status()
+    return {
+        # Never the token value itself, write-only from the API's
+        # perspective, only whether one is actually set right now, and
+        # from which source (dashboard takes precedence over .env).
+        "token_configured": bool(token or config.discord_bot_token),
+        "token_source": "dashboard" if token else ("env" if config.discord_bot_token else None),
+        "status": {
+            "connected": status["connected"] if status else False,
+            "discord_username": status["discord_username"] if status else None,
+            "last_connected_at": status["last_connected_at"].isoformat() if status and status["last_connected_at"] else None,
+            "last_error": status["last_error"] if status else None,
+            "last_error_at": status["last_error_at"].isoformat() if status and status["last_error_at"] else None,
+        } if status or token or config.discord_bot_token else None,
+    }
+
+
+class DiscordRelayTokenPayload(BaseModel):
+    token: str = ""
+
+
+@app.post("/api/discord-relay/config")
+async def api_set_discord_relay_token(request: Request, payload: DiscordRelayTokenPayload):
+    _require_owner(request)
+    token = payload.token.strip()
+    await db.set_discord_relay_token(token or None)
+    return {"ok": True}
 
 
 # ------------------------------------------------------ serve the frontend --

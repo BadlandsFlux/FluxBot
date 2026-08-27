@@ -308,3 +308,56 @@ CREATE TABLE IF NOT EXISTS bot_profile (
     avatar_mimetype  TEXT NOT NULL,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- One Discord channel can feed multiple Fluxer channels (e.g. two
+-- different communities both wanting the same announcements), so this
+-- isn't unique on discord_channel_id alone, it's unique on the pairing.
+-- One Discord bot token/connection (DISCORD_BOT_TOKEN) serves every
+-- mapping across every Fluxer guild, matching how the Fluxer bot token
+-- itself is a single bot-wide credential.
+CREATE TABLE IF NOT EXISTS discord_relay_mappings (
+    id                   BIGSERIAL PRIMARY KEY,
+    discord_channel_id   TEXT NOT NULL,
+    fluxer_guild_id      TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    fluxer_channel_id    TEXT NOT NULL,
+    -- 'discord_to_fluxer' (the original ask: Discord's own announcement-
+    -- following aggregates into one channel, relay it onward), or
+    -- 'both' for two-way. 'fluxer_to_discord' alone is supported too
+    -- (symmetry, and there's no real reason to disallow it) even though
+    -- it's not the motivating use case.
+    direction            TEXT NOT NULL DEFAULT 'discord_to_fluxer'
+                          CHECK (direction IN ('discord_to_fluxer', 'fluxer_to_discord', 'both')),
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (discord_channel_id, fluxer_channel_id)
+);
+CREATE INDEX IF NOT EXISTS idx_discord_relay_discord_channel ON discord_relay_mappings(discord_channel_id);
+CREATE INDEX IF NOT EXISTS idx_discord_relay_fluxer_guild ON discord_relay_mappings(fluxer_guild_id);
+CREATE INDEX IF NOT EXISTS idx_discord_relay_fluxer_channel ON discord_relay_mappings(fluxer_channel_id);
+
+-- Singleton row, same pattern as bot_profile/bot_status: lets the bot
+-- owner set the Discord relay's bot token from the dashboard instead of
+-- only via DISCORD_BOT_TOKEN in .env. Not encrypted at rest, same risk
+-- posture this project already takes with everything else in Postgres
+-- (mod actions, warnings, bot_profile's image bytes, none of it is
+-- encrypted either, Postgres access is already a trust boundary here),
+-- but never returned by any GET endpoint, only settable, so it can't
+-- leak back out through the dashboard's own API. Falls back to the env
+-- var if this row doesn't exist or its token is null.
+CREATE TABLE IF NOT EXISTS discord_relay_config (
+    id          TEXT PRIMARY KEY DEFAULT 'relay',
+    bot_token   TEXT,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Singleton row, same pattern as bot_status: the relay client updates
+-- this on connect/disconnect/error so the dashboard can show whether
+-- it's actually working right now, not just whether it's configured.
+CREATE TABLE IF NOT EXISTS discord_relay_status (
+    id                   TEXT PRIMARY KEY DEFAULT 'relay',
+    connected            BOOLEAN NOT NULL DEFAULT FALSE,
+    discord_username     TEXT,
+    last_connected_at    TIMESTAMPTZ,
+    last_error           TEXT,
+    last_error_at        TIMESTAMPTZ,
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);

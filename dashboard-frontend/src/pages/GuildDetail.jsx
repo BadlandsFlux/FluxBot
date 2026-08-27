@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users,
-  Tag as TagIcon, TrendingUp, Megaphone, Search, FileClock,
+  Tag as TagIcon, TrendingUp, Megaphone, Search, FileClock, ArrowLeftRight,
 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "../components/Flash";
@@ -14,6 +14,7 @@ import MembersTab from "../components/MembersTab";
 import TagsTab from "../components/TagsTab";
 import LevelsTab from "../components/LevelsTab";
 import ActivityLogTab from "../components/ActivityLogTab";
+import DiscordRelayTab from "../components/DiscordRelayTab";
 import OnboardingChecklist from "../components/OnboardingChecklist";
 import DangerZone from "../components/DangerZone";
 import AnnouncementBuilder from "../components/AnnouncementBuilder";
@@ -32,6 +33,7 @@ const TABS = [
   { id: "autoroles", label: "Autoroles", icon: UserPlus, category: "Configuration" },
   { id: "reactionroles", label: "Reaction Roles", icon: Smile, category: "Configuration" },
   { id: "activitylog", label: "Activity Log", icon: FileClock, category: "Configuration" },
+  { id: "discordrelay", label: "Discord Relay", icon: ArrowLeftRight, category: "Configuration" },
   { id: "levels", label: "Levels", icon: TrendingUp, category: "Engagement" },
   { id: "tags", label: "Tags", icon: TagIcon, category: "Engagement" },
   { id: "announce", label: "Announce", icon: Megaphone, category: "Engagement" },
@@ -169,6 +171,7 @@ export default function GuildDetail() {
                               onChange={(r) => setData((d) => ({ ...d, reaction_roles: r }))} />
           )}
           {tab === "activitylog" && <ActivityLogTab guildId={id} channels={channels} />}
+          {tab === "discordrelay" && <DiscordRelayTab guildId={id} channels={channels} />}
           {tab === "tags" && (
             <TagsTab guildId={id} tags={tags} prefix={guild.command_prefix || "!"}
                      onChange={(t) => setData((d) => ({ ...d, tags: t }))} />

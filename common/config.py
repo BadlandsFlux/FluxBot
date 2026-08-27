@@ -44,6 +44,14 @@ class Config:
     # generous for any legitimate payload while still being a hard ceiling.
     gateway_max_message_bytes: int = int(os.getenv("FLUXER_GATEWAY_MAX_MESSAGE_BYTES", str(10 * 1024 * 1024)))
 
+    # Discord relay (bot/discord_relay.py): a real Discord Bot application
+    # token, entirely separate from the Fluxer bot above, used only to
+    # watch specific Discord channels and forward their messages into
+    # mapped Fluxer channels (see the discord_relay_mappings table).
+    # Optional: the relay simply doesn't start if this is blank, everything
+    # else about the bot runs the same either way.
+    discord_bot_token: str = os.getenv("DISCORD_BOT_TOKEN", "")
+
     # OAuth2 (dashboard login)
     oauth_client_id: str = os.getenv("FLUXER_OAUTH_CLIENT_ID", "")
     oauth_client_secret: str = os.getenv("FLUXER_OAUTH_CLIENT_SECRET", "")
@@ -70,7 +78,7 @@ class Config:
     dashboard_cookie_secure: bool = os.getenv("DASHBOARD_COOKIE_SECURE", "false").lower() == "true"
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    # Storage — real Postgres service, shared by the bot process and the
+    # Storage, real Postgres service, shared by the bot process and the
     # dashboard process. e.g. postgresql://user:pass@localhost:5432/fluxerbot
     database_url: str = os.getenv("DATABASE_URL", "postgresql://fluxerbot:fluxerbot@localhost:5432/fluxerbot")
     db_pool_min: int = int(os.getenv("DB_POOL_MIN", "1"))

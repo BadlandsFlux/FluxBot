@@ -32,6 +32,11 @@ export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
               Bot Profile
             </Link>
           )}
+          {isOwner && (
+            <Link to="/discord-relay-setup" className="topbar-link">
+              Discord Relay
+            </Link>
+          )}
         </nav>
       </div>
       <div className="topbar-right">

@@ -2,7 +2,7 @@
 
 Both the bot process and the dashboard (FastAPI) process import this
 module, call `await init_pool()` once at startup, and then share the
-same connection pool pattern against the same real Postgres service —
+same connection pool pattern against the same real Postgres service,
 no more file-locking games like SQLite+WAL, both processes can write
 concurrently.
 """
@@ -23,7 +23,7 @@ SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema.sql"
 async def init_pool() -> asyncpg.Pool:
     """Create the shared connection pool and ensure the schema exists.
 
-    Safe to call from both the bot and the dashboard on startup — the
+    Safe to call from both the bot and the dashboard on startup, the
     DDL in schema.sql is all `CREATE TABLE IF NOT EXISTS`.
     """
     global _pool
@@ -48,7 +48,7 @@ async def close_pool() -> None:
 
 def pool() -> asyncpg.Pool:
     if _pool is None:
-        raise RuntimeError("DB pool not initialised — call `await init_pool()` at startup first.")
+        raise RuntimeError("DB pool not initialised, call `await init_pool()` at startup first.")
     return _pool
 
 
@@ -346,7 +346,7 @@ async def get_level(guild_id: str, user_id: str) -> Optional[asyncpg.Record]:
 
 async def add_xp(guild_id: str, user_id: str, amount: int) -> asyncpg.Record:
     """Add XP and return the resulting row (including updated level, computed
-    by the caller before calling this — this just persists it)."""
+    by the caller before calling this, this just persists it)."""
     row = await pool().fetchrow(
         """
         INSERT INTO levels (guild_id, user_id, xp, level, last_xp_at)
@@ -877,6 +877,115 @@ async def set_bot_avatar(image_bytes: bytes, mimetype: str) -> None:
 
 async def get_bot_avatar() -> Optional[asyncpg.Record]:
     return await pool().fetchrow("SELECT * FROM bot_profile WHERE id='bot'")
+
+
+# ------------------------------------------------------------ discord relay --
+async def add_discord_relay_mapping(fluxer_guild_id: str, discord_channel_id: str, fluxer_channel_id: str,
+                                     direction: str = "discord_to_fluxer") -> None:
+    await pool().execute(
+        """
+        INSERT INTO discord_relay_mappings (fluxer_guild_id, discord_channel_id, fluxer_channel_id, direction)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (discord_channel_id, fluxer_channel_id) DO UPDATE SET direction = EXCLUDED.direction
+        """,
+        fluxer_guild_id, discord_channel_id, fluxer_channel_id, direction,
+    )
+
+
+async def remove_discord_relay_mapping(mapping_id: int, fluxer_guild_id: str) -> None:
+    # Scoped to the guild too, not just the row id, so a dashboard user
+    # can only ever remove a mapping that actually belongs to a guild
+    # they manage, not an arbitrary id.
+    await pool().execute(
+        "DELETE FROM discord_relay_mappings WHERE id=$1 AND fluxer_guild_id=$2", mapping_id, fluxer_guild_id,
+    )
+
+
+async def list_discord_relay_mappings_for_guild(fluxer_guild_id: str) -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT * FROM discord_relay_mappings WHERE fluxer_guild_id=$1 ORDER BY created_at", fluxer_guild_id,
+    )
+
+
+async def list_discord_relay_mappings_for_discord_channel(discord_channel_id: str) -> list[asyncpg.Record]:
+    """What the relay calls on every incoming DISCORD message: which
+    Fluxer channel(s), if any, is this Discord channel mapped to, and in
+    which direction. Only rows with direction 'discord_to_fluxer' or
+    'both' actually forward that way, filtered here rather than by the
+    caller so every call site can't forget the check."""
+    return await pool().fetch(
+        """
+        SELECT * FROM discord_relay_mappings
+        WHERE discord_channel_id=$1 AND direction IN ('discord_to_fluxer', 'both')
+        """,
+        discord_channel_id,
+    )
+
+
+async def list_discord_relay_mappings_for_fluxer_channel(fluxer_channel_id: str) -> list[asyncpg.Record]:
+    """The Fluxer-side mirror of the function above: what the relay
+    calls on every incoming FLUXER message, to find which Discord
+    channel(s) it should also go to. Same direction filtering, just the
+    other two values."""
+    return await pool().fetch(
+        """
+        SELECT * FROM discord_relay_mappings
+        WHERE fluxer_channel_id=$1 AND direction IN ('fluxer_to_discord', 'both')
+        """,
+        fluxer_channel_id,
+    )
+
+
+async def list_all_watched_discord_channels() -> list[str]:
+    """Every distinct Discord channel ID with at least one Discord-to-
+    Fluxer (or both-direction) mapping, called once at relay startup so
+    the client knows what it's supposed to be watching for."""
+    rows = await pool().fetch(
+        "SELECT DISTINCT discord_channel_id FROM discord_relay_mappings WHERE direction IN ('discord_to_fluxer', 'both')",
+    )
+    return [r["discord_channel_id"] for r in rows]
+
+
+# ---------------------------------------------------- discord relay: token --
+async def get_discord_relay_token() -> Optional[str]:
+    row = await pool().fetchrow("SELECT bot_token FROM discord_relay_config WHERE id='relay'")
+    return row["bot_token"] if row else None
+
+
+async def set_discord_relay_token(token: Optional[str]) -> None:
+    """token=None clears it (falls back to DISCORD_BOT_TOKEN, if any),
+    same as leaving the dashboard field blank."""
+    await pool().execute(
+        """
+        INSERT INTO discord_relay_config (id, bot_token, updated_at) VALUES ('relay', $1, now())
+        ON CONFLICT (id) DO UPDATE SET bot_token = EXCLUDED.bot_token, updated_at = now()
+        """,
+        token,
+    )
+
+
+# --------------------------------------------------- discord relay: status --
+async def update_discord_relay_status(*, connected: bool, discord_username: Optional[str] = None,
+                                       error: Optional[str] = None) -> None:
+    await pool().execute(
+        """
+        INSERT INTO discord_relay_status (id, connected, discord_username, last_connected_at, last_error, last_error_at, updated_at)
+        VALUES ('relay', $1::boolean, $2::text, CASE WHEN $1::boolean THEN now() ELSE NULL END,
+                $3::text, CASE WHEN $3::text IS NOT NULL THEN now() ELSE NULL END, now())
+        ON CONFLICT (id) DO UPDATE SET
+            connected = EXCLUDED.connected,
+            discord_username = COALESCE(EXCLUDED.discord_username, discord_relay_status.discord_username),
+            last_connected_at = CASE WHEN EXCLUDED.connected THEN now() ELSE discord_relay_status.last_connected_at END,
+            last_error = COALESCE(EXCLUDED.last_error, discord_relay_status.last_error),
+            last_error_at = CASE WHEN EXCLUDED.last_error IS NOT NULL THEN now() ELSE discord_relay_status.last_error_at END,
+            updated_at = now()
+        """,
+        connected, discord_username, error,
+    )
+
+
+async def get_discord_relay_status() -> Optional[asyncpg.Record]:
+    return await pool().fetchrow("SELECT * FROM discord_relay_status WHERE id='relay'")
 
 
 if __name__ == "__main__":

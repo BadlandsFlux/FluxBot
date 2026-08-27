@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from bot.commands import Bot
+from bot import discord_relay
 from bot.modules import achievements, activity, activity_log, afk, fun, info, leveling, logging_mod, moderation, mydata, reminders, roles, staffnotes, tags, trivia, utility
 from bot.scheduler import run_scheduler
 from bot import voice_tracker
@@ -17,7 +18,7 @@ log = logging.getLogger("fluxbot.main")
 
 async def main() -> None:
     if not config.bot_token:
-        raise SystemExit("FLUXER_BOT_TOKEN is not set — copy .env.example to .env and fill it in.")
+        raise SystemExit("FLUXER_BOT_TOKEN is not set, copy .env.example to .env and fill it in.")
 
     await db.init_pool()
     log.info("Connected to Postgres at %s", config.database_url.split("@")[-1])
@@ -69,11 +70,14 @@ async def main() -> None:
             bot.invalidate_member(str(guild_id), str(user_id))
 
     log.info("Starting gateway connection to %s ...", config.api_base)
+    relay_client = discord_relay.build_relay_client(bot)
     scheduler_task = asyncio.create_task(run_scheduler(bot))
+    relay_task = asyncio.create_task(discord_relay.run_relay(bot, relay_client))
     try:
         await bot.start()
     finally:
         scheduler_task.cancel()
+        relay_task.cancel()
         await bot.close()
         await db.close_pool()
 

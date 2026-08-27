@@ -1150,3 +1150,46 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
 .bot-profile-preview-empty { color: var(--muted); font-size: 28px; font-weight: 700; }
 .bot-profile-controls { display: flex; flex-direction: column; gap: 10px; flex: 1; }
 .bot-profile-controls input[type="file"] { font-size: 12px; color: var(--muted); }
+
+/* -------------------------------------------------------------- banners */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  margin: 14px 0;
+}
+.banner-warning { background: rgba(255, 207, 102, 0.12); color: #ffcf66; }
+.banner-warning svg { flex-shrink: 0; margin-top: 1px; }
+
+/* --------------------------------------------------------- relay status */
+.relay-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 12px 0;
+}
+.relay-status-dot-on { color: var(--success); }
+.relay-status-dot-off { color: var(--danger); }
+
+/* -------------------------------------------------------------- step list */
+.step-list { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.step-item { display: flex; gap: 12px; align-items: flex-start; }
+.step-number {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.step-title { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
