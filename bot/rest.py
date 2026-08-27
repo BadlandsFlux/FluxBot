@@ -207,14 +207,16 @@ class FluxerREST:
             payload["embeds"] = embeds
         return await self.request("POST", f"/channels/{channel_id}/messages", json=payload)
 
-    async def send_message_with_file(self, channel_id: str, filename: str, file_bytes: bytes,
-                                      content: Optional[str] = None, embeds: Optional[list] = None,
-                                      allowed_mentions: Optional[dict] = None, retries: int = 3) -> dict:
-        """Like send_message, but with an actual file attachment (e.g. a
-        generated rank-card image), not just a URL in the text. Uses
-        multipart/form-data with a payload_json field alongside the file
-        (Discord convention, best-effort assumption like most Fluxer API
-        shapes in this project, not confirmed against Fluxer's own docs)."""
+    async def send_message_with_files(self, channel_id: str, files: list[tuple[str, bytes]],
+                                       content: Optional[str] = None, embeds: Optional[list] = None,
+                                       allowed_mentions: Optional[dict] = None, retries: int = 3) -> dict:
+        """Like send_message, but with actual file attachments (e.g. a
+        generated rank-card image, or several files relayed from a Discord
+        message), not just a URL in the text. Uses multipart/form-data
+        with a payload_json field alongside the files (Discord convention,
+        best-effort assumption like most Fluxer API shapes in this
+        project, not confirmed against Fluxer's own docs). `files` is a
+        list of (filename, bytes) pairs, in the order they should appear."""
         payload: dict = {"allowed_mentions": allowed_mentions or self.SAFE_ALLOWED_MENTIONS}
         if content:
             payload["content"] = content
@@ -228,7 +230,8 @@ class FluxerREST:
         for attempt in range(retries):
             form = aiohttp.FormData()
             form.add_field("payload_json", json.dumps(payload), content_type="application/json")
-            form.add_field("files[0]", file_bytes, filename=filename, content_type="application/octet-stream")
+            for i, (filename, file_bytes) in enumerate(files):
+                form.add_field(f"files[{i}]", file_bytes, filename=filename, content_type="application/octet-stream")
             async with self._session.post(url, data=form) as resp:
                 if resp.status == 429:
                     body = await resp.json(content_type=None)
@@ -240,6 +243,15 @@ class FluxerREST:
                     raise FluxerAPIError(resp.status, "POST", f"/channels/{channel_id}/messages", body)
                 return await resp.json(content_type=None)
         raise FluxerAPIError(429, "POST", f"/channels/{channel_id}/messages", "rate limited too many times")
+
+    async def send_message_with_file(self, channel_id: str, filename: str, file_bytes: bytes,
+                                      content: Optional[str] = None, embeds: Optional[list] = None,
+                                      allowed_mentions: Optional[dict] = None, retries: int = 3) -> dict:
+        """Single-attachment convenience wrapper around send_message_with_files."""
+        return await self.send_message_with_files(
+            channel_id, [(filename, file_bytes)], content=content, embeds=embeds,
+            allowed_mentions=allowed_mentions, retries=retries,
+        )
 
     async def edit_message(self, channel_id: str, message_id: str, content: Optional[str] = None,
                             embeds: Optional[list] = None, allowed_mentions: Optional[dict] = None) -> dict:

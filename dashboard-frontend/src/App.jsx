@@ -10,6 +10,7 @@ import GuildDetail from "./pages/GuildDetail";
 import Commands from "./pages/Commands";
 import Status from "./pages/Status";
 import BotProfile from "./pages/BotProfile";
+import DiscordRelaySetup from "./pages/DiscordRelaySetup";
 import { api } from "./api";
 
 export default function App() {
@@ -47,6 +48,10 @@ export default function App() {
               <Route
                 path="/bot-profile"
                 element={me.user && me.is_owner ? <BotProfile /> : <Login botName={botName} />}
+              />
+              <Route
+                path="/discord-relay-setup"
+                element={me.user && me.is_owner ? <DiscordRelaySetup /> : <Login botName={botName} />}
               />
             </Routes>
           </main>

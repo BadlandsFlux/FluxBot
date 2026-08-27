@@ -1,4 +1,4 @@
--- Fluxer moderation bot — Postgres schema
+-- Fluxer moderation bot, Postgres schema
 -- Apply with: psql "$DATABASE_URL" -f schema.sql
 -- (or just run `python -m common.db` once, which executes this same DDL)
 
@@ -308,3 +308,105 @@ CREATE TABLE IF NOT EXISTS bot_profile (
     avatar_mimetype  TEXT NOT NULL,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- One Discord channel can feed multiple Fluxer channels (e.g. two
+-- different communities both wanting the same announcements), so this
+-- isn't unique on discord_channel_id alone, it's unique on the pairing.
+-- One Discord bot token/connection (DISCORD_BOT_TOKEN) serves every
+-- mapping across every Fluxer guild, matching how the Fluxer bot token
+-- itself is a single bot-wide credential.
+CREATE TABLE IF NOT EXISTS discord_relay_mappings (
+    id                   BIGSERIAL PRIMARY KEY,
+    discord_channel_id   TEXT NOT NULL,
+    fluxer_guild_id      TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    fluxer_channel_id    TEXT NOT NULL,
+    -- 'discord_to_fluxer' (the original ask: Discord's own announcement-
+    -- following aggregates into one channel, relay it onward), or
+    -- 'both' for two-way. 'fluxer_to_discord' alone is supported too
+    -- (symmetry, and there's no real reason to disallow it) even though
+    -- it's not the motivating use case.
+    direction            TEXT NOT NULL DEFAULT 'discord_to_fluxer'
+                          CHECK (direction IN ('discord_to_fluxer', 'fluxer_to_discord', 'both')),
+    -- Pause a mapping without losing its configuration (and without the
+    -- UNIQUE constraint below fighting you if you want to briefly stop,
+    -- then resume, the exact same pairing).
+    enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Prefixes relayed content with "[Discord] username:" (or the Fluxer
+    -- equivalent), so it's clear who actually said something and from
+    -- where. Defaults on: the safer, more transparent default, most
+    -- relevant for two-way (a live conversation bridge) but not withheld
+    -- from one-way mappings either, someone forwarding an announcement
+    -- channel may still want to know who originally posted it.
+    show_attribution     BOOLEAN NOT NULL DEFAULT TRUE,
+    -- The Fluxer user id of whoever configured this mapping. Not an
+    -- access-control mechanism, this is a SHARED relay bot: nothing in
+    -- this schema verifies that whoever adds a fluxer_to_discord (or
+    -- both) mapping actually has any real claim to discord_channel_id,
+    -- only that they manage the Fluxer guild the mapping is filed
+    -- under. If this bot is ever hosted for multiple UNRELATED Fluxer
+    -- communities, any of their managers can direct the shared bot to
+    -- post into any Discord channel it happens to have access to
+    -- (Discord channel ids aren't secret in any strong sense), a real
+    -- trust boundary worth understanding before enabling that for
+    -- people you don't already trust with each other. This column is
+    -- purely for after-the-fact accountability if that's ever misused,
+    -- it doesn't prevent it.
+    created_by           TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (discord_channel_id, fluxer_channel_id)
+);
+CREATE INDEX IF NOT EXISTS idx_discord_relay_discord_channel ON discord_relay_mappings(discord_channel_id);
+CREATE INDEX IF NOT EXISTS idx_discord_relay_fluxer_guild ON discord_relay_mappings(fluxer_guild_id);
+CREATE INDEX IF NOT EXISTS idx_discord_relay_fluxer_channel ON discord_relay_mappings(fluxer_channel_id);
+
+-- Singleton row, same pattern as bot_profile/bot_status: lets the bot
+-- owner set the Discord relay's bot token from the dashboard instead of
+-- only via DISCORD_BOT_TOKEN in .env. Not encrypted at rest, same risk
+-- posture this project already takes with everything else in Postgres
+-- (mod actions, warnings, bot_profile's image bytes, none of it is
+-- encrypted either, Postgres access is already a trust boundary here),
+-- but never returned by any GET endpoint, only settable, so it can't
+-- leak back out through the dashboard's own API. Falls back to the env
+-- var if this row doesn't exist or its token is null.
+CREATE TABLE IF NOT EXISTS discord_relay_config (
+    id          TEXT PRIMARY KEY DEFAULT 'relay',
+    bot_token   TEXT,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Singleton row, same pattern as bot_status: the relay client updates
+-- this on connect/disconnect/error so the dashboard can show whether
+-- it's actually working right now, not just whether it's configured.
+CREATE TABLE IF NOT EXISTS discord_relay_status (
+    id                   TEXT PRIMARY KEY DEFAULT 'relay',
+    connected            BOOLEAN NOT NULL DEFAULT FALSE,
+    discord_username     TEXT,
+    -- The bot's own Discord user id, same value as its OAuth2 client id
+    -- for practically every real Discord bot, used to build the invite
+    -- link shown to other guild managers (see discord_relay_invite_url
+    -- in dashboard/app.py). Populated once available in on_ready.
+    discord_bot_id       TEXT,
+    last_connected_at    TIMESTAMPTZ,
+    last_error           TEXT,
+    last_error_at        TIMESTAMPTZ,
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Links a relayed message back to its source, so an edit or delete on
+-- one platform can find and mirror the change on the other. One source
+-- message can have several rows here (fanning out to multiple targets,
+-- same as mappings themselves can). Pruned periodically by the
+-- scheduler (see bot/scheduler.py) rather than kept forever, a message
+-- from months ago being edited is vanishingly unlikely to matter and
+-- there's no value in an unbounded, ever-growing table for it.
+CREATE TABLE IF NOT EXISTS discord_relay_message_links (
+    id                   BIGSERIAL PRIMARY KEY,
+    mapping_id           BIGINT REFERENCES discord_relay_mappings(id) ON DELETE SET NULL,
+    source_platform      TEXT NOT NULL CHECK (source_platform IN ('discord', 'fluxer')),
+    source_message_id    TEXT NOT NULL,
+    target_platform      TEXT NOT NULL CHECK (target_platform IN ('discord', 'fluxer')),
+    target_message_id    TEXT NOT NULL,
+    target_channel_id    TEXT NOT NULL,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_relay_links_source ON discord_relay_message_links(source_platform, source_message_id);

@@ -94,6 +94,20 @@ export const api = {
     request(`/api/guilds/${id}/activity-log/ignored-users`, { method: "POST", body: { user_id: userId } }),
   removeIgnoredLogUser: (id, userId) =>
     request(`/api/guilds/${id}/activity-log/ignored-users/${userId}`, { method: "DELETE" }),
+  getDiscordRelay: (id) => request(`/api/guilds/${id}/discord-relay`),
+  addDiscordRelay: (id, discordChannelId, fluxerChannelId, direction, showAttribution) =>
+    request(`/api/guilds/${id}/discord-relay`, {
+      method: "POST",
+      body: { discord_channel_id: discordChannelId, fluxer_channel_id: fluxerChannelId, direction, show_attribution: showAttribution },
+    }),
+  removeDiscordRelay: (id, mappingId) =>
+    request(`/api/guilds/${id}/discord-relay/${mappingId}`, { method: "DELETE" }),
+  toggleDiscordRelay: (id, mappingId, enabled) =>
+    request(`/api/guilds/${id}/discord-relay/${mappingId}/toggle`, { method: "POST", body: { enabled } }),
+  testDiscordRelay: (id, mappingId) =>
+    request(`/api/guilds/${id}/discord-relay/${mappingId}/test`, { method: "POST" }),
+  getDiscordRelayConfig: () => request("/api/discord-relay/config"),
+  setDiscordRelayToken: (token) => request("/api/discord-relay/config", { method: "POST", body: { token } }),
   announce: (id, payload) => request(`/api/guilds/${id}/announce`, { method: "POST", body: payload }),
   dangerClearAllWarnings: (id) => request(`/api/guilds/${id}/danger/clear-all-warnings`, { method: "POST" }),
   dangerResetAllXp: (id) => request(`/api/guilds/${id}/danger/reset-all-xp`, { method: "POST" }),
