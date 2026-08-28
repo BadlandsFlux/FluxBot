@@ -1,6 +1,20 @@
 -- Fluxer moderation bot, Postgres schema
 -- Apply with: psql "$DATABASE_URL" -f schema.sql
 -- (or just run `python -m common.db` once, which executes this same DDL)
+--
+-- IMPORTANT when adding a column to a table that already exists in this
+-- file (as opposed to a brand new table): editing the CREATE TABLE block
+-- alone is NOT enough. CREATE TABLE IF NOT EXISTS is a no-op against a
+-- table that already exists in the OLD, pre-your-change shape, so anyone
+-- who set this up before your change and just re-runs this file (which
+-- is the entire point of it being safe to always run on update) will
+-- never actually get the new column, and the app will crash the moment
+-- it tries to read or write it. Pair every such change with a matching
+-- `ALTER TABLE x ADD COLUMN IF NOT EXISTS ...` statement placed AFTER
+-- that table's own CREATE TABLE (search for "Migration" further down for
+-- the established pattern and placement). This has already caused a
+-- real production outage once, from six columns added this way without
+-- a matching migration, please don't let it happen again.
 
 CREATE TABLE IF NOT EXISTS guilds (
     guild_id              TEXT PRIMARY KEY,
@@ -434,3 +448,38 @@ CREATE TABLE IF NOT EXISTS discord_relay_webhooks (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (platform, channel_id)
 );
+
+-- Migrations for columns added to already-existing tables after this
+-- schema's earlier migration block (further up this file) was last
+-- updated. That block runs early, before several of the tables below
+-- even exist yet in a fresh run, so these have to live down here
+-- instead, after every CREATE TABLE they depend on has already run.
+-- Each one is what let a table with the OLD, pre-this-column shape
+-- (any database that was already running before the corresponding
+-- feature shipped) come back in sync, CREATE TABLE IF NOT EXISTS on
+-- its own only helps a database that doesn't have the table AT ALL
+-- yet, it's a no-op against a table that already exists in an older
+-- shape, which is exactly why these are needed as their own explicit
+-- step.
+
+-- Migration for databases created before privileged-role-change
+-- logging existed (activity_log_settings originally shipped without
+-- this toggle).
+ALTER TABLE activity_log_settings ADD COLUMN IF NOT EXISTS log_privileged_role_changes BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Migration for databases created before the Discord relay's
+-- enable/disable toggle, attribution toggle, and creator audit trail
+-- existed (discord_relay_mappings originally shipped without these).
+ALTER TABLE discord_relay_mappings ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE discord_relay_mappings ADD COLUMN IF NOT EXISTS show_attribution BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE discord_relay_mappings ADD COLUMN IF NOT EXISTS created_by TEXT;
+
+-- Migration for databases created before the relay's Discord bot id
+-- (used to build the invite link) was tracked on its status row.
+ALTER TABLE discord_relay_status ADD COLUMN IF NOT EXISTS discord_bot_id TEXT;
+
+-- Migration for databases created before relayed messages could be
+-- sent via a webhook (for real avatar/username display), needed so
+-- edit/delete sync knows which endpoint a given relayed message has
+-- to go through.
+ALTER TABLE discord_relay_message_links ADD COLUMN IF NOT EXISTS sent_via_webhook BOOLEAN NOT NULL DEFAULT FALSE;
