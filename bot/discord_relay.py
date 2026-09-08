@@ -64,8 +64,10 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import re
+from datetime import timedelta
 from typing import Optional
 from urllib.parse import quote
 
@@ -88,6 +90,14 @@ log = logging.getLogger("fluxbot.discord_relay")
 MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 WEBHOOK_NAME = "FluxBot Relay"
+
+# A ceiling on how many messages a single reconnect backfill pass pulls
+# from one channel's history, not a guess at Discord's own limits.
+# Keeps a very busy channel over a long outage from turning a reconnect
+# into an extended, rate-limit-heavy history crawl; anything beyond
+# this cap is simply not recovered, the same "give up eventually"
+# philosophy as the Fluxer-to-Discord queue's 24h horizon.
+MAX_BACKFILL_MESSAGES = 200
 
 # Discord permission bits requested by the invite link the dashboard
 # builds (see dashboard/app.py's discord-relay/invite-url endpoint):
@@ -481,16 +491,101 @@ class RelayClient(discord.Client):
             connected=True, discord_username=str(self.user),
             discord_bot_id=str(self.user.id) if self.user else None,
         )
+        asyncio.create_task(self._recover_after_reconnect())
 
     async def on_disconnect(self) -> None:
         await db.update_discord_relay_status(connected=False)
+        await db.mark_relay_disconnected()
+
+    async def _recover_after_reconnect(self) -> None:
+        """Runs as a background task after every on_ready, not awaited
+        directly there, a potentially-long backfill across several
+        channels plus a queue drain shouldn't hold up anything else
+        discord.py wants to do right after connecting. Backfill first,
+        then drain the outbound queue, in that order, though the two
+        are independent enough that the order mostly doesn't matter.
+        Clears the disconnected-at marker only after this whole pass
+        actually runs (not if it raises outright before even starting),
+        so a reconnect that fails to properly recover doesn't lose
+        track of when the outage began, a LATER reconnect within the
+        24h cap gets another chance at the same window rather than
+        just the time between that reconnect and now."""
+        try:
+            await self._backfill_discord_to_fluxer()
+            await _drain_fluxer_to_discord_queue(self)
+            await db.clear_relay_disconnected_at()
+        except Exception:
+            log.warning("Post-reconnect recovery (backfill/queue drain) failed", exc_info=True)
+
+    async def _backfill_discord_to_fluxer(self) -> None:
+        """Catches up on Discord messages sent while this side was
+        disconnected. Unlike the Fluxer-to-Discord direction, there's no
+        queue to drain here, the bot simply never receives a Discord
+        gateway event at all while disconnected, nothing to catch or
+        persist in the moment. Instead, once reconnected, this fetches
+        real message history via REST for every channel that's a source
+        for at least one enabled mapping, and relays anything not
+        already linked. Bounded to exactly how long the outage actually
+        was (discord_relay_status.last_disconnected_at), capped at 24h
+        for a longer outage, the same give-up horizon as the
+        Fluxer-to-Discord queue, and capped per-channel at
+        MAX_BACKFILL_MESSAGES so a very busy channel over a long outage
+        can't turn a reconnect into an extended, rate-limit-heavy
+        history crawl."""
+        status = await db.get_discord_relay_status()
+        since = status["last_disconnected_at"] if status else None
+        if since is None:
+            return  # first ever connect, or a previous pass already cleared this
+        cutoff = max(since, discord.utils.utcnow() - timedelta(hours=24))
+
+        channel_ids = await db.list_discord_relay_backfill_source_channels()
+        for channel_id in channel_ids:
+            try:
+                channel = await self._get_channel(channel_id)
+                if channel is None:
+                    continue
+                mappings = await db.list_discord_relay_mappings_for_discord_channel(channel_id)
+                if not mappings:
+                    continue
+                relayed_count = 0
+                async for message in channel.history(after=cutoff, limit=MAX_BACKFILL_MESSAGES, oldest_first=True):
+                    if self._is_self(message.author.id):
+                        continue
+                    if message.webhook_id and await self._is_own_webhook("discord", channel_id, message.webhook_id):
+                        continue
+                    # Already relayed is the normal case for anything the
+                    # live path caught during a brief reconnect blip
+                    # rather than a genuine miss, skip re-sending it.
+                    if await db.get_relay_message_links("discord", str(message.id)):
+                        continue
+                    await self._relay_discord_message(message, mappings=mappings)
+                    relayed_count += 1
+                if relayed_count:
+                    log.info("Backfilled %d Discord message(s) from channel %s after reconnect", relayed_count, channel_id)
+            except Exception:
+                log.warning("Failed to backfill Discord channel %s after reconnect", channel_id, exc_info=True)
 
     async def on_message(self, message: discord.Message) -> None:
         if self._is_self(message.author.id):
             return  # this relay's own post (from the fluxer_to_discord direction), never re-relay it
         if message.webhook_id and await self._is_own_webhook("discord", str(message.channel.id), message.webhook_id):
             return  # this relay's own webhook echo, same loop risk as above, just a different identity
-        mappings = await db.list_discord_relay_mappings_for_discord_channel(str(message.channel.id))
+        await self._relay_discord_message(message)
+
+    async def _relay_discord_message(self, message: discord.Message, mappings: Optional[list] = None) -> None:
+        """The actual "take this Discord message and relay it to Fluxer"
+        logic, split out from on_message so the reconnect backfill (see
+        _backfill_discord_to_fluxer) can run the exact same path against
+        a real historical discord.Message pulled from REST, rather than
+        duplicating everything here a second time for "replay" purposes.
+        Loop-prevention checks (self/own-webhook) are the CALLER's
+        responsibility, not repeated here, on_message already does them
+        for the live path and backfill has its own reasons not to need
+        them (see that method). mappings can be passed in to skip a
+        redundant lookup when the caller already has them (backfill
+        fetches them once per channel before iterating its history)."""
+        if mappings is None:
+            mappings = await db.list_discord_relay_mappings_for_discord_channel(str(message.channel.id))
         if not mappings:
             return
 
@@ -709,6 +804,60 @@ class RelayClient(discord.Client):
         return str(sent.id), False, None, None
 
 
+async def _drain_fluxer_to_discord_queue(relay_client: RelayClient) -> None:
+    """Delivers everything queued while the relay's Discord side was
+    down (see RelayClient._recover_after_reconnect, this runs right
+    after the backfill in the same post-reconnect pass), oldest first
+    so a backed-up conversation arrives in the order it actually
+    happened. Anything already past the 24h horizon is simply dropped
+    without an attempt, that's the give-up point, not a threshold to
+    approach cautiously. A message that fails again here (a genuinely
+    broken channel or webhook, not the relay being down, we just
+    reconnected) is left in place rather than dropped immediately,
+    picked up again on the next reconnect or eventually swept by the
+    24h prune, either in this same pass next time or the scheduler's
+    periodic backstop."""
+    expired = await db.list_fluxer_to_discord_queue(older_than_hours=24)
+    for entry in expired:
+        log.info("Giving up on queued Fluxer message %s, queued over 24h ago", entry["source_message_id"])
+        await db.delete_fluxer_to_discord_queue_entry(entry["id"])
+
+    pending = await db.list_fluxer_to_discord_queue()
+    if not pending:
+        return
+    log.info("Draining %d queued Fluxer-to-Discord message(s) after reconnect", len(pending))
+
+    for entry in pending:
+        try:
+            embeds = json.loads(entry["embeds_json"]) if entry["embeds_json"] else None
+            attachment_refs = json.loads(entry["attachments_json"]) if entry["attachments_json"] else []
+            files: list[tuple[str, bytes]] = []
+            for ref in attachment_refs:
+                file_bytes = await _download(ref["url"], MAX_ATTACHMENT_BYTES)
+                if file_bytes is not None:
+                    files.append((ref["filename"], file_bytes))
+                else:
+                    log.warning("Couldn't re-download queued attachment %s for Fluxer message %s",
+                                ref["filename"], entry["source_message_id"])
+
+            sent_id, sent_via_webhook, used_webhook_id, used_webhook_token = await relay_client.send_to_discord(
+                entry["target_channel_id"], content=entry["content"], embeds=embeds, files=files,
+                username=entry["username"], avatar_url=entry["avatar_url"], fallback_content=entry["fallback_content"],
+            )
+            if sent_id:
+                await db.add_relay_message_link(entry["mapping_id"], "fluxer", entry["source_message_id"],
+                                                  "discord", sent_id, entry["target_channel_id"],
+                                                  sent_via_webhook=sent_via_webhook,
+                                                  webhook_id=used_webhook_id, webhook_token=used_webhook_token)
+                await db.delete_fluxer_to_discord_queue_entry(entry["id"])
+            # sent_id is None only when the target channel itself can't be
+            # reached at all (see send_to_discord), leave the entry for a
+            # later attempt rather than silently losing it here.
+        except Exception:
+            log.warning("Failed to deliver queued Fluxer message %s, will retry on next reconnect",
+                        entry["source_message_id"], exc_info=True)
+
+
 def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
     """The Fluxer -> Discord half of two-way mappings. Registered on the
     MAIN Fluxer bot (it already has a live gateway connection and sees
@@ -745,29 +894,53 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
         raw_content = _translate_mentions(raw_content, users=users, channels=channels, roles=roles)
         embeds = _translate_embeds_mentions(embeds, users=users, channels=channels, roles=roles)
 
-        files: list[tuple[str, bytes]] = []
-        for attachment in data.get("attachments", []) or []:
-            url = attachment.get("url")
-            size = attachment.get("size", 0)
-            filename = attachment.get("filename", "file")
-            if not url:
-                continue
-            if size and size > MAX_ATTACHMENT_BYTES:
-                log.warning("Skipping oversized Fluxer attachment %s (%d bytes)", filename, size)
-                continue
-            file_bytes = await _download(url, MAX_ATTACHMENT_BYTES)
-            if file_bytes is not None:
-                files.append((filename, file_bytes))
-            else:
-                log.warning("Couldn't download Fluxer attachment %s for relay to Discord", filename)
+        # Just the references at this point (filename + url), not the
+        # downloaded bytes: if the relay turns out to be down below,
+        # queueing only needs enough to re-fetch the file later, holding
+        # the actual bytes in the queue table for a possibly-long-lived
+        # backlog is unnecessary weight this doesn't need to carry.
+        attachment_refs = [
+            {"filename": a.get("filename", "file"), "url": a.get("url"), "size": a.get("size", 0)}
+            for a in (data.get("attachments", []) or []) if a.get("url")
+        ]
 
-        if not raw_content and not embeds and not files:
+        if not raw_content and not embeds and not attachment_refs:
             return
 
         raw_content = await _prepend_fluxer_reply_prefix(bot, data, raw_content)
 
         username = author.get("username", "unknown")
         avatar_url = await _fluxer_avatar_url(str(author.get("id")), author.get("avatar")) if mappings and any(m["show_attribution"] for m in mappings) else None
+
+        if not relay_client.is_ready():
+            # The Discord side is down: there's no point even trying,
+            # every send below would just fail the same way. Queue each
+            # mapping's copy instead (already fully prepared, mentions
+            # translated, reply prefix applied, so draining this later
+            # is just "attempt delivery with what's here", nothing left
+            # to rebuild), drained automatically the moment the relay
+            # reconnects (see RelayClient._recover_after_reconnect).
+            embeds_json = json.dumps(embeds) if embeds else None
+            attachments_json = json.dumps(attachment_refs) if attachment_refs else None
+            for mapping in mappings:
+                fallback_content = _with_attribution(raw_content, f"**[Fluxer] {username}:**") if mapping["show_attribution"] else None
+                await db.enqueue_fluxer_to_discord_message(
+                    mapping["id"], str(message_id), mapping["discord_channel_id"], raw_content, embeds_json,
+                    attachments_json, username if mapping["show_attribution"] else None,
+                    avatar_url if mapping["show_attribution"] else None, fallback_content,
+                )
+            return
+
+        files: list[tuple[str, bytes]] = []
+        for ref in attachment_refs:
+            if ref["size"] and ref["size"] > MAX_ATTACHMENT_BYTES:
+                log.warning("Skipping oversized Fluxer attachment %s (%d bytes)", ref["filename"], ref["size"])
+                continue
+            file_bytes = await _download(ref["url"], MAX_ATTACHMENT_BYTES)
+            if file_bytes is not None:
+                files.append((ref["filename"], file_bytes))
+            else:
+                log.warning("Couldn't download Fluxer attachment %s for relay to Discord", ref["filename"])
 
         for mapping in mappings:
             target = mapping["discord_channel_id"]

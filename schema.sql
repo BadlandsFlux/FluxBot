@@ -401,10 +401,52 @@ CREATE TABLE IF NOT EXISTS discord_relay_status (
     -- in dashboard/app.py). Populated once available in on_ready.
     discord_bot_id       TEXT,
     last_connected_at    TIMESTAMPTZ,
+    -- When the Discord side last went down. Set on_disconnect, read on
+    -- the next on_ready to bound how far back the Discord-to-Fluxer
+    -- backfill needs to look (exactly how long it was actually down,
+    -- not some fixed window every single reconnect regardless of how
+    -- brief), capped at 24h either way, matching how long a queued
+    -- Fluxer-to-Discord message is kept before being given up on.
+    -- Cleared once a reconnect's backfill pass has run, so a second
+    -- quick reconnect right after doesn't redundantly re-scan the same
+    -- window.
+    last_disconnected_at TIMESTAMPTZ,
     last_error           TEXT,
     last_error_at        TIMESTAMPTZ,
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- One row per Fluxer message that couldn't be delivered to Discord
+-- because the relay's Discord connection was down at the time, not
+-- some other, unrelated failure (a bad channel id, missing permission,
+-- etc, those aren't retried, retrying them would just fail the same
+-- way again). Already fully prepared at the time it's queued, mention
+-- translation, the reply prefix, and so on have already been applied,
+-- so draining this later is just "attempt delivery with what's already
+-- here", not "rebuild the message from scratch". Attachments are
+-- stored as their original Fluxer CDN url/filename rather than the
+-- raw bytes, re-downloaded at delivery time, to avoid holding
+-- arbitrarily large blobs in this table for a queue that's meant to be
+-- short-lived. Drained in full on every relay reconnect (oldest first,
+-- to preserve conversation order), and anything left after 24 hours
+-- (network partition lasting that long, or the target channel/webhook
+-- genuinely broken) is dropped rather than retried forever, see
+-- bot/scheduler.py for the periodic cleanup backstop in case a drain
+-- attempt never gets the chance to run at all.
+CREATE TABLE IF NOT EXISTS discord_relay_outbound_queue (
+    id                BIGSERIAL PRIMARY KEY,
+    mapping_id        BIGINT REFERENCES discord_relay_mappings(id) ON DELETE CASCADE,
+    source_message_id TEXT NOT NULL,
+    target_channel_id TEXT NOT NULL,
+    content           TEXT,
+    embeds_json       TEXT,
+    attachments_json  TEXT,
+    username          TEXT,
+    avatar_url        TEXT,
+    fallback_content  TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_relay_outbound_queue_created_at ON discord_relay_outbound_queue(created_at);
 
 -- Links a relayed message back to its source, so an edit or delete on
 -- one platform can find and mirror the change on the other. One source
@@ -501,3 +543,8 @@ ALTER TABLE discord_relay_message_links ADD COLUMN IF NOT EXISTS sent_via_webhoo
 -- channel" breaks the moment that webhook is ever recreated).
 ALTER TABLE discord_relay_message_links ADD COLUMN IF NOT EXISTS webhook_id TEXT;
 ALTER TABLE discord_relay_message_links ADD COLUMN IF NOT EXISTS webhook_token TEXT;
+
+-- Migration for databases created before the relay tracked when it
+-- last went down, needed to bound the Discord-to-Fluxer backfill
+-- window on reconnect.
+ALTER TABLE discord_relay_status ADD COLUMN IF NOT EXISTS last_disconnected_at TIMESTAMPTZ;

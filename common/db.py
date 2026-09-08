@@ -964,6 +964,19 @@ async def list_discord_relay_mappings_for_discord_channel(discord_channel_id: st
     )
 
 
+async def list_discord_relay_backfill_source_channels() -> list[str]:
+    """The distinct set of Discord channel ids that are a source for at
+    least one enabled discord_to_fluxer/both mapping, used by the
+    reconnect backfill to know which channels' history is even worth
+    fetching, one REST call per channel rather than one per mapping (a
+    channel feeding several Fluxer targets only needs its history
+    fetched once)."""
+    rows = await pool().fetch(
+        "SELECT DISTINCT discord_channel_id FROM discord_relay_mappings WHERE direction IN ('discord_to_fluxer', 'both') AND enabled",
+    )
+    return [r["discord_channel_id"] for r in rows]
+
+
 async def list_discord_relay_mappings_for_fluxer_channel(fluxer_channel_id: str) -> list[asyncpg.Record]:
     """The Fluxer-side mirror of the function above: what the relay
     calls on every incoming FLUXER message, to find which Discord
@@ -1029,6 +1042,32 @@ async def update_discord_relay_status(*, connected: bool, discord_username: Opti
 
 async def get_discord_relay_status() -> Optional[asyncpg.Record]:
     return await pool().fetchrow("SELECT * FROM discord_relay_status WHERE id='relay'")
+
+
+async def mark_relay_disconnected() -> None:
+    """Only sets last_disconnected_at if it isn't already set, so a
+    string of rapid disconnect/reconnect blips within the same outage
+    (discord.py's own internal reconnect attempts can look like this)
+    doesn't keep pushing the recorded outage start later and later,
+    it should reflect when the outage actually began."""
+    await pool().execute(
+        """
+        INSERT INTO discord_relay_status (id, connected, last_disconnected_at, updated_at)
+        VALUES ('relay', FALSE, now(), now())
+        ON CONFLICT (id) DO UPDATE SET
+            connected = FALSE,
+            last_disconnected_at = COALESCE(discord_relay_status.last_disconnected_at, now()),
+            updated_at = now()
+        """,
+    )
+
+
+async def clear_relay_disconnected_at() -> None:
+    """Called once a reconnect's backfill pass has run (successfully or
+    not), so the NEXT disconnect gets its own fresh timestamp rather
+    than this one lingering and making a later, unrelated outage look
+    like it started earlier than it did."""
+    await pool().execute("UPDATE discord_relay_status SET last_disconnected_at = NULL WHERE id='relay'")
 
 
 # ----------------------------------------- discord relay: message linking --
@@ -1097,6 +1136,55 @@ async def prune_old_relay_message_links(older_than_days: int = 30) -> int:
         str(older_than_days),
     )
     # asyncpg's execute() returns a string like "DELETE 42"
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
+# ------------------------------------------ discord relay: outbound queue --
+async def enqueue_fluxer_to_discord_message(mapping_id: int, source_message_id: str, target_channel_id: str,
+                                             content: Optional[str], embeds_json: Optional[str],
+                                             attachments_json: Optional[str], username: Optional[str],
+                                             avatar_url: Optional[str], fallback_content: Optional[str]) -> None:
+    await pool().execute(
+        """
+        INSERT INTO discord_relay_outbound_queue
+            (mapping_id, source_message_id, target_channel_id, content, embeds_json, attachments_json,
+             username, avatar_url, fallback_content)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        """,
+        mapping_id, source_message_id, target_channel_id, content, embeds_json, attachments_json,
+        username, avatar_url, fallback_content,
+    )
+
+
+async def list_fluxer_to_discord_queue(older_than_hours: Optional[int] = None) -> list[asyncpg.Record]:
+    """Oldest first, so a drain delivers a backed-up conversation in the
+    order it actually happened. With older_than_hours, only entries
+    OLDER than that (the ones about to be given up on, not the whole
+    queue), used by the prune path rather than the normal drain."""
+    if older_than_hours is not None:
+        return await pool().fetch(
+            "SELECT * FROM discord_relay_outbound_queue WHERE created_at < now() - ($1 || ' hours')::interval ORDER BY created_at ASC",
+            str(older_than_hours),
+        )
+    return await pool().fetch("SELECT * FROM discord_relay_outbound_queue ORDER BY created_at ASC")
+
+
+async def delete_fluxer_to_discord_queue_entry(entry_id: int) -> None:
+    await pool().execute("DELETE FROM discord_relay_outbound_queue WHERE id=$1", entry_id)
+
+
+async def prune_expired_fluxer_to_discord_queue(older_than_hours: int = 24) -> int:
+    """Backstop for entries a drain never got the chance to touch (the
+    relay never reconnects again, or reconnects but the drain itself
+    never completes for some reason), called periodically by the
+    scheduler rather than relying solely on on_ready ever firing."""
+    result = await pool().execute(
+        "DELETE FROM discord_relay_outbound_queue WHERE created_at < now() - ($1 || ' hours')::interval",
+        str(older_than_hours),
+    )
     try:
         return int(result.split()[-1])
     except (ValueError, IndexError):

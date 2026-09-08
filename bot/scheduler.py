@@ -127,6 +127,9 @@ async def _update_bot_status(bot: Bot) -> None:
 _last_relay_link_prune: Optional[datetime] = None
 _RELAY_LINK_PRUNE_INTERVAL = timedelta(hours=24)
 
+_last_relay_queue_prune: Optional[datetime] = None
+_RELAY_QUEUE_PRUNE_INTERVAL = timedelta(hours=1)
+
 
 async def _prune_relay_message_links() -> None:
     # A maintenance task, not something that needs to run on every 15s
@@ -140,6 +143,25 @@ async def _prune_relay_message_links() -> None:
     if pruned:
         log.info("Pruned %d old Discord relay message links", pruned)
     _last_relay_link_prune = now
+
+
+async def _prune_relay_outbound_queue() -> None:
+    """Backstop for discord_relay_outbound_queue entries a reconnect's
+    drain never got the chance to touch (the relay never reconnects
+    again, or the drain itself fails outright before reaching them),
+    on an hourly gate rather than the daily one above: these are meant
+    to be short-lived (delivered within minutes of a reconnect, or
+    given up on after 24h), leaving a stale one sitting for up to a
+    full day past its own expiry defeats the point of having a
+    give-up horizon at all."""
+    global _last_relay_queue_prune
+    now = datetime.now(timezone.utc)
+    if _last_relay_queue_prune and now - _last_relay_queue_prune < _RELAY_QUEUE_PRUNE_INTERVAL:
+        return
+    pruned = await db.prune_expired_fluxer_to_discord_queue()
+    if pruned:
+        log.info("Gave up on %d expired queued Discord relay message(s)", pruned)
+    _last_relay_queue_prune = now
 
 
 async def run_scheduler(bot: Bot) -> None:
