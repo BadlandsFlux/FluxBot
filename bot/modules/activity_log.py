@@ -207,7 +207,16 @@ def register(bot: Bot) -> None:
         guild_id = data.get("guild_id")
         message_id = data.get("id")
         author = data.get("author", {})
-        if not guild_id or not message_id or author.get("bot"):
+        # A webhook-sent message also carries author.bot=true (Discord/Fluxer
+        # represent a webhook as a bot-like author), but it can just as
+        # easily be a real person's message bridged in through a webhook
+        # (this bot's own Discord relay, a GitHub/CI integration someone
+        # set up, etc), not autonomous bot noise. Excluding it here meant
+        # a relayed message's content was never cached, so deleting one
+        # always showed "content not available" even seconds after it was
+        # sent. Only a genuine bot account posting directly (bot=true,
+        # no webhook_id) gets skipped now.
+        if not guild_id or not message_id or (author.get("bot") and not data.get("webhook_id")):
             return
         message_cache.remember(
             str(message_id), guild_id=str(guild_id), channel_id=str(data.get("channel_id")),
