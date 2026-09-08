@@ -427,6 +427,17 @@ CREATE TABLE IF NOT EXISTS discord_relay_message_links (
     -- bot doesn't "own" a message a webhook sent the way it owns one
     -- it sent directly.
     sent_via_webhook     BOOLEAN NOT NULL DEFAULT FALSE,
+    -- The EXACT webhook that sent this specific message, captured at
+    -- send time, not "whatever webhook is currently on file for this
+    -- channel". If that webhook is ever deleted and recreated (its id/
+    -- token rotate), a later edit or delete needs the ORIGINAL
+    -- credentials, a message only exists under the webhook that
+    -- actually sent it, not under a same-channel replacement. NULL for
+    -- a link created before this column existed or when
+    -- sent_via_webhook is false; the edit/delete sync falls back to
+    -- the channel's current webhook for those.
+    webhook_id           TEXT,
+    webhook_token        TEXT,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_relay_links_source ON discord_relay_message_links(source_platform, source_message_id);
@@ -483,3 +494,10 @@ ALTER TABLE discord_relay_status ADD COLUMN IF NOT EXISTS discord_bot_id TEXT;
 -- edit/delete sync knows which endpoint a given relayed message has
 -- to go through.
 ALTER TABLE discord_relay_message_links ADD COLUMN IF NOT EXISTS sent_via_webhook BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Migration for databases created before each link stored the EXACT
+-- webhook that sent it (see the column comments above for why: a
+-- lookup against "whatever webhook is currently on file for this
+-- channel" breaks the moment that webhook is ever recreated).
+ALTER TABLE discord_relay_message_links ADD COLUMN IF NOT EXISTS webhook_id TEXT;
+ALTER TABLE discord_relay_message_links ADD COLUMN IF NOT EXISTS webhook_token TEXT;

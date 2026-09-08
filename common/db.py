@@ -1034,14 +1034,17 @@ async def get_discord_relay_status() -> Optional[asyncpg.Record]:
 # ----------------------------------------- discord relay: message linking --
 async def add_relay_message_link(mapping_id: int, source_platform: str, source_message_id: str,
                                   target_platform: str, target_message_id: str, target_channel_id: str,
-                                  sent_via_webhook: bool = False) -> None:
+                                  sent_via_webhook: bool = False, webhook_id: Optional[str] = None,
+                                  webhook_token: Optional[str] = None) -> None:
     await pool().execute(
         """
         INSERT INTO discord_relay_message_links
-            (mapping_id, source_platform, source_message_id, target_platform, target_message_id, target_channel_id, sent_via_webhook)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (mapping_id, source_platform, source_message_id, target_platform, target_message_id, target_channel_id,
+             sent_via_webhook, webhook_id, webhook_token)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         """,
-        mapping_id, source_platform, source_message_id, target_platform, target_message_id, target_channel_id, sent_via_webhook,
+        mapping_id, source_platform, source_message_id, target_platform, target_message_id, target_channel_id,
+        sent_via_webhook, webhook_id, webhook_token,
     )
 
 
