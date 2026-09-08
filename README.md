@@ -205,7 +205,7 @@ The dashboard listens on plain HTTP (`DASHBOARD_PORT`, default 8000). For a real
    sudo ufw allow 443/tcp
    ```
 
-5. **Update the OAuth2 redirect URI** to match your real domain, both in `.env` (`FLUXER_OAUTH_REDIRECT_URI=https://dashboard.example.com/auth/callback`) and on the Fluxer application itself (see "Creating the bot application on Fluxer" below), then restart the dashboard.
+5. **Update the OAuth2 redirect URI** to match your real domain, both in `.env` (`FLUXER_OAUTH_REDIRECT_URI=https://dashboard.example.com/auth/callback`) and on the Fluxer application itself (see "Creating the bot application on Fluxer" below), then restart the dashboard. This also fixes the dashboard's own public base URL used by the Discord relay's avatar proxy (`DASHBOARD_PUBLIC_URL`, derived automatically from the redirect URI above unless set explicitly), which otherwise defaults to `localhost` and won't be reachable from Fluxer.
 
 The included config proxies everything to the dashboard, sets the standard `X-Forwarded-*` headers, and long-caches the frontend's content-hashed static assets (`/assets/*`) since a new deploy always gets new filenames from Vite's build.
 

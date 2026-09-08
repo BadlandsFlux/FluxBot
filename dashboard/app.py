@@ -26,6 +26,7 @@ from bot.modules import achievements, fun, info as info_module, leveling, modera
 from bot.modules import afk as afk_module
 from bot.permissions import permission_name, role_is_privileged
 from bot.rest import FluxerAPIError, FluxerREST
+from common.url_safety import is_safe_external_url
 from common import db
 from common.config import config
 from common.discovery import get_media_base, guild_icon_url
@@ -1383,6 +1384,47 @@ async def bot_profile_icon():
 
 
 # ---------------------------------------------------------- discord relay --
+# Discord CDN domains a proxied avatar URL is allowed to come from. This
+# endpoint is public (no auth, same reasoning as the icon/favicon routes
+# above: it's re-serving a public image, nothing sensitive), so it's
+# critical this stays a strict allowlist rather than an open fetch of
+# whatever URL is given, an open proxy on a public-facing service is a
+# real SSRF vector (scanning internal network resources, hitting this
+# same host's own other services, etc), not just a theoretical concern.
+_DISCORD_CDN_HOSTS = {"cdn.discordapp.com", "media.discordapp.net"}
+
+
+@app.get("/api/discord-relay/avatar-proxy")
+async def discord_avatar_proxy(url: str):
+    """Re-hosts a Discord avatar under this dashboard's own domain, for
+    bot/discord_relay.py to hand to Fluxer instead of Discord's raw CDN
+    link directly. See that module's docstring on why: Fluxer's webhook
+    avatar_url apparently can't (or doesn't reliably) fetch directly
+    from Discord's CDN, going the other way works fine, an avatar url
+    already reachable from this same dashboard's own domain looks no
+    different to Fluxer than any other URL it already successfully
+    fetches from this app.
+
+    This is a public, unauthenticated endpoint fetching a URL supplied
+    in the request, exactly the shape CodeQL's SSRF query looks for, so
+    it needs to actually close that off, not just look validated:
+    is_safe_external_url restricts the host to Discord's real CDN
+    domains (exact match, both required to also be https), and
+    follow_redirects is explicitly disabled, an allowlisted host still
+    issuing a redirect elsewhere is exactly the gap a hostname check
+    alone can't close, this closes it by simply never following one."""
+    if not is_safe_external_url(url, allowed_hosts=_DISCORD_CDN_HOSTS, require_https=True):
+        raise _ApiError(400, "That's not a Discord CDN URL.")
+    try:
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            resp = await client.get(url, timeout=10)
+    except httpx.HTTPError:
+        raise _ApiError(502, "Couldn't reach Discord's CDN right now.")
+    if resp.status_code != 200:
+        raise _ApiError(502, f"Discord's CDN returned HTTP {resp.status_code} for that avatar.")
+    return Response(content=resp.content, media_type=resp.headers.get("content-type", "image/png"))
+
+
 @app.get("/api/discord-relay/config")
 async def api_get_discord_relay_config(request: Request):
     _require_owner(request)
