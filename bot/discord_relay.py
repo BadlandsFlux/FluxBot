@@ -64,11 +64,10 @@ from __future__ import annotations
 
 import asyncio
 import io
-import ipaddress
 import logging
 import re
 from typing import Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 
 import aiohttp
 import discord
@@ -78,6 +77,7 @@ from bot.rest import FluxerAPIError, FluxerREST
 from common import db
 from common.config import config
 from common.discovery import get_media_base, user_avatar_url
+from common.url_safety import is_safe_external_url
 
 log = logging.getLogger("fluxbot.discord_relay")
 
@@ -231,34 +231,7 @@ def _translate_embeds_mentions(embeds: Optional[list], *, users: dict, channels:
 
 
 def _is_safe_download_url(url: str) -> bool:
-    """Defense-in-depth before fetching an attachment URL taken from a
-    Fluxer message payload: this project has repeatedly noted Fluxer's
-    exact API guarantees aren't fully confirmed, so a URL that's
-    supposed to always be a Fluxer-CDN link (server-generated, not
-    client-injectable, in the well-behaved case) gets a basic check
-    anyway rather than being fetched blindly. Blocks non-http(s)
-    schemes and literal private/loopback/link-local IP addresses.
-    Doesn't attempt full DNS-rebinding protection (re-resolving and
-    re-checking at connect time), that's real added complexity for
-    what should normally never be attacker-reachable data in the
-    first place, this is a reasonable, proportionate floor, not a
-    complete SSRF defense."""
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return False
-    if parsed.scheme not in ("http", "https"):
-        return False
-    host = parsed.hostname
-    if not host:
-        return False
-    if host.lower() in ("localhost", "localhost.localdomain"):
-        return False
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return True  # a real hostname, not a literal IP, allowed (see docstring: not full DNS-rebinding protection)
-    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast)
+    return is_safe_external_url(url)
 
 
 async def _download(url: str, max_bytes: int) -> Optional[bytes]:
