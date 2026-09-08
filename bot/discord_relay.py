@@ -261,6 +261,43 @@ def _fluxer_jump_url(guild_id, channel_id, message_id) -> str:
     return f"{config.web_base}/channels/{guild_id}/{channel_id}/{message_id}"
 
 
+async def _prepend_fluxer_reply_prefix(bot: Bot, data: dict, content: Optional[str]) -> Optional[str]:
+    """Fluxer-side mirror of RelayClient._prepend_reply_prefix, a
+    module-level function rather than a method since the handlers in
+    register_fluxer_side are nested functions, not part of a class.
+    Same "Discord convention, assumed mirrored" caveat as the rest of
+    this module's Fluxer-payload-shape assumptions: message_reference
+    for the pointer, referenced_message for the already-resolved
+    original (Discord's own raw gateway payload includes this inline
+    on a reply, no separate fetch needed in the common case), falling
+    back to a REST fetch only if that's missing."""
+    ref = data.get("message_reference") or {}
+    ref_message_id = ref.get("message_id")
+    if not ref_message_id:
+        return content
+
+    referenced = data.get("referenced_message")
+    if referenced is None:
+        try:
+            referenced = await bot.rest.get_message(str(ref.get("channel_id")), str(ref_message_id))
+        except Exception:
+            referenced = None
+
+    author_name = (referenced.get("author", {}).get("username", "someone")) if referenced else "someone"
+    snippet = _snippet(referenced.get("content") if referenced else None)
+
+    jump_link = None
+    links = await db.get_relay_message_links("fluxer", str(ref_message_id))
+    for link in links:
+        if link["target_platform"] != "discord":
+            continue
+        jump_link = _discord_jump_url(data.get("guild_id"), link["target_channel_id"], link["target_message_id"])
+        break
+
+    prefix = _reply_prefix(author_name=author_name, snippet=snippet, jump_link=jump_link, source_label="Fluxer")
+    return f"{prefix}\n{content}" if content else prefix
+
+
 def _is_safe_download_url(url: str) -> bool:
     """Defense-in-depth before fetching an attachment URL taken from a
     Fluxer message payload: this project has repeatedly noted Fluxer's
@@ -687,6 +724,8 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
 
         if not raw_content and not embeds and not files:
             return
+
+        raw_content = await _prepend_fluxer_reply_prefix(bot, data, raw_content)
 
         username = author.get("username", "unknown")
         avatar_url = await _fluxer_avatar_url(str(author.get("id")), author.get("avatar")) if mappings and any(m["show_attribution"] for m in mappings) else None
