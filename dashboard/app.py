@@ -165,7 +165,10 @@ async def _require_manage(request: Request, guild_id: str) -> None:
         raise _ApiError(401, "Not logged in.")
     try:
         my_guilds = await oauth.fetch_my_guilds(access_token)
-    except httpx.HTTPStatusError:
+    except httpx.HTTPStatusError as e:
+        if e.response is not None and e.response.status_code == 401:
+            request.session.clear()
+            raise _ApiError(401, "Your session has expired, please log in again.")
         raise _ApiError(502, "Couldn't verify your Fluxer permissions right now.")
     entry = next((g for g in my_guilds if str(g.get("id")) == guild_id), None)
     if not entry or not oauth.can_manage(entry):
@@ -235,8 +238,22 @@ async def api_guilds(request: Request):
     access_token = request.session.get("access_token")
     try:
         my_guilds = await oauth.fetch_my_guilds(access_token)
-    except httpx.HTTPStatusError:
-        my_guilds = []
+    except httpx.HTTPStatusError as e:
+        if e.response is not None and e.response.status_code == 401:
+            # The Fluxer access token itself has expired or been revoked
+            # (the local session cookie can easily still look "logged in"
+            # long after that happens, since it isn't re-validated against
+            # Fluxer on every page load, only when something actually
+            # needs the token). Previously this fell through to an empty
+            # guild list, indistinguishable from "you genuinely manage
+            # zero servers", leaving someone stuck on a confusing "No
+            # manageable servers found" page with no indication they
+            # just need to log back in. Clearing the session here and
+            # returning 401 lets the frontend tell those two situations
+            # apart and prompt a fresh login instead.
+            request.session.clear()
+            raise _ApiError(401, "Your session has expired, please log in again.")
+        raise _ApiError(502, "Couldn't load your servers from Fluxer right now, try again in a moment.")
 
     bot_guild_ids = {g["guild_id"] for g in await db.list_guilds()}
     manageable = [g for g in my_guilds if str(g.get("id")) in bot_guild_ids and oauth.can_manage(g)]

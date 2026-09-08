@@ -3,13 +3,21 @@ import { useGuilds } from "../context/GuildsContext";
 import Spinner from "../components/Spinner";
 
 export default function GuildPicker() {
-  const { guilds, loading } = useGuilds();
+  const { guilds, loading, error } = useGuilds();
 
   if (loading) {
     return (
       <div className="loading-row">
         <Spinner />
         <span className="muted">Loading your servers…</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="card empty-state">
+        <p>{error}</p>
       </div>
     );
   }
