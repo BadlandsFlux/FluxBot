@@ -11,7 +11,7 @@ import Commands from "./pages/Commands";
 import Status from "./pages/Status";
 import BotProfile from "./pages/BotProfile";
 import DiscordRelaySetup from "./pages/DiscordRelaySetup";
-import { api } from "./api";
+import { api, setUnauthorizedHandler } from "./api";
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined = loading, {user: null} = logged out
@@ -21,6 +21,11 @@ export default function App() {
       .me()
       .then(setMe)
       .catch(() => setMe({ user: null, bot_name: "FluxBot" }));
+  }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => setMe((prev) => ({ user: null, bot_name: prev?.bot_name || "FluxBot" })));
+    return () => setUnauthorizedHandler(null);
   }, []);
 
   if (me === undefined) {
