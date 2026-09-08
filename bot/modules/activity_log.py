@@ -60,10 +60,12 @@ log = logging.getLogger("fluxbot.activity_log")
 # unconfirmed for Fluxer specifically, same caveat as everywhere else
 # this project relies on Discord-convention numeric constants).
 AUDIT_LOG_CHANNEL_CREATE = 10
+AUDIT_LOG_CHANNEL_UPDATE = 11
 AUDIT_LOG_CHANNEL_DELETE = 12
 AUDIT_LOG_ROLE_CREATE = 30
 AUDIT_LOG_ROLE_UPDATE = 31
 AUDIT_LOG_ROLE_DELETE = 32
+AUDIT_LOG_MEMBER_ROLE_UPDATE = 25
 
 # Independent of voice_tracker.py's own per-member channel tracking
 # (that one's about XP eligibility/accrual, this one's just "did they
@@ -390,7 +392,9 @@ def register(bot: Bot) -> None:
             "footer": {"text": f"User ID: {user_id}"},
             "timestamp": _now_iso(),
         }
-        await _send_log(bot, settings["log_channel_id"], embed)
+        message_id = await _send_log(bot, settings["log_channel_id"], embed)
+        _spawn_actor_lookup(bot, guild_id, settings["log_channel_id"], message_id,
+                             AUDIT_LOG_MEMBER_ROLE_UPDATE, user_id, embed)
 
     # --------------------------------------------------------------- channels --
     @bot.on("CHANNEL_CREATE")
@@ -457,7 +461,9 @@ def register(bot: Bot) -> None:
             "footer": {"text": f"Channel ID: {data.get('id')}"},
             "timestamp": _now_iso(),
         }
-        await _send_log(bot, settings["log_channel_id"], embed)
+        message_id = await _send_log(bot, settings["log_channel_id"], embed)
+        _spawn_actor_lookup(bot, guild_id, settings["log_channel_id"], message_id,
+                             AUDIT_LOG_CHANNEL_UPDATE, str(data.get("id")), embed)
 
     # ------------------------------------------------------------------ roles --
     @bot.on("GUILD_ROLE_CREATE")
