@@ -68,7 +68,7 @@ import ipaddress
 import logging
 import re
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import aiohttp
 import discord
@@ -288,6 +288,30 @@ async def _fluxer_avatar_url(user_id: str, avatar_hash: Optional[str]) -> Option
         return None
 
 
+def _proxied_discord_avatar_url(discord_cdn_url: Optional[str]) -> Optional[str]:
+    """Fluxer's webhook avatar_url apparently can't (or doesn't
+    reliably) fetch directly from Discord's CDN: reported as Discord
+    avatars never showing up on relayed messages while Fluxer avatars
+    reach Discord fine, an asymmetry that points squarely at fetching
+    FROM Discord's CDN specifically being the broken half, not
+    anything about the webhook mechanism itself (which the Fluxer to
+    Discord direction already proves works). Routes it through this
+    dashboard's own avatar-proxy endpoint instead (see dashboard/
+    app.py), a URL on the SAME kind of domain Fluxer already fetches
+    from successfully elsewhere in this app, which re-fetches the real
+    image from Discord server-side and serves it back under this
+    dashboard's own domain. Falls back to the raw Discord URL
+    unchanged if the dashboard's own public URL still looks like the
+    unconfigured localhost default, no worse than the pre-proxy
+    behavior in that edge case rather than actively worse (dropping
+    the avatar outright)."""
+    if not discord_cdn_url:
+        return None
+    if not config.dashboard_public_url or "localhost" in config.dashboard_public_url or "127.0.0.1" in config.dashboard_public_url:
+        return discord_cdn_url
+    return f"{config.dashboard_public_url}/api/discord-relay/avatar-proxy?url={quote(discord_cdn_url, safe='')}"
+
+
 async def _get_or_create_fluxer_webhook(fluxer_rest: FluxerREST, channel_id: str) -> Optional[tuple[str, str]]:
     """Returns (webhook_id, webhook_token) for the given Fluxer channel,
     creating and persisting one the first time it's needed. Returns
@@ -401,7 +425,7 @@ class RelayClient(discord.Client):
             return  # nothing worth forwarding (e.g. a sticker-only message, not supported here)
 
         display_name = message.author.display_name
-        avatar_url = message.author.display_avatar.url if message.author.display_avatar else None
+        avatar_url = _proxied_discord_avatar_url(message.author.display_avatar.url if message.author.display_avatar else None)
 
         for mapping in mappings:
             target = mapping["fluxer_channel_id"]

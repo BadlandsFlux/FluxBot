@@ -57,6 +57,18 @@ class Config:
     oauth_client_secret: str = os.getenv("FLUXER_OAUTH_CLIENT_SECRET", "")
     oauth_redirect_uri: str = os.getenv("FLUXER_OAUTH_REDIRECT_URI", "http://localhost:8000/auth/callback")
 
+    # The dashboard's own public base URL, no trailing slash. Defaults to
+    # the OAuth redirect URI with its known /auth/callback suffix
+    # stripped off, since that's already required to be a real, publicly
+    # reachable URL pointing at this dashboard, and in the common case
+    # that's exactly the dashboard's own base too. Override explicitly
+    # (DASHBOARD_PUBLIC_URL) if that assumption doesn't hold for your
+    # setup (a custom OAuth callback path, a reverse proxy remapping
+    # things, etc). Used by bot/discord_relay.py to build a same-origin
+    # proxy URL for Discord avatars, see that module for why.
+    dashboard_public_url: str = (os.getenv("DASHBOARD_PUBLIC_URL", "").rstrip("/")
+                                  or oauth_redirect_uri.removesuffix("/auth/callback"))
+
     # Dashboard
     session_secret: str = os.getenv("DASHBOARD_SESSION_SECRET", "dev-secret-change-me")
     # Loopback-only by default: only reachable from this machine until you

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, File, Request, UploadFile
@@ -1366,6 +1367,39 @@ async def bot_profile_icon():
 
 
 # ---------------------------------------------------------- discord relay --
+# Discord CDN domains a proxied avatar URL is allowed to come from. This
+# endpoint is public (no auth, same reasoning as the icon/favicon routes
+# above: it's re-serving a public image, nothing sensitive), so it's
+# critical this stays a strict allowlist rather than an open fetch of
+# whatever URL is given, an open proxy on a public-facing service is a
+# real SSRF vector (scanning internal network resources, hitting this
+# same host's own other services, etc), not just a theoretical concern.
+_DISCORD_CDN_HOSTS = {"cdn.discordapp.com", "media.discordapp.net"}
+
+
+@app.get("/api/discord-relay/avatar-proxy")
+async def discord_avatar_proxy(url: str):
+    """Re-hosts a Discord avatar under this dashboard's own domain, for
+    bot/discord_relay.py to hand to Fluxer instead of Discord's raw CDN
+    link directly. See that module's docstring on why: Fluxer's webhook
+    avatar_url apparently can't (or doesn't reliably) fetch directly
+    from Discord's CDN, going the other way works fine, an avatar url
+    already reachable from this same dashboard's own domain looks no
+    different to Fluxer than any other URL it already successfully
+    fetches from this app."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in _DISCORD_CDN_HOSTS:
+        raise _ApiError(400, "That's not a Discord CDN URL.")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=10)
+    except httpx.HTTPError:
+        raise _ApiError(502, "Couldn't reach Discord's CDN right now.")
+    if resp.status_code != 200:
+        raise _ApiError(502, f"Discord's CDN returned HTTP {resp.status_code} for that avatar.")
+    return Response(content=resp.content, media_type=resp.headers.get("content-type", "image/png"))
+
+
 @app.get("/api/discord-relay/config")
 async def api_get_discord_relay_config(request: Request):
     _require_owner(request)
