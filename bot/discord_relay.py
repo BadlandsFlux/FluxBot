@@ -64,11 +64,10 @@ from __future__ import annotations
 
 import asyncio
 import io
-import ipaddress
 import logging
 import re
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import quote
 
 import aiohttp
 import discord
@@ -78,6 +77,7 @@ from bot.rest import FluxerAPIError, FluxerREST
 from common import db
 from common.config import config
 from common.discovery import get_media_base, user_avatar_url
+from common.url_safety import is_safe_external_url
 
 log = logging.getLogger("fluxbot.discord_relay")
 
@@ -231,34 +231,7 @@ def _translate_embeds_mentions(embeds: Optional[list], *, users: dict, channels:
 
 
 def _is_safe_download_url(url: str) -> bool:
-    """Defense-in-depth before fetching an attachment URL taken from a
-    Fluxer message payload: this project has repeatedly noted Fluxer's
-    exact API guarantees aren't fully confirmed, so a URL that's
-    supposed to always be a Fluxer-CDN link (server-generated, not
-    client-injectable, in the well-behaved case) gets a basic check
-    anyway rather than being fetched blindly. Blocks non-http(s)
-    schemes and literal private/loopback/link-local IP addresses.
-    Doesn't attempt full DNS-rebinding protection (re-resolving and
-    re-checking at connect time), that's real added complexity for
-    what should normally never be attacker-reachable data in the
-    first place, this is a reasonable, proportionate floor, not a
-    complete SSRF defense."""
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return False
-    if parsed.scheme not in ("http", "https"):
-        return False
-    host = parsed.hostname
-    if not host:
-        return False
-    if host.lower() in ("localhost", "localhost.localdomain"):
-        return False
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return True  # a real hostname, not a literal IP, allowed (see docstring: not full DNS-rebinding protection)
-    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast)
+    return is_safe_external_url(url)
 
 
 async def _download(url: str, max_bytes: int) -> Optional[bytes]:
@@ -286,6 +259,30 @@ async def _fluxer_avatar_url(user_id: str, avatar_hash: Optional[str]) -> Option
         return user_avatar_url(media_base, user_id, avatar_hash)
     except Exception:
         return None
+
+
+def _proxied_discord_avatar_url(discord_cdn_url: Optional[str]) -> Optional[str]:
+    """Fluxer's webhook avatar_url apparently can't (or doesn't
+    reliably) fetch directly from Discord's CDN: reported as Discord
+    avatars never showing up on relayed messages while Fluxer avatars
+    reach Discord fine, an asymmetry that points squarely at fetching
+    FROM Discord's CDN specifically being the broken half, not
+    anything about the webhook mechanism itself (which the Fluxer to
+    Discord direction already proves works). Routes it through this
+    dashboard's own avatar-proxy endpoint instead (see dashboard/
+    app.py), a URL on the SAME kind of domain Fluxer already fetches
+    from successfully elsewhere in this app, which re-fetches the real
+    image from Discord server-side and serves it back under this
+    dashboard's own domain. Falls back to the raw Discord URL
+    unchanged if the dashboard's own public URL still looks like the
+    unconfigured localhost default, no worse than the pre-proxy
+    behavior in that edge case rather than actively worse (dropping
+    the avatar outright)."""
+    if not discord_cdn_url:
+        return None
+    if not config.dashboard_public_url or "localhost" in config.dashboard_public_url or "127.0.0.1" in config.dashboard_public_url:
+        return discord_cdn_url
+    return f"{config.dashboard_public_url}/api/discord-relay/avatar-proxy?url={quote(discord_cdn_url, safe='')}"
 
 
 async def _get_or_create_fluxer_webhook(fluxer_rest: FluxerREST, channel_id: str) -> Optional[tuple[str, str]]:
@@ -401,7 +398,7 @@ class RelayClient(discord.Client):
             return  # nothing worth forwarding (e.g. a sticker-only message, not supported here)
 
         display_name = message.author.display_name
-        avatar_url = message.author.display_avatar.url if message.author.display_avatar else None
+        avatar_url = _proxied_discord_avatar_url(message.author.display_avatar.url if message.author.display_avatar else None)
 
         for mapping in mappings:
             target = mapping["fluxer_channel_id"]
