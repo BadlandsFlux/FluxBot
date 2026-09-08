@@ -230,6 +230,74 @@ def _translate_embeds_mentions(embeds: Optional[list], *, users: dict, channels:
     return [_translate_embed_mentions(e, users=users, channels=channels, roles=roles) for e in embeds]
 
 
+def _snippet(content: Optional[str], max_chars: int = 80) -> str:
+    content = (content or "").replace("\n", " ").strip()
+    if not content:
+        return "*(no text)*"
+    return content if len(content) <= max_chars else content[: max_chars - 1] + "…"
+
+
+def _reply_prefix(*, author_name: str, snippet: str, jump_link: Optional[str], source_label: str) -> str:
+    """A text-based stand-in for a real threaded reply, since neither
+    Discord's nor (presumably) Fluxer's webhook-execute API can set a
+    genuine message reference, that's only possible for a regular bot-
+    or user-sent message, not one sent through a webhook, which is the
+    primary relay path whenever attribution is on. With a jump link
+    (the replied-to message was itself relayed, so there's a real
+    corresponding message on the OTHER platform to point at) or
+    without one (it wasn't relayed, or predates the mapping, so this
+    just names who and what, on which platform, without a working
+    link)."""
+    if jump_link:
+        return f"↩️ *replying to [{author_name}]({jump_link}): {snippet}*"
+    return f"↩️ *replying to {author_name} on {source_label}: {snippet}*"
+
+
+def _discord_jump_url(guild_id, channel_id, message_id) -> str:
+    return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
+
+
+def _fluxer_jump_url(guild_id, channel_id, message_id) -> str:
+    return f"{config.web_base}/channels/{guild_id}/{channel_id}/{message_id}"
+
+
+async def _prepend_fluxer_reply_prefix(bot: Bot, data: dict, content: Optional[str]) -> Optional[str]:
+    """Fluxer-side mirror of RelayClient._prepend_reply_prefix, a
+    module-level function rather than a method since the handlers in
+    register_fluxer_side are nested functions, not part of a class.
+    Same "Discord convention, assumed mirrored" caveat as the rest of
+    this module's Fluxer-payload-shape assumptions: message_reference
+    for the pointer, referenced_message for the already-resolved
+    original (Discord's own raw gateway payload includes this inline
+    on a reply, no separate fetch needed in the common case), falling
+    back to a REST fetch only if that's missing."""
+    ref = data.get("message_reference") or {}
+    ref_message_id = ref.get("message_id")
+    if not ref_message_id:
+        return content
+
+    referenced = data.get("referenced_message")
+    if referenced is None:
+        try:
+            referenced = await bot.rest.get_message(str(ref.get("channel_id")), str(ref_message_id))
+        except Exception:
+            referenced = None
+
+    author_name = (referenced.get("author", {}).get("username", "someone")) if referenced else "someone"
+    snippet = _snippet(referenced.get("content") if referenced else None)
+
+    jump_link = None
+    links = await db.get_relay_message_links("fluxer", str(ref_message_id))
+    for link in links:
+        if link["target_platform"] != "discord":
+            continue
+        jump_link = _discord_jump_url(data.get("guild_id"), link["target_channel_id"], link["target_message_id"])
+        break
+
+    prefix = _reply_prefix(author_name=author_name, snippet=snippet, jump_link=jump_link, source_label="Fluxer")
+    return f"{prefix}\n{content}" if content else prefix
+
+
 def _is_safe_download_url(url: str) -> bool:
     return is_safe_external_url(url)
 
@@ -355,6 +423,32 @@ class RelayClient(discord.Client):
         own = await db.get_relay_webhook(platform, channel_id)
         return bool(own and str(webhook_id) == str(own["webhook_id"]))
 
+    async def _prepend_reply_prefix(self, message: discord.Message, content: Optional[str]) -> Optional[str]:
+        ref = message.reference
+        referenced = ref.resolved if ref.resolved and not isinstance(ref.resolved, discord.DeletedReferencedMessage) else None
+        if referenced is None and ref.message_id:
+            try:
+                channel = await self._get_channel(str(ref.channel_id)) if ref.channel_id else message.channel
+                referenced = await channel.fetch_message(ref.message_id) if channel else None
+            except Exception:
+                referenced = None
+
+        author_name = referenced.author.display_name if referenced else "someone"
+        snippet = _snippet(referenced.content if referenced else None)
+
+        jump_link = None
+        links = await db.get_relay_message_links("discord", str(ref.message_id))
+        for link in links:
+            if link["target_platform"] != "fluxer":
+                continue
+            mapping = await db.get_discord_relay_mapping_by_id(link["mapping_id"]) if link["mapping_id"] else None
+            if mapping:
+                jump_link = _fluxer_jump_url(mapping["fluxer_guild_id"], link["target_channel_id"], link["target_message_id"])
+                break
+
+        prefix = _reply_prefix(author_name=author_name, snippet=snippet, jump_link=jump_link, source_label="Discord")
+        return f"{prefix}\n{content}" if content else prefix
+
     async def on_ready(self) -> None:
         log.info("Discord relay connected as %s", self.user)
         await db.update_discord_relay_status(
@@ -396,6 +490,9 @@ class RelayClient(discord.Client):
 
         if not raw_content and not embeds and not files:
             return  # nothing worth forwarding (e.g. a sticker-only message, not supported here)
+
+        if message.reference and message.reference.message_id:
+            raw_content = await self._prepend_reply_prefix(message, raw_content)
 
         display_name = message.author.display_name
         avatar_url = _proxied_discord_avatar_url(message.author.display_avatar.url if message.author.display_avatar else None)
@@ -624,6 +721,8 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
 
         if not raw_content and not embeds and not files:
             return
+
+        raw_content = await _prepend_fluxer_reply_prefix(bot, data, raw_content)
 
         username = author.get("username", "unknown")
         avatar_url = await _fluxer_avatar_url(str(author.get("id")), author.get("avatar")) if mappings and any(m["show_attribution"] for m in mappings) else None
