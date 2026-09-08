@@ -1,5 +1,19 @@
 const jsonHeaders = { "Content-Type": "application/json" };
 
+// Registered once by App.jsx on mount. Any request anywhere in the app
+// that comes back 401 means the local session looked valid but the
+// underlying Fluxer access token has actually expired or been revoked,
+// something that can't be detected just by checking whether a session
+// cookie exists, only by an actual API call failing. Rather than make
+// every single component that calls the API individually check for
+// this, the fetch layer itself reports it once, centrally, and the app
+// resets to its logged-out state so the person sees a real login
+// prompt instead of a confusing empty page.
+let unauthorizedHandler = null;
+export function setUnauthorizedHandler(fn) {
+  unauthorizedHandler = fn;
+}
+
 async function request(path, options = {}) {
   const res = await fetch(path, {
     credentials: "include",
@@ -14,7 +28,10 @@ async function request(path, options = {}) {
     // no body
   }
   if (!res.ok) {
-    throw new Error(data.detail || `Request failed (${res.status})`);
+    if (res.status === 401 && unauthorizedHandler) unauthorizedHandler();
+    const err = new Error(data.detail || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
@@ -30,7 +47,10 @@ async function uploadFile(path, file) {
     // no body
   }
   if (!res.ok) {
-    throw new Error(data.detail || `Request failed (${res.status})`);
+    if (res.status === 401 && unauthorizedHandler) unauthorizedHandler();
+    const err = new Error(data.detail || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
