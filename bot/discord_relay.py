@@ -464,8 +464,8 @@ class RelayClient(discord.Client):
             except FluxerAPIError:
                 log.warning("Failed to sync a Discord edit to Fluxer message %s", link["target_message_id"], exc_info=True)
 
-    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
-        links = await db.get_relay_message_links("discord", str(payload.message_id))
+    async def _sync_discord_delete(self, message_id) -> None:
+        links = await db.get_relay_message_links("discord", str(message_id))
         for link in links:
             if link["target_platform"] != "fluxer":
                 continue
@@ -481,6 +481,23 @@ class RelayClient(discord.Client):
             except FluxerAPIError:
                 log.warning("Failed to sync a Discord delete to Fluxer message %s", link["target_message_id"], exc_info=True)
             await db.delete_relay_message_link(link["id"])
+
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
+        await self._sync_discord_delete(payload.message_id)
+
+    async def on_raw_bulk_message_delete(self, payload: discord.RawBulkMessageDeleteEvent) -> None:
+        """A moderator bulk-deleting/purging messages fires this instead
+        of a series of individual RawMessageDeleteEvents, so without
+        this handler none of those deletes would ever sync, only
+        one-at-a-time deletes would. Syncs each affected message that
+        was actually relayed, same per-message logic as a single
+        delete, one at a time rather than trying to batch the Fluxer
+        side (Fluxer's own bulk-delete equivalent, if one even exists,
+        isn't confirmed, and mixing regular and webhook-sent messages
+        in the same purge means they wouldn't all go through the same
+        endpoint anyway)."""
+        for message_id in payload.message_ids:
+            await self._sync_discord_delete(message_id)
 
     async def _get_channel(self, channel_id: str):
         channel = self.get_channel(int(channel_id))
@@ -669,11 +686,7 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
             except Exception:
                 log.warning("Failed to sync a Fluxer edit to Discord message %s", link["target_message_id"], exc_info=True)
 
-    @bot.on("MESSAGE_DELETE")
-    async def on_fluxer_message_delete(data: dict) -> None:
-        message_id = data.get("id")
-        if not message_id:
-            return
+    async def _sync_fluxer_delete(message_id) -> None:
         links = await db.get_relay_message_links("fluxer", str(message_id))
         for link in links:
             if link["target_platform"] != "discord":
@@ -692,6 +705,27 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
             except Exception:
                 log.warning("Failed to sync a Fluxer delete to Discord message %s", link["target_message_id"], exc_info=True)
             await db.delete_relay_message_link(link["id"])
+
+    @bot.on("MESSAGE_DELETE")
+    async def on_fluxer_message_delete(data: dict) -> None:
+        message_id = data.get("id")
+        if not message_id:
+            return
+        await _sync_fluxer_delete(message_id)
+
+    @bot.on("MESSAGE_DELETE_BULK")
+    async def on_fluxer_message_delete_bulk(data: dict) -> None:
+        """Fluxer's presumed equivalent of Discord's bulk-delete event
+        (Discord convention: MESSAGE_DELETE_BULK with an "ids" array),
+        unconfirmed against Fluxer's own docs like most of this
+        project's gateway-event-shape assumptions, but this bot's own
+        !purge command already bulk-deletes messages, so if Fluxer
+        fires something for that at all, this is the most likely shape.
+        Without this, purging a relayed Fluxer channel would leave the
+        Discord-side copies behind, only one-at-a-time deletes would
+        ever sync."""
+        for message_id in data.get("ids", []) or []:
+            await _sync_fluxer_delete(message_id)
 
 
 def build_relay_client(bot: Bot) -> RelayClient:
