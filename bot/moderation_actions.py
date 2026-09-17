@@ -128,8 +128,11 @@ async def warn_member(rest, guild_id: str, user: dict, moderator: dict, reason: 
     timeout_minutes}."""
     user_id = str(user["id"])
     await _check_can_moderate(rest, guild_id, moderator, user_id)
-    await db.add_warning(guild_id, user_id, str(moderator["id"]), reason)
-    active_count = await db.count_active_warnings(guild_id, user_id)
+    # Atomic: see add_warning_and_count's own docstring for why this
+    # can't be a separate insert + a separate count anymore, two
+    # warnings landing close together used to be able to both compute
+    # the same post-both count and each independently escalate.
+    _warning_id, active_count = await db.add_warning_and_count(guild_id, user_id, str(moderator["id"]), reason)
     await log_and_notify(rest, guild_id, "warn", user=user, moderator=moderator, reason=reason,
                           extra_fields=[{"name": "Total active warnings", "value": str(active_count), "inline": True}])
 
