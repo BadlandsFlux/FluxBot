@@ -114,6 +114,12 @@ def register(bot: Bot) -> None:
                 await ctx.reply("🚫 That role carries moderation/admin permissions, reaction roles can't "
                                  "hand it out to anyone who clicks. Assign it manually instead.")
                 return
+            try:
+                await ctx.bot.rest.get_message(ctx.channel_id, message_id)
+            except Exception:
+                await ctx.reply(f"Couldn't find message `{message_id}` in this channel. Run this command in "
+                                 f"the same channel as the message you want to react to.")
+                return
             await db.add_reaction_role(ctx.guild_id, ctx.channel_id, message_id, emoji, role_id)
             try:
                 await ctx.bot.rest.add_reaction(ctx.channel_id, message_id, emoji)
@@ -191,6 +197,9 @@ def register(bot: Bot) -> None:
         guild_id = data.get("guild_id")
         if not (message_id and emoji and user_id and guild_id):
             return
+        bot_user_id = (bot.gateway.user or {}).get("id")
+        if bot_user_id and str(user_id) == str(bot_user_id):
+            return  # our own seed reaction when the mapping was created, not a real member reacting
         mapping = await db.get_reaction_role(str(guild_id), message_id, str(emoji))
         if not mapping:
             return
@@ -208,6 +217,9 @@ def register(bot: Bot) -> None:
         guild_id = data.get("guild_id")
         if not (message_id and emoji and user_id and guild_id):
             return
+        bot_user_id = (bot.gateway.user or {}).get("id")
+        if bot_user_id and str(user_id) == str(bot_user_id):
+            return  # not a real member's reaction
         mapping = await db.get_reaction_role(str(guild_id), message_id, str(emoji))
         if not mapping:
             return
