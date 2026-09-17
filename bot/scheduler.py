@@ -173,6 +173,7 @@ async def run_scheduler(bot: Bot) -> None:
             await voice_tracker.flush_all(bot)
             await _update_bot_status(bot)
             await _prune_relay_message_links()
+            await _prune_relay_outbound_queue()
         except Exception:
             log.exception("Scheduler tick failed")
         await asyncio.sleep(CHECK_INTERVAL)
