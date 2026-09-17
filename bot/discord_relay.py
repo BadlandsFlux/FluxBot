@@ -91,6 +91,21 @@ MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 WEBHOOK_NAME = "FluxBot Relay"
 
+# Mirrors bot/rest.py's SAFE_ALLOWED_MENTIONS ({"parse": []}) for the
+# opposite direction of the bridge: Fluxer-bound sends already refuse to
+# auto-parse @everyone/role/user mentions out of free text a low- or
+# no-privilege member controls, for exactly this reason (see that
+# constant's own comment). Relayed content here is never expected to
+# carry a LIVE mention either, by the time a message reaches this
+# point, _translate_mentions() has already turned any @user/#channel/
+# @role token into plain, inert text (see this module's own docstring),
+# so there's nothing legitimate this would ever need to let through.
+# Without it, a Fluxer user with zero special permissions could type
+# literal "@everyone"/"@here" and have it relay to Discord as a live,
+# unrestricted mention, mass-pinging the bridged server if the relay
+# bot has Mention Everyone there (a plausible grant for a bridge bot).
+DISCORD_SAFE_ALLOWED_MENTIONS = discord.AllowedMentions.none()
+
 # A ceiling on how many messages a single reconnect backfill pass pulls
 # from one channel's history, not a guess at Discord's own limits.
 # Keeps a very busy channel over a long outage from turning a reconnect
@@ -776,7 +791,8 @@ class RelayClient(discord.Client):
                 try:
                     sent = await webhook.send(content=content or None, embeds=discord_embeds or [],
                                                files=discord_files or [], username=username,
-                                               avatar_url=avatar_url, wait=True)
+                                               avatar_url=avatar_url, wait=True,
+                                               allowed_mentions=DISCORD_SAFE_ALLOWED_MENTIONS)
                     return str(sent.id), True, str(webhook.id), webhook.token
                 except discord.NotFound:
                     await db.delete_relay_webhook("discord", discord_channel_id)
@@ -786,7 +802,8 @@ class RelayClient(discord.Client):
                             discord_files2 = [discord.File(fp=io.BytesIO(b), filename=name) for name, b in (files or [])]
                             sent = await webhook2.send(content=content or None, embeds=discord_embeds or [],
                                                         files=discord_files2 or [], username=username,
-                                                        avatar_url=avatar_url, wait=True)
+                                                        avatar_url=avatar_url, wait=True,
+                                                        allowed_mentions=DISCORD_SAFE_ALLOWED_MENTIONS)
                             return str(sent.id), True, str(webhook2.id), webhook2.token
                         except discord.HTTPException:
                             pass
@@ -800,7 +817,8 @@ class RelayClient(discord.Client):
             return None, False, None, None
         discord_files = [discord.File(fp=io.BytesIO(b), filename=name) for name, b in (files or [])]
         plain_content = fallback_content if fallback_content is not None else content
-        sent = await channel.send(content=plain_content or None, embeds=discord_embeds or [], files=discord_files or [])
+        sent = await channel.send(content=plain_content or None, embeds=discord_embeds or [], files=discord_files or [],
+                                   allowed_mentions=DISCORD_SAFE_ALLOWED_MENTIONS)
         return str(sent.id), False, None, None
 
 
@@ -984,7 +1002,8 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
                     if not webhook_creds:
                         continue
                     webhook = discord.Webhook.partial(int(webhook_creds[0]), webhook_creds[1], client=relay_client)
-                    await webhook.edit_message(int(link["target_message_id"]), content=new_content)
+                    await webhook.edit_message(int(link["target_message_id"]), content=new_content,
+                                                allowed_mentions=DISCORD_SAFE_ALLOWED_MENTIONS)
                 else:
                     channel = await relay_client._get_channel(link["target_channel_id"])
                     if channel is None:
@@ -995,7 +1014,7 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
                         prefix = f"**[Fluxer] {author.get('username', 'unknown')}:**"
                     content = _with_attribution(new_content, prefix)
                     discord_msg = await channel.fetch_message(int(link["target_message_id"]))
-                    await discord_msg.edit(content=content)
+                    await discord_msg.edit(content=content, allowed_mentions=DISCORD_SAFE_ALLOWED_MENTIONS)
             except discord.NotFound:
                 log.info("Discord message %s to edit is already gone, nothing to sync", link["target_message_id"])
             except Exception:
