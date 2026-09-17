@@ -1132,7 +1132,15 @@ async def api_add_level_role(request: Request, guild_id: str, payload: LevelRole
     await _require_manage(request, guild_id)
     if payload.level < 1:
         raise _ApiError(400, "Level must be 1 or higher.")
-    await db.add_level_role(guild_id, payload.level, payload.role_id)
+    role_id = payload.role_id.strip()
+    try:
+        guild = await bot_rest.get_guild(guild_id)
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Couldn't verify that role (HTTP {e.status}).")
+    if role_is_privileged(guild, role_id):
+        raise _ApiError(400, "That role carries moderation/admin permissions, level-up rewards can't grant it "
+                              "automatically to anyone who levels up. Assign it manually instead.")
+    await db.add_level_role(guild_id, payload.level, role_id)
     return {"level_roles": [_level_role_to_json(r) for r in await db.list_level_roles(guild_id)]}
 
 
