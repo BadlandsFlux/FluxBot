@@ -57,7 +57,14 @@ CREATE TABLE IF NOT EXISTS reaction_roles (
     emoji       TEXT NOT NULL,
     role_id     TEXT NOT NULL,
     label       TEXT NOT NULL DEFAULT '',
-    UNIQUE(message_id, emoji)
+    -- Scoped by guild_id, not just (message_id, emoji): a message id is
+    -- unique per platform, not per guild the bot manages, so an
+    -- unscoped constraint let a manager of ANY guild overwrite ANOTHER
+    -- guild's mapping just by guessing/knowing its message id + emoji
+    -- (`!reactionrole add <someone else's message id> <emoji> @role`),
+    -- silently hijacking it. See the migration below for upgrading a
+    -- database created before this was caught.
+    UNIQUE(guild_id, message_id, emoji)
 );
 
 CREATE TABLE IF NOT EXISTS autoroles (
@@ -548,3 +555,22 @@ ALTER TABLE discord_relay_message_links ADD COLUMN IF NOT EXISTS webhook_token T
 -- last went down, needed to bound the Discord-to-Fluxer backfill
 -- window on reconnect.
 ALTER TABLE discord_relay_status ADD COLUMN IF NOT EXISTS last_disconnected_at TIMESTAMPTZ;
+
+-- Migration for databases created before reaction_roles was scoped
+-- per-guild (see that table's own comment above): widens the old
+-- UNIQUE(message_id, emoji) to UNIQUE(guild_id, message_id, emoji).
+-- Always safe to apply, the old constraint already guaranteed no two
+-- rows share a (message_id, emoji) pair, so adding guild_id to the
+-- tuple can never conflict with existing data. Postgres has no
+-- `ADD CONSTRAINT ... IF NOT EXISTS`, so this checks pg_constraint
+-- itself to stay idempotent on every startup like everything else here.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'reaction_roles_guild_id_message_id_emoji_key'
+    ) THEN
+        ALTER TABLE reaction_roles DROP CONSTRAINT IF EXISTS reaction_roles_message_id_emoji_key;
+        ALTER TABLE reaction_roles ADD CONSTRAINT reaction_roles_guild_id_message_id_emoji_key
+            UNIQUE (guild_id, message_id, emoji);
+    END IF;
+END $$;

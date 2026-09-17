@@ -167,11 +167,16 @@ async def list_actions(guild_id: str, limit: int = 100) -> list[asyncpg.Record]:
 # -------------------------------------------------------- reaction roles --
 async def add_reaction_role(guild_id: str, channel_id: str, message_id: str, emoji: str, role_id: str,
                              label: str = "") -> None:
+    # Conflict target includes guild_id so this can only ever update a
+    # mapping the caller's own guild already owns, never one belonging
+    # to a different guild that happens to reuse the same message id +
+    # emoji (message ids aren't unique per-guild, they're unique
+    # per-platform) — see the reaction_roles table comment in schema.sql.
     await pool().execute(
         """
         INSERT INTO reaction_roles (guild_id, channel_id, message_id, emoji, role_id, label)
         VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id, label = EXCLUDED.label
+        ON CONFLICT (guild_id, message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id, label = EXCLUDED.label
         """,
         guild_id, channel_id, message_id, emoji, role_id, label,
     )
