@@ -97,6 +97,15 @@ _member_roles: "BoundedDict[tuple[str, str], frozenset]" = BoundedDict(max_size=
 # lookups, not a growing history.
 _background_tasks: set = set()
 
+# Audit-log entry ids already used to attribute a "Performed By" field,
+# so two _find_actor() lookups running close together for the SAME
+# target (e.g. two role-permission edits on the same role within a
+# second of each other) can't both land on the SAME newest matching
+# entry and credit it to both events. Global rather than per-guild
+# since entry ids are already globally unique snowflakes; bounded the
+# same way every other unbounded-over-uptime cache in this file is.
+_consumed_audit_entries: "BoundedDict[str, bool]" = BoundedDict(max_size=2000)
+
 
 def _truncate(text: str, max_chars: int = 1000) -> str:
     text = text or ""
@@ -135,11 +144,30 @@ async def _send_log(bot: Bot, channel_id: str, embed: dict) -> Optional[str]:
 
 
 async def _find_actor(bot: Bot, guild_id: str, action_type: int, target_id: str) -> Optional[dict]:
+    """Picks the newest audit-log entry matching target_id, skipping any
+    entry id already consumed by a different event's lookup. Without
+    that, two events on the same target close together (two role-
+    permission edits on the same role within the ~1s _attach_actor
+    delay, say) would both independently query the same top-10 window
+    and both pick the SAME newest matching entry, crediting one actor
+    for both events and leaving the other's real actor unattributed.
+    Each entry can only resolve ONE event, so the second lookup falls
+    through to the next-newest still-unconsumed match instead, which
+    is the correct one whenever the audit log's own ordering matches
+    the two events' real order (not guaranteed under arbitrary
+    reordering/latency, but a real improvement over "always take the
+    newest" for the common case this actually happens: two edits
+    close together, not simultaneous)."""
     try:
         audit = await bot.rest.get_audit_log(guild_id, action_type=action_type, limit=10)
         users_by_id = {str(u["id"]): u for u in audit.get("users", [])}
         for entry in audit.get("audit_log_entries", []):
+            entry_id = str(entry.get("id", ""))
+            if entry_id and entry_id in _consumed_audit_entries:
+                continue
             if str(entry.get("target_id")) == str(target_id):
+                if entry_id:
+                    _consumed_audit_entries[entry_id] = True
                 actor_id = str(entry.get("user_id", ""))
                 return users_by_id.get(actor_id) or {"id": actor_id, "username": "unknown"}
     except Exception:
