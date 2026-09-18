@@ -1184,6 +1184,70 @@ async def delete_relay_webhook(platform: str, channel_id: str) -> None:
     await pool().execute("DELETE FROM discord_relay_webhooks WHERE platform=$1 AND channel_id=$2", platform, channel_id)
 
 
+async def claim_relay_send(mapping_id: int, source_platform: str, source_message_id: str) -> bool:
+    """Atomically claims the right to relay this exact (mapping,
+    source message) pair. Returns True if this call won the claim (the
+    caller should go ahead and send), False if another concurrent
+    attempt already holds it (the caller should skip: someone else is
+    already relaying, or has already relayed, this exact message
+    through this exact mapping).
+
+    Exists because the reconnect backfill (a REST history scan) and
+    the live gateway's own message handler can both end up processing
+    the same Discord message through the same mapping around the
+    moment of reconnect. A plain "check discord_relay_message_links,
+    then send" is a check-then-act race: both could see "not yet
+    relayed" before either has actually sent anything, sending the
+    same message twice. The primary key on discord_relay_send_claims
+    (mapping_id, source_platform, source_message_id) is what makes
+    this INSERT genuinely atomic: Postgres guarantees only one of two
+    concurrent conflicting inserts for the same key ever succeeds, the
+    loser just gets told there's a conflict rather than racing to see
+    who reads what first.
+
+    See release_relay_send_claim() for what happens if the send this
+    was guarding doesn't actually happen."""
+    result = await pool().fetchrow(
+        """
+        INSERT INTO discord_relay_send_claims (mapping_id, source_platform, source_message_id)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (mapping_id, source_platform, source_message_id) DO NOTHING
+        RETURNING 1
+        """,
+        mapping_id, source_platform, source_message_id,
+    )
+    return result is not None
+
+
+async def release_relay_send_claim(mapping_id: int, source_platform: str, source_message_id: str) -> None:
+    """Releases a claim taken by claim_relay_send() when the send it
+    was guarding didn't actually happen (the Fluxer API call failed),
+    so a later attempt (the next backfill pass, a later live retry)
+    isn't permanently blocked from ever relaying this message through
+    this mapping just because an earlier attempt failed outright."""
+    await pool().execute(
+        "DELETE FROM discord_relay_send_claims WHERE mapping_id=$1 AND source_platform=$2 AND source_message_id=$3",
+        mapping_id, source_platform, source_message_id,
+    )
+
+
+async def prune_stale_relay_send_claims(older_than_minutes: int = 5) -> int:
+    """Backstop for a claim whose owning process crashed or was killed
+    between claiming and either finalizing (a successful send, which
+    supersedes the claim with a discord_relay_message_links row) or
+    releasing (a failed one) it, which would otherwise leave that
+    (mapping, message) pair permanently unable to be relayed, forever.
+    A send normally completes in well under a second, so a generous
+    multi-minute margin only ever catches a genuinely abandoned claim,
+    never one that's just slow. Called periodically by the scheduler,
+    see bot/scheduler.py."""
+    result = await pool().execute(
+        "DELETE FROM discord_relay_send_claims WHERE claimed_at < now() - ($1 || ' minutes')::interval",
+        str(older_than_minutes),
+    )
+    return int(result.split()[-1])
+
+
 async def prune_old_relay_message_links(older_than_days: int = 30) -> int:
     """Called periodically by the scheduler. An edit/delete arriving for
     a message old enough to have already been pruned just doesn't get

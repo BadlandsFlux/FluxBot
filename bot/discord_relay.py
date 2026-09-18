@@ -660,6 +660,16 @@ class RelayClient(discord.Client):
         avatar_url = _proxied_discord_avatar_url(message.author.display_avatar.url if message.author.display_avatar else None)
 
         for mapping in mappings:
+            # Atomic claim, not just a check: the reconnect backfill (a
+            # REST history scan) and this same method reached live from
+            # on_message can both end up processing this exact message
+            # for this exact mapping around a reconnect. Losing the
+            # claim means someone else is already sending (or has
+            # already sent) this one, skip it rather than relay twice.
+            # See claim_relay_send()'s own docstring for the full story.
+            if not await db.claim_relay_send(mapping["id"], "discord", str(message.id)):
+                continue
+
             target = mapping["fluxer_channel_id"]
             result, sent_via_webhook = None, False
             used_webhook_id, used_webhook_token = None, None
@@ -684,6 +694,10 @@ class RelayClient(discord.Client):
                 except FluxerAPIError:
                     log.warning("Failed to relay Discord message %s to Fluxer channel %s",
                                 message.id, target, exc_info=True)
+                    # Nothing was actually sent, release the claim so a
+                    # later retry (the next backfill pass, say) isn't
+                    # permanently blocked from ever relaying this one.
+                    await db.release_relay_send_claim(mapping["id"], "discord", str(message.id))
                     continue
 
             if result and result.get("id"):
@@ -691,6 +705,8 @@ class RelayClient(discord.Client):
                                                   "fluxer", str(result["id"]), target,
                                                   sent_via_webhook=sent_via_webhook,
                                                   webhook_id=used_webhook_id, webhook_token=used_webhook_token)
+            else:
+                await db.release_relay_send_claim(mapping["id"], "discord", str(message.id))
 
     async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent) -> None:
         author = (payload.data or {}).get("author", {})
