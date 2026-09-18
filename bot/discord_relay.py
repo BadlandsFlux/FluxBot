@@ -178,14 +178,14 @@ _USER_MENTION_RE = re.compile(r"<@!?(\d+)>")
 _CHANNEL_MENTION_RE = re.compile(r"<#(\d+)>")
 _ROLE_MENTION_RE = re.compile(r"<@&(\d+)>")
 
-# Redeems an account-link code (see bot/modules/account_links.py's
-# !link, which starts the other half of this from the Fluxer side).
-# DM-only: the whole point of the code is that it's a short-lived
-# secret proving control of the Discord account, posting it in a
-# public channel (even briefly, even though it's single-use) doesn't
-# fit that, and there's no relay/moderation reason this needs to work
-# outside a DM anyway.
-_LINK_COMMAND_RE = re.compile(r"^!link\s+(\S+)$", re.IGNORECASE)
+# Matches both "!link" (bare, group(1) None) and "!link <code>"
+# (group(1) the code). Recognized in a guild channel too, not just a
+# DM (see RelayClient._handle_link_command), but actual code
+# REDEMPTION only ever happens from a DM: the whole point of the code
+# is that it's a short-lived secret proving control of the Discord
+# account, posting one in a public channel (even briefly, even though
+# it's single-use) doesn't fit that.
+_LINK_COMMAND_RE = re.compile(r"^!link(?:\s+(\S+))?$", re.IGNORECASE)
 
 
 def _translate_mentions(content: Optional[str], *, users: dict, channels: dict, roles: dict,
@@ -796,17 +796,76 @@ class RelayClient(discord.Client):
             return  # this relay's own post (from the fluxer_to_discord direction), never re-relay it
         if message.guild is None:
             if not message.author.bot:
-                await self._handle_link_dm(message)
+                await self._handle_link_command(message, in_guild=False)
             return  # DMs are never relay content, nothing else to do with one either way
         if message.webhook_id and await self._is_own_webhook("discord", str(message.channel.id), message.webhook_id):
             return  # this relay's own webhook echo, same loop risk as above, just a different identity
+        if not message.author.bot and await self._handle_link_command(message, in_guild=True):
+            return  # was a !link command, fully handled, don't also relay it as regular content
         await self._relay_discord_message(message)
 
-    async def _handle_link_dm(self, message: discord.Message) -> None:
+    async def _handle_link_command(self, message: discord.Message, *, in_guild: bool) -> bool:
+        """Returns True if this message was a !link command (bare or
+        with a code) and has been fully handled, meaning the caller in
+        a guild channel should NOT also relay it as regular content.
+        False means it wasn't a !link command at all.
+
+        Two entry points feed into this, both landing here:
+          - !link on Fluxer (bot/modules/account_links.py) DMs a code
+            and says to send it back here as "!link <code>".
+          - Discoverability the other way: someone who starts on
+            Discord first and doesn't know about the Fluxer command
+            yet can run bare "!link" (guild channel or DM) and gets
+            DMed the same instructions, so there's a working entry
+            point on both platforms, not just one.
+
+        A message that includes an actual CODE only ever gets
+        REDEEMED from a DM, even though the regex matches in a guild
+        channel too: codes are short-lived, single-use secrets (see
+        common.db.create_link_code), posting one in a public channel
+        is exactly the exposure the whole code-exchange design exists
+        to avoid. A guild-channel "!link <code>" is intercepted (not
+        relayed, not redeemed) and the sender is redirected to send it
+        again in a DM instead; the code itself is untouched and still
+        valid for them to use there."""
         m = _LINK_COMMAND_RE.match((message.content or "").strip())
         if not m:
-            return
-        fluxer_user_id = await db.redeem_link_code(m.group(1), str(message.author.id))
+            return False
+        code = m.group(1)
+
+        if in_guild:
+            try:
+                await message.author.send(
+                    f"🔗 To link your Discord and Fluxer accounts: run `!link` on Fluxer (in any server "
+                    f"this bot manages) to get a short code, then send it back to me here **in this DM** "
+                    f"as `!link <code>`."
+                    + (f" You just posted a code in a public channel — it's still valid, just send it "
+                       f"to me here instead of there, a code is meant to be a private, single-use "
+                       f"secret." if code else "")
+                )
+            except discord.HTTPException:
+                try:
+                    await message.channel.send(
+                        f"{message.author.mention} I couldn't DM you (check that DMs from server "
+                        f"members are allowed) — allow DMs from this server, then run `!link` again.",
+                        allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=[message.author]),
+                    )
+                except discord.HTTPException:
+                    pass
+            return True
+
+        # Already in a DM.
+        if not code:
+            try:
+                await message.channel.send(
+                    "🔗 To link your Discord and Fluxer accounts: run `!link` on Fluxer (in any server "
+                    "this bot manages) to get a short code, then send it to me here as `!link <code>`."
+                )
+            except discord.HTTPException:
+                pass
+            return True
+
+        fluxer_user_id = await db.redeem_link_code(code, str(message.author.id))
         try:
             if fluxer_user_id:
                 await message.channel.send(
@@ -820,6 +879,7 @@ class RelayClient(discord.Client):
                 )
         except discord.Forbidden:
             pass  # can't DM them back, nothing more to do, the link itself (if any) already went through
+        return True
 
     async def _relay_discord_message(self, message: discord.Message, mappings: Optional[list] = None) -> None:
         """The actual "take this Discord message and relay it to Fluxer"
