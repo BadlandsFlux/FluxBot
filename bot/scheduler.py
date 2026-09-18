@@ -130,6 +130,9 @@ _RELAY_LINK_PRUNE_INTERVAL = timedelta(hours=24)
 _last_relay_queue_prune: Optional[datetime] = None
 _RELAY_QUEUE_PRUNE_INTERVAL = timedelta(hours=1)
 
+_last_relay_claim_prune: Optional[datetime] = None
+_RELAY_CLAIM_PRUNE_INTERVAL = timedelta(minutes=10)
+
 
 async def _prune_relay_message_links() -> None:
     # A maintenance task, not something that needs to run on every 15s
@@ -164,6 +167,24 @@ async def _prune_relay_outbound_queue() -> None:
     _last_relay_queue_prune = now
 
 
+async def _prune_relay_send_claims() -> None:
+    """Backstop for a discord_relay_send_claims row whose owning
+    process crashed between claiming a (mapping, message) pair (see
+    common.db.claim_relay_send) and either finalizing or releasing it,
+    which would otherwise leave that pair permanently unable to be
+    relayed. A send normally completes in well under a second, so the
+    multi-minute margin in prune_stale_relay_send_claims only ever
+    catches a genuinely abandoned claim."""
+    global _last_relay_claim_prune
+    now = datetime.now(timezone.utc)
+    if _last_relay_claim_prune and now - _last_relay_claim_prune < _RELAY_CLAIM_PRUNE_INTERVAL:
+        return
+    pruned = await db.prune_stale_relay_send_claims()
+    if pruned:
+        log.info("Cleared %d stale Discord relay send claim(s)", pruned)
+    _last_relay_claim_prune = now
+
+
 async def run_scheduler(bot: Bot) -> None:
     while True:
         try:
@@ -174,6 +195,7 @@ async def run_scheduler(bot: Bot) -> None:
             await _update_bot_status(bot)
             await _prune_relay_message_links()
             await _prune_relay_outbound_queue()
+            await _prune_relay_send_claims()
         except Exception:
             log.exception("Scheduler tick failed")
         await asyncio.sleep(CHECK_INTERVAL)

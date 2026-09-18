@@ -509,6 +509,31 @@ CREATE TABLE IF NOT EXISTS discord_relay_webhooks (
     UNIQUE (platform, channel_id)
 );
 
+-- One row per (mapping, source message) currently being relayed,
+-- claimed via INSERT ... ON CONFLICT DO NOTHING (see
+-- common/db.py's claim_relay_send) before the actual send is
+-- attempted, deleted once the send either succeeds (superseded by the
+-- discord_relay_message_links row that records it) or fails outright
+-- (releases the claim so a retry isn't permanently blocked). Exists
+-- because the reconnect backfill (a REST history scan) and the live
+-- gateway's own message handler can both end up processing the SAME
+-- Discord message through the SAME mapping around the moment of
+-- reconnect, and a plain "check if already relayed, then send" is a
+-- check-then-act race: both could see "not yet relayed" before either
+-- has actually sent anything. The primary key makes the claim itself
+-- atomic, closing that gap; a stale claim (its owning process crashed
+-- between claiming and finishing) is swept up by the scheduler's
+-- prune_stale_relay_send_claims after a few minutes, see
+-- bot/scheduler.py.
+CREATE TABLE IF NOT EXISTS discord_relay_send_claims (
+    mapping_id          BIGINT NOT NULL,
+    source_platform     TEXT NOT NULL CHECK (source_platform IN ('discord', 'fluxer')),
+    source_message_id   TEXT NOT NULL,
+    claimed_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (mapping_id, source_platform, source_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_relay_send_claims_claimed_at ON discord_relay_send_claims(claimed_at);
+
 -- Migrations for columns added to already-existing tables after this
 -- schema's earlier migration block (further up this file) was last
 -- updated. That block runs early, before several of the tables below
