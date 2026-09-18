@@ -96,16 +96,41 @@ async def update_guild_settings(guild_id: str, **fields: Any) -> None:
 
 
 # -------------------------------------------------------------- warnings --
-async def add_warning(guild_id: str, user_id: str, moderator_id: str, reason: str) -> int:
-    row = await pool().fetchrow(
-        """
-        INSERT INTO warnings (guild_id, user_id, moderator_id, reason)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id
-        """,
-        guild_id, user_id, moderator_id, reason,
-    )
-    return row["id"]
+async def add_warning_and_count(guild_id: str, user_id: str, moderator_id: str, reason: str) -> tuple[int, int]:
+    """Atomically add a warning and return (warning_id, new_active_count).
+
+    warn_member() used to call add_warning() and count_active_warnings()
+    as two separate round trips, which meant two warnings landing close
+    together (two moderators, or a double-submitted command) could both
+    run their count AFTER both inserts had already committed, both see
+    the same final count, and both independently decide the
+    auto-escalation threshold was just crossed, each kicking/timing out
+    the member and logging its own escalation entry.
+
+    A transaction-scoped advisory lock keyed on (guild_id, user_id)
+    (warnings has no natural single row per member to lock the way
+    levels does, it's an append-only log) makes a second concurrent
+    warning for the same member wait for the first's whole
+    insert-then-count to commit before it can even start, so the counts
+    it produces are always strictly sequential, never both landing on
+    the same post-both-inserts total.
+    """
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", f"{guild_id}:{user_id}")
+            row = await conn.fetchrow(
+                """
+                INSERT INTO warnings (guild_id, user_id, moderator_id, reason)
+                VALUES ($1, $2, $3, $4)
+                RETURNING id
+                """,
+                guild_id, user_id, moderator_id, reason,
+            )
+            count_row = await conn.fetchrow(
+                "SELECT COUNT(*) AS c FROM warnings WHERE guild_id=$1 AND user_id=$2 AND active",
+                guild_id, user_id,
+            )
+            return row["id"], count_row["c"]
 
 
 async def count_active_warnings(guild_id: str, user_id: str) -> int:
@@ -349,26 +374,54 @@ async def get_level(guild_id: str, user_id: str) -> Optional[asyncpg.Record]:
     )
 
 
-async def add_xp(guild_id: str, user_id: str, amount: int) -> asyncpg.Record:
-    """Add XP and return the resulting row (including updated level, computed
-    by the caller before calling this, this just persists it)."""
-    row = await pool().fetchrow(
-        """
-        INSERT INTO levels (guild_id, user_id, xp, level, last_xp_at)
-        VALUES ($1, $2, $3, 0, now())
-        ON CONFLICT (guild_id, user_id) DO UPDATE SET
-            xp = levels.xp + $3, last_xp_at = now()
-        RETURNING *
-        """,
-        guild_id, user_id, amount,
-    )
-    return row
-
-
 async def set_level(guild_id: str, user_id: str, level: int) -> None:
     await pool().execute(
         "UPDATE levels SET level=$3 WHERE guild_id=$1 AND user_id=$2", guild_id, user_id, level,
     )
+
+
+async def add_xp_and_advance_level(guild_id: str, user_id: str, amount: int, level_for_xp) -> tuple[int, int, int]:
+    """Atomically add XP and compute the resulting level transition.
+
+    grant_xp() used to do this as three separate round trips (read the
+    current level, add XP, write the new level), which meant two
+    concurrent grants for the same member (e.g. a chat message and a
+    voice-XP tick landing close together) could both read the same
+    stale "old level" before either had written its own new level,
+    each independently deciding a level-up happened and both sending a
+    level-up announcement / re-running the role-reward loop. Locking
+    the row for the duration of the read-compute-write (via
+    `SELECT ... FOR UPDATE` inside one transaction) makes concurrent
+    grants for the same member queue up instead of interleaving, so
+    each one's "old level" is always whatever the previous one
+    actually left behind.
+
+    `level_for_xp` is a plain `int -> int` function, passed in rather
+    than imported here so the XP curve itself stays owned by
+    bot/modules/leveling.py, not duplicated into the data layer.
+    Returns (old_level, new_level, new_xp)."""
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO levels (guild_id, user_id, xp, level, last_xp_at)
+                VALUES ($1, $2, 0, 0, now())
+                ON CONFLICT (guild_id, user_id) DO NOTHING
+                """,
+                guild_id, user_id,
+            )
+            row = await conn.fetchrow(
+                "SELECT xp, level FROM levels WHERE guild_id=$1 AND user_id=$2 FOR UPDATE",
+                guild_id, user_id,
+            )
+            old_level = row["level"]
+            new_xp = row["xp"] + amount
+            new_level = level_for_xp(new_xp)
+            await conn.execute(
+                "UPDATE levels SET xp=$3, level=$4, last_xp_at=now() WHERE guild_id=$1 AND user_id=$2",
+                guild_id, user_id, new_xp, new_level,
+            )
+            return old_level, new_level, new_xp
 
 
 async def reset_all_xp(guild_id: str) -> int:

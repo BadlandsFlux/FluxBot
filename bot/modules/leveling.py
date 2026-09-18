@@ -60,14 +60,15 @@ async def grant_xp(bot: Bot, guild_id: str, user_id: str, username: str, amount:
     if not guild_cfg or not guild_cfg["leveling_enabled"]:
         return
 
-    existing = await db.get_level(guild_id, user_id)
-    old_level = existing["level"] if existing else 0
-    row = await db.add_xp(guild_id, user_id, amount)
-    new_level = level_for_xp(row["xp"])
+    # Atomic: reads the current level, adds XP, and writes the new level
+    # all under one row lock, so two concurrent grants for the same
+    # member (e.g. a chat message and a voice-XP tick landing close
+    # together) can't both compute their level-up off the same stale
+    # pre-grant level. See add_xp_and_advance_level's own docstring.
+    old_level, new_level, _ = await db.add_xp_and_advance_level(guild_id, user_id, amount, level_for_xp)
     if new_level <= old_level:
         return
 
-    await db.set_level(guild_id, user_id, new_level)
     channel_id = guild_cfg["level_up_channel_id"] or fallback_channel_id
     if channel_id:
         text = (
