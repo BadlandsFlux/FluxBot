@@ -2,7 +2,9 @@
 
     !link          start a link: DMs you a short code, good for 10 minutes.
                     Finish it on Discord by DMing this bot's Discord relay
-                    `!link <code>` (see bot/discord_relay.py's DM handling).
+                    `f!link <code>` (see bot/discord_relay.py's DM handling;
+                    "f!" rather than "!" so it doesn't collide with other
+                    Discord bots' own "!" prefix in the same server).
     !unlink        remove your account link.
     !linkstatus    show whether you're currently linked.
 
@@ -39,7 +41,7 @@ def register(bot: Bot) -> None:
             "color": 0x5865F2,
             "description": (
                 f"Your code: **`{code}`**\n\n"
-                "On Discord, send this bot's relay a DM: `!link " + code + "`\n\n"
+                "On Discord, send this bot's relay a DM: `f!link " + code + "`\n\n"
                 "Good for 10 minutes. Starting a new `!link` cancels this code."
             ),
         }

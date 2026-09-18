@@ -178,14 +178,16 @@ _USER_MENTION_RE = re.compile(r"<@!?(\d+)>")
 _CHANNEL_MENTION_RE = re.compile(r"<#(\d+)>")
 _ROLE_MENTION_RE = re.compile(r"<@&(\d+)>")
 
-# Matches both "!link" (bare, group(1) None) and "!link <code>"
-# (group(1) the code). Recognized in a guild channel too, not just a
-# DM (see RelayClient._handle_link_command), but actual code
-# REDEMPTION only ever happens from a DM: the whole point of the code
-# is that it's a short-lived secret proving control of the Discord
-# account, posting one in a public channel (even briefly, even though
-# it's single-use) doesn't fit that.
-_LINK_COMMAND_RE = re.compile(r"^!link(?:\s+(\S+))?$", re.IGNORECASE)
+# Matches both "f!link" (bare, group(1) None) and "f!link <code>"
+# (group(1) the code). "f!" rather than a bare "!" specifically to
+# avoid colliding with every other Discord bot's own "!" prefix in a
+# server that has several bots installed. Recognized in a guild
+# channel too, not just a DM (see RelayClient._handle_link_command),
+# but actual code REDEMPTION only ever happens from a DM: the whole
+# point of the code is that it's a short-lived secret proving control
+# of the Discord account, posting one in a public channel (even
+# briefly, even though it's single-use) doesn't fit that.
+_LINK_COMMAND_RE = re.compile(r"^f!link(?:\s+(\S+))?$", re.IGNORECASE)
 
 
 def _translate_mentions(content: Optional[str], *, users: dict, channels: dict, roles: dict,
@@ -801,30 +803,34 @@ class RelayClient(discord.Client):
         if message.webhook_id and await self._is_own_webhook("discord", str(message.channel.id), message.webhook_id):
             return  # this relay's own webhook echo, same loop risk as above, just a different identity
         if not message.author.bot and await self._handle_link_command(message, in_guild=True):
-            return  # was a !link command, fully handled, don't also relay it as regular content
+            return  # was an f!link command, fully handled, don't also relay it as regular content
         await self._relay_discord_message(message)
 
     async def _handle_link_command(self, message: discord.Message, *, in_guild: bool) -> bool:
-        """Returns True if this message was a !link command (bare or
+        """Returns True if this message was an f!link command (bare or
         with a code) and has been fully handled, meaning the caller in
         a guild channel should NOT also relay it as regular content.
-        False means it wasn't a !link command at all.
+        False means it wasn't an f!link command at all.
 
         Two entry points feed into this, both landing here:
           - !link on Fluxer (bot/modules/account_links.py) DMs a code
-            and says to send it back here as "!link <code>".
+            and says to send it back here as "f!link <code>".
           - Discoverability the other way: someone who starts on
             Discord first and doesn't know about the Fluxer command
-            yet can run bare "!link" (guild channel or DM) and gets
+            yet can run bare "f!link" (guild channel or DM) and gets
             DMed the same instructions, so there's a working entry
             point on both platforms, not just one.
+
+        "f!" rather than a bare "!" so this doesn't collide with every
+        other Discord bot in the server that also happens to use "!"
+        as its prefix, see _LINK_COMMAND_RE.
 
         A message that includes an actual CODE only ever gets
         REDEEMED from a DM, even though the regex matches in a guild
         channel too: codes are short-lived, single-use secrets (see
         common.db.create_link_code), posting one in a public channel
         is exactly the exposure the whole code-exchange design exists
-        to avoid. A guild-channel "!link <code>" is intercepted (not
+        to avoid. A guild-channel "f!link <code>" is intercepted (not
         relayed, not redeemed) and the sender is redirected to send it
         again in a DM instead; the code itself is untouched and still
         valid for them to use there."""
@@ -838,7 +844,7 @@ class RelayClient(discord.Client):
                 await message.author.send(
                     f"🔗 To link your Discord and Fluxer accounts: run `!link` on Fluxer (in any server "
                     f"this bot manages) to get a short code, then send it back to me here **in this DM** "
-                    f"as `!link <code>`."
+                    f"as `f!link <code>`."
                     + (f" You just posted a code in a public channel — it's still valid, just send it "
                        f"to me here instead of there, a code is meant to be a private, single-use "
                        f"secret." if code else "")
@@ -847,7 +853,7 @@ class RelayClient(discord.Client):
                 try:
                     await message.channel.send(
                         f"{message.author.mention} I couldn't DM you (check that DMs from server "
-                        f"members are allowed) — allow DMs from this server, then run `!link` again.",
+                        f"members are allowed) — allow DMs from this server, then run `f!link` again.",
                         allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=[message.author]),
                     )
                 except discord.HTTPException:
@@ -859,7 +865,7 @@ class RelayClient(discord.Client):
             try:
                 await message.channel.send(
                     "🔗 To link your Discord and Fluxer accounts: run `!link` on Fluxer (in any server "
-                    "this bot manages) to get a short code, then send it to me here as `!link <code>`."
+                    "this bot manages) to get a short code, then send it to me here as `f!link <code>`."
                 )
             except discord.HTTPException:
                 pass
