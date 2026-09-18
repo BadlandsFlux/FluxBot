@@ -22,7 +22,7 @@ from bot.moderation_actions import ModerationBlocked
 from bot import voice_tracker
 from bot.commands import Bot as BotFramework
 from bot.discord_relay import INVITE_PERMISSIONS as DISCORD_RELAY_INVITE_PERMISSIONS
-from bot.modules import achievements, fun, info as info_module, leveling, moderation, mydata, reminders, roles, staffnotes, tags, trivia, utility
+from bot.modules import account_links, achievements, fun, info as info_module, leveling, moderation, mydata, reminders, roles, staffnotes, tags, trivia, utility
 from bot.modules import afk as afk_module
 from bot.permissions import permission_name, role_is_privileged
 from bot.rest import FluxerAPIError, FluxerREST
@@ -65,6 +65,7 @@ def _build_command_catalog() -> list:
     afk_module.register(catalog_bot)
     staffnotes.register(catalog_bot)
     mydata.register(catalog_bot)
+    account_links.register(catalog_bot)
     seen = set()
     commands = []
     for cmd in catalog_bot.commands.values():

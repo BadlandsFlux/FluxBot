@@ -185,6 +185,25 @@ async def _prune_relay_send_claims() -> None:
     _last_relay_claim_prune = now
 
 
+_last_link_code_prune: Optional[datetime] = None
+_LINK_CODE_PRUNE_INTERVAL = timedelta(minutes=10)
+
+
+async def _prune_link_codes() -> None:
+    """Codes are short-lived (10 minutes by default, see
+    common.db.create_link_code) and self-deleting on redemption, this
+    just clears out ones nobody ever redeemed instead of leaving them
+    in the table forever."""
+    global _last_link_code_prune
+    now = datetime.now(timezone.utc)
+    if _last_link_code_prune and now - _last_link_code_prune < _LINK_CODE_PRUNE_INTERVAL:
+        return
+    pruned = await db.prune_expired_link_codes()
+    if pruned:
+        log.info("Cleared %d expired account-link code(s)", pruned)
+    _last_link_code_prune = now
+
+
 async def run_scheduler(bot: Bot) -> None:
     while True:
         try:
@@ -196,6 +215,7 @@ async def run_scheduler(bot: Bot) -> None:
             await _prune_relay_message_links()
             await _prune_relay_outbound_queue()
             await _prune_relay_send_claims()
+            await _prune_link_codes()
         except Exception:
             log.exception("Scheduler tick failed")
         await asyncio.sleep(CHECK_INTERVAL)
