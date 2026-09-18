@@ -328,18 +328,44 @@ def _is_safe_download_url(url: str) -> bool:
 
 
 async def _download(url: str, max_bytes: int) -> Optional[bytes]:
+    """Fetches an attachment url, bounded to max_bytes.
+
+    Two things this used to get wrong:
+
+    - Redirects were followed by default. is_safe_external_url() only
+      checks the URL's own hostname; its own docstring says a caller
+      MUST also disable redirect-following, since a host that passes
+      the initial check could still 30x to an internal address (a
+      cloud metadata endpoint, an internal admin panel) and aiohttp
+      would transparently fetch it server-side. Fixed with
+      allow_redirects=False.
+    - The size cap was only checked AFTER `resp.read()` had already
+      buffered the ENTIRE response into memory, and the caller's own
+      pre-check (`ref["size"] > max_bytes`) is skippable whenever the
+      reported size is 0/absent, so a crafted or misreported
+      attachment size meant this could be tricked into fully
+      downloading an arbitrarily large file before discarding it,
+      exactly the memory-exhaustion risk MAX_ATTACHMENT_BYTES's own
+      comment says it exists to prevent. Fixed by streaming and
+      aborting as soon as more than max_bytes has actually arrived,
+      the only enforcement that can't be defeated by a server lying
+      about (or a caller omitting) Content-Length."""
     if not _is_safe_download_url(url):
         log.warning("Refusing to download attachment from an unsafe-looking URL: %s", url)
         return None
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15), allow_redirects=False) as resp:
                 if resp.status != 200:
                     return None
-                data = await resp.read()
-                if len(data) > max_bytes:
+                if resp.content_length is not None and resp.content_length > max_bytes:
                     return None
-                return data
+                chunks = bytearray()
+                async for chunk in resp.content.iter_chunked(65536):
+                    chunks += chunk
+                    if len(chunks) > max_bytes:
+                        return None
+                return bytes(chunks)
     except Exception:
         return None
 
