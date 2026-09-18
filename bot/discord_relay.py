@@ -538,6 +538,36 @@ class RelayClient(discord.Client):
         await db.update_discord_relay_status(connected=False)
         await db.mark_relay_disconnected()
 
+    async def on_resumed(self) -> None:
+        """discord.py fires on_disconnect on EVERY websocket drop, not
+        just a permanent one: internally, Client.connect() also
+        dispatches it right before attempting a session RESUME after a
+        brief blip (see discord.py's client.py, the ReconnectWebSocket
+        branch of its connect() loop). A successful resume then fires
+        on_resumed(), NOT on_ready() again, since a resume replays
+        whatever was missed rather than re-running the full IDENTIFY
+        handshake on_ready responds to. Without this handler, the
+        connected=False written by that first on_disconnect was never
+        undone for the common case of a blip that resumes cleanly, so
+        the dashboard's Discord Relay status kept showing "Not
+        connected" indefinitely even though the relay had reconnected
+        and was relaying normally the whole time.
+
+        Doesn't re-run _recover_after_reconnect() the way on_ready
+        does: a successful RESUME already replays whatever the gateway
+        missed during the gap itself, so there's nothing this REST-
+        based backfill would find that wasn't already delivered
+        normally through on_message. Still clears the disconnected-at
+        marker, same as a full reconnect's backfill pass would, so the
+        NEXT real outage gets its own fresh timestamp rather than
+        inheriting this blip's."""
+        log.info("Discord relay session resumed as %s", self.user)
+        await db.update_discord_relay_status(
+            connected=True, discord_username=str(self.user),
+            discord_bot_id=str(self.user.id) if self.user else None,
+        )
+        await db.clear_relay_disconnected_at()
+
     async def _recover_after_reconnect(self) -> None:
         """Runs as a background task after every on_ready, not awaited
         directly there, a potentially-long backfill across several
