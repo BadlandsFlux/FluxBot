@@ -289,8 +289,9 @@ class FluxerREST:
 
     async def execute_webhook(self, webhook_id: str, webhook_token: str, *, content: Optional[str] = None,
                                embeds: Optional[list] = None, username: Optional[str] = None,
-                               avatar_url: Optional[str] = None, files: Optional[list[tuple[str, bytes]]] = None) -> dict:
-        payload: dict = {"allowed_mentions": self.SAFE_ALLOWED_MENTIONS}
+                               avatar_url: Optional[str] = None, files: Optional[list[tuple[str, bytes]]] = None,
+                               allowed_mentions: Optional[dict] = None) -> dict:
+        payload: dict = {"allowed_mentions": allowed_mentions or self.SAFE_ALLOWED_MENTIONS}
         if content:
             payload["content"] = content
         if embeds:
@@ -324,8 +325,18 @@ class FluxerREST:
                     return await resp.json(content_type=None)
 
     async def edit_webhook_message(self, webhook_id: str, webhook_token: str, message_id: str,
-                                    content: Optional[str] = None, embeds: Optional[list] = None) -> dict:
-        payload: dict = {}
+                                    content: Optional[str] = None, embeds: Optional[list] = None,
+                                    allowed_mentions: Optional[dict] = None) -> dict:
+        # Explicitly defaults to SAFE_ALLOWED_MENTIONS rather than
+        # leaving the field out (which this used to do): before live
+        # cross-platform mentions existed, edited content could only
+        # ever be inert "@name" text, so an unset allowed_mentions
+        # here (falling back to whatever Fluxer's own default is,
+        # instance-dependent and never something this project relies
+        # on elsewhere, see rest.py's module docstring) was a gap that
+        # happened to never matter. It matters now that a live <@id>
+        # mention can legitimately appear in edited content too.
+        payload: dict = {"allowed_mentions": allowed_mentions or self.SAFE_ALLOWED_MENTIONS}
         if content is not None:
             payload["content"] = content
         if embeds is not None:

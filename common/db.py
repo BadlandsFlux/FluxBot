@@ -8,6 +8,7 @@ concurrently.
 """
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 from typing import Any, Optional
 
@@ -1307,6 +1308,130 @@ async def prune_expired_fluxer_to_discord_queue(older_than_hours: int = 24) -> i
         "DELETE FROM discord_relay_outbound_queue WHERE created_at < now() - ($1 || ' hours')::interval",
         str(older_than_hours),
     )
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
+# ----------------------------------------------------- account linking --
+_LINK_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I, easy to read/type aloud
+
+
+def _generate_link_code() -> str:
+    return "".join(secrets.choice(_LINK_CODE_ALPHABET) for _ in range(6))
+
+
+async def create_link_code(fluxer_user_id: str, *, ttl_minutes: int = 10) -> str:
+    """Starts a link attempt for this Fluxer user, returns the code to
+    show them. A person can have at most one code pending at a time,
+    starting a new one invalidates any earlier unredeemed code (no
+    reason to let two old codes for the same person both stay live)."""
+    await pool().execute("DELETE FROM account_link_codes WHERE fluxer_user_id=$1", fluxer_user_id)
+    for _ in range(5):  # vanishingly unlikely to ever collide, but don't loop forever
+        code = _generate_link_code()
+        try:
+            await pool().execute(
+                "INSERT INTO account_link_codes (code, fluxer_user_id, expires_at) VALUES ($1, $2, now() + ($3 || ' minutes')::interval)",
+                code, fluxer_user_id, str(ttl_minutes),
+            )
+            return code
+        except asyncpg.UniqueViolationError:
+            continue
+    raise RuntimeError("Couldn't generate a unique link code after 5 attempts")
+
+
+async def redeem_link_code(code: str, discord_user_id: str) -> Optional[str]:
+    """Atomically consumes an unexpired code and creates the link.
+    Returns the linked fluxer_user_id on success, None if the code is
+    unknown/expired/already used (the caller can't tell which, same
+    "invalid or expired" message either way, no reason to help someone
+    brute-force which codes have ever existed).
+
+    Runs as one transaction: two people racing to redeem the exact
+    same code (a guessed/leaked code, or just a double-click) must not
+    both succeed, only one DELETE ... RETURNING on the code can ever
+    consume it.
+
+    Relinking (either side) is meant to just work, not error: a
+    Discord account already linked to some other Fluxer account gets
+    repointed (ON CONFLICT (discord_user_id) below), and a Fluxer
+    account already linked to some OTHER Discord account needs its
+    stale row cleared FIRST -- that row isn't the ON CONFLICT target,
+    so the upsert alone can't catch it, it would instead fail outright
+    on account_links' UNIQUE(fluxer_user_id) the moment the insert
+    landed. (An earlier version of this function had the cleanup after
+    the upsert instead of before, which is exactly backwards: by the
+    time you'd know you need it, the insert has already failed.)"""
+    code = code.strip().upper()
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                "DELETE FROM account_link_codes WHERE code=$1 AND expires_at > now() RETURNING fluxer_user_id",
+                code,
+            )
+            if not row:
+                return None
+            fluxer_user_id = row["fluxer_user_id"]
+            await conn.execute(
+                "DELETE FROM account_links WHERE fluxer_user_id=$1 AND discord_user_id != $2",
+                fluxer_user_id, discord_user_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO account_links (discord_user_id, fluxer_user_id)
+                VALUES ($1, $2)
+                ON CONFLICT (discord_user_id) DO UPDATE SET fluxer_user_id = EXCLUDED.fluxer_user_id, linked_at = now()
+                """,
+                discord_user_id, fluxer_user_id,
+            )
+            return fluxer_user_id
+
+
+async def get_link_by_discord(discord_user_id: str) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow("SELECT * FROM account_links WHERE discord_user_id=$1", discord_user_id)
+
+
+async def get_link_by_fluxer(fluxer_user_id: str) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow("SELECT * FROM account_links WHERE fluxer_user_id=$1", fluxer_user_id)
+
+
+async def get_links_by_discord_ids(discord_user_ids: list[str]) -> dict[str, str]:
+    """Batch lookup for mention translation: a relayed message can
+    mention several people at once, one round trip beats one query per
+    mentioned user. Returns {discord_user_id: fluxer_user_id}, only for
+    ids that are actually linked."""
+    if not discord_user_ids:
+        return {}
+    rows = await pool().fetch(
+        "SELECT discord_user_id, fluxer_user_id FROM account_links WHERE discord_user_id = ANY($1::text[])",
+        discord_user_ids,
+    )
+    return {r["discord_user_id"]: r["fluxer_user_id"] for r in rows}
+
+
+async def get_links_by_fluxer_ids(fluxer_user_ids: list[str]) -> dict[str, str]:
+    """Fluxer -> Discord mirror of get_links_by_discord_ids."""
+    if not fluxer_user_ids:
+        return {}
+    rows = await pool().fetch(
+        "SELECT fluxer_user_id, discord_user_id FROM account_links WHERE fluxer_user_id = ANY($1::text[])",
+        fluxer_user_ids,
+    )
+    return {r["fluxer_user_id"]: r["discord_user_id"] for r in rows}
+
+
+async def remove_link_by_fluxer(fluxer_user_id: str) -> bool:
+    result = await pool().execute("DELETE FROM account_links WHERE fluxer_user_id=$1", fluxer_user_id)
+    return result.split()[-1] != "0"
+
+
+async def prune_expired_link_codes() -> int:
+    """Backstop for a code nobody ever redeemed. Called periodically by
+    the scheduler; codes are short-lived (default 10 minutes) so this
+    just keeps the table from accumulating abandoned attempts forever,
+    redemption itself already deletes a code the instant it's used."""
+    result = await pool().execute("DELETE FROM account_link_codes WHERE expires_at < now()")
     try:
         return int(result.split()[-1])
     except (ValueError, IndexError):

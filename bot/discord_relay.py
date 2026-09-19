@@ -67,13 +67,15 @@ import io
 import json
 import logging
 import re
+import time
 from datetime import timedelta
-from typing import Optional
+from typing import Iterable, Optional
 from urllib.parse import quote
 
 import aiohttp
 import discord
 
+from bot.bounded_cache import BoundedDict
 from bot.commands import Bot
 from bot.rest import FluxerAPIError, FluxerREST
 from common import db
@@ -95,16 +97,51 @@ WEBHOOK_NAME = "FluxBot Relay"
 # opposite direction of the bridge: Fluxer-bound sends already refuse to
 # auto-parse @everyone/role/user mentions out of free text a low- or
 # no-privilege member controls, for exactly this reason (see that
-# constant's own comment). Relayed content here is never expected to
-# carry a LIVE mention either, by the time a message reaches this
-# point, _translate_mentions() has already turned any @user/#channel/
-# @role token into plain, inert text (see this module's own docstring),
-# so there's nothing legitimate this would ever need to let through.
-# Without it, a Fluxer user with zero special permissions could type
-# literal "@everyone"/"@here" and have it relay to Discord as a live,
-# unrestricted mention, mass-pinging the bridged server if the relay
-# bot has Mention Everyone there (a plausible grant for a bridge bot).
+# constant's own comment). This is the DEFAULT for relayed content: by
+# the time a message reaches a send call, _translate_mentions() has
+# already turned any @user/#channel/@role token into plain, inert text
+# UNLESS the mentioned user has a verified cross-platform account link
+# (see bot/modules/account_links.py) AND is actually a member of the
+# destination server, in which case it becomes a real, live mention
+# instead, and that specific id (never a blanket allow) gets added to
+# the allowed_mentions passed for that one send, see
+# _live_discord_to_fluxer_mentions/_live_fluxer_to_discord_mentions.
+# Without a default this restrictive, a Fluxer user with zero special
+# permissions could type literal "@everyone"/"@here" and have it relay
+# to Discord as a live, unrestricted mention, mass-pinging the bridged
+# server if the relay bot has Mention Everyone there (a plausible
+# grant for a bridge bot).
 DISCORD_SAFE_ALLOWED_MENTIONS = discord.AllowedMentions.none()
+
+
+def _discord_allowed_mentions_for(live_mentioned_discord_ids: set) -> Optional[discord.AllowedMentions]:
+    """Builds an AllowedMentions that pings ONLY the given Discord user
+    ids (never @everyone/@here, never roles, never any OTHER user
+    mention that might be sitting inert in the same content), for a
+    message whose content carries a live cross-platform mention (see
+    _live_fluxer_to_discord_mentions). Returns None for an empty set so
+    the caller's default (DISCORD_SAFE_ALLOWED_MENTIONS, blocks
+    everything) applies unchanged, the common case of a message with
+    no live mentions in it."""
+    if not live_mentioned_discord_ids:
+        return None
+    return discord.AllowedMentions(everyone=False, roles=False,
+                                    users=[discord.Object(id=int(uid)) for uid in live_mentioned_discord_ids])
+
+
+# TTL cache for "is this Discord user id actually a member of this
+# Discord guild", used by _live_fluxer_to_discord_mentions. Backed by a
+# REST point-fetch (Guild.fetch_member), not discord.py's local member
+# cache: this relay's intents deliberately don't include the
+# privileged GUILD_MEMBERS intent (see RelayClient's own intents
+# above), so the local cache only has members discord.py has happened
+# to observe an event from, a real gap, not proof of absence.
+# fetch_member itself needs no privileged intent, just the bot being
+# in the guild. Same 60s TTL as Bot.get_member's own cache
+# (bot/commands.py), which the Discord -> Fluxer direction reuses
+# directly instead of needing a second cache of its own.
+_DISCORD_MEMBER_CHECK_TTL = 60
+_discord_member_check_cache: "BoundedDict[tuple[int, int], tuple[bool, float]]" = BoundedDict(max_size=10_000)
 
 # A ceiling on how many messages a single reconnect backfill pass pulls
 # from one channel's history, not a guess at Discord's own limits.
@@ -141,8 +178,20 @@ _USER_MENTION_RE = re.compile(r"<@!?(\d+)>")
 _CHANNEL_MENTION_RE = re.compile(r"<#(\d+)>")
 _ROLE_MENTION_RE = re.compile(r"<@&(\d+)>")
 
+# Matches both "f!link" (bare, group(1) None) and "f!link <code>"
+# (group(1) the code). "f!" rather than a bare "!" specifically to
+# avoid colliding with every other Discord bot's own "!" prefix in a
+# server that has several bots installed. Recognized in a guild
+# channel too, not just a DM (see RelayClient._handle_link_command),
+# but actual code REDEMPTION only ever happens from a DM: the whole
+# point of the code is that it's a short-lived secret proving control
+# of the Discord account, posting one in a public channel (even
+# briefly, even though it's single-use) doesn't fit that.
+_LINK_COMMAND_RE = re.compile(r"^f!link(?:\s+(\S+))?$", re.IGNORECASE)
 
-def _translate_mentions(content: Optional[str], *, users: dict, channels: dict, roles: dict) -> Optional[str]:
+
+def _translate_mentions(content: Optional[str], *, users: dict, channels: dict, roles: dict,
+                         live_users: Optional[dict] = None, live_mentioned: Optional[set] = None) -> Optional[str]:
     """Replaces Discord/Fluxer-style <@id>/<#id>/<@&id> mention tokens
     with plain "@name"/"#name" text. Necessary because these tokens
     encode a PLATFORM-SPECIFIC id: Discord and Fluxer are entirely
@@ -150,22 +199,42 @@ def _translate_mentions(content: Optional[str], *, users: dict, channels: dict, 
     other platform would either render as a dead, unparsed token or,
     in the unlikely case the numeric id happens to coincide with
     something real over there, silently mention the wrong person
-    entirely. This can't produce a live, clickable mention on the
-    other platform either way, there's no cross-platform id mapping
-    that would make one possible, so plain readable text is the best
-    available outcome. Falls back to "unknown-user"/"unknown-channel"/
-    "unknown-role" for an id this particular lookup couldn't resolve
-    (a deleted channel, a role from before the bot had that guild
-    cached, etc), rather than leaving the broken raw token in place.
-    Role pattern is substituted before the user pattern deliberately
-    (even though <@&id> can't actually match the user regex, & isn't
-    ! and isn't a digit, so there's no real collision) just to keep
-    the more specific pattern resolved first, in case that ever
-    changes."""
+    entirely. Plain readable text is the best DEFAULT outcome then,
+    since there's no cross-platform id mapping to do any better with.
+    Falls back to "unknown-user"/"unknown-channel"/"unknown-role" for
+    an id this particular lookup couldn't resolve (a deleted channel,
+    a role from before the bot had that guild cached, etc), rather
+    than leaving the broken raw token in place. Role pattern is
+    substituted before the user pattern deliberately (even though
+    <@&id> can't actually match the user regex, & isn't ! and isn't a
+    digit, so there's no real collision) just to keep the more
+    specific pattern resolved first, in case that ever changes.
+
+    live_users, when given, IS a cross-platform id mapping: a
+    {source_user_id: dest_user_id} dict of mentioned users who have a
+    verified account link (bot/modules/account_links.py) AND are
+    actually a member of the destination server (see
+    _live_discord_to_fluxer_mentions / _live_fluxer_to_discord_mentions,
+    which build it). A user id present there gets a REAL <@dest_id>
+    mention token instead of plain text, and its dest_id is added to
+    live_mentioned if that set is given, so the caller can allow-list
+    exactly those ids (and only those) in the outgoing message's
+    allowed_mentions -- every other id, linked or not, stays inert
+    text and stays un-pingable, same as today."""
     if not content:
         return content
     content = _ROLE_MENTION_RE.sub(lambda m: f"@{roles.get(m.group(1), 'unknown-role')}", content)
-    content = _USER_MENTION_RE.sub(lambda m: f"@{users.get(m.group(1), 'unknown-user')}", content)
+
+    def _sub_user(m: re.Match) -> str:
+        source_id = m.group(1)
+        if live_users and source_id in live_users:
+            dest_id = live_users[source_id]
+            if live_mentioned is not None:
+                live_mentioned.add(dest_id)
+            return f"<@{dest_id}>"
+        return f"@{users.get(source_id, 'unknown-user')}"
+
+    content = _USER_MENTION_RE.sub(_sub_user, content)
     content = _CHANNEL_MENTION_RE.sub(lambda m: f"#{channels.get(m.group(1), 'unknown-channel')}", content)
     return content
 
@@ -223,36 +292,112 @@ async def _fluxer_mention_maps(bot: Bot, guild_id, content: str, data: dict) -> 
     return users, channels, roles
 
 
-def _translate_embed_mentions(embed: dict, *, users: dict, channels: dict, roles: dict) -> dict:
+async def _is_discord_guild_member_cached(guild: discord.Guild, user_id: int) -> bool:
+    """Cached point-check backing _live_fluxer_to_discord_mentions, see
+    _discord_member_check_cache's own comment for why this is a REST
+    fetch rather than trusting discord.py's local member cache."""
+    key = (guild.id, user_id)
+    cached = _discord_member_check_cache.get(key)
+    now = time.monotonic()
+    if cached and (now - cached[1]) < _DISCORD_MEMBER_CHECK_TTL:
+        return cached[0]
+    member = guild.get_member(user_id)  # free, in case discord.py already happens to have it cached
+    if member is None:
+        try:
+            member = await guild.fetch_member(user_id)
+        except discord.NotFound:
+            member = None
+        except discord.HTTPException:
+            return False  # transient failure, don't cache a negative, just skip live-mention this once
+    found = member is not None
+    _discord_member_check_cache[key] = (found, now)
+    return found
+
+
+async def _live_discord_to_fluxer_mentions(relay_client: "RelayClient", discord_user_ids: Iterable[str],
+                                            fluxer_guild_id: str) -> dict[str, str]:
+    """For a set of mentioned Discord user ids, resolves
+    {discord_id: fluxer_id} for the subset that both (a) have a
+    verified account link (bot/modules/account_links.py) and (b) whose
+    linked Fluxer account is actually a member of the DESTINATION
+    Fluxer guild. Both conditions matter: a link existing isn't enough
+    by itself, since the point of a live mention is to notify someone
+    who can actually see the message, and it's what makes allow-
+    listing that specific id in the outgoing message's allowed_mentions
+    safe to do automatically (see DISCORD_SAFE_ALLOWED_MENTIONS's own
+    comment). Reuses Bot.get_member's existing 60s TTL cache rather
+    than adding a second one of its own."""
+    ids = [str(i) for i in discord_user_ids]
+    if not ids or relay_client._bot is None:
+        return {}
+    linked = await db.get_links_by_discord_ids(ids)
+    if not linked:
+        return {}
+    live: dict[str, str] = {}
+    for discord_id, fluxer_id in linked.items():
+        try:
+            await relay_client._bot.get_member(fluxer_guild_id, fluxer_id, fresh=False)
+        except FluxerAPIError:
+            continue  # linked, but not actually a member of THIS destination guild
+        live[discord_id] = fluxer_id
+    return live
+
+
+async def _live_fluxer_to_discord_mentions(relay_client: "RelayClient", fluxer_user_ids: Iterable[str],
+                                            discord_guild_id) -> dict[str, str]:
+    """Fluxer -> Discord mirror of _live_discord_to_fluxer_mentions,
+    same two conditions (linked AND actually a member of the
+    destination guild), see that function's docstring."""
+    ids = [str(i) for i in fluxer_user_ids]
+    if not ids:
+        return {}
+    linked = await db.get_links_by_fluxer_ids(ids)
+    if not linked:
+        return {}
+    guild = relay_client.get_guild(int(discord_guild_id))
+    if not guild:
+        return {}
+    live: dict[str, str] = {}
+    for fluxer_id, discord_id in linked.items():
+        if await _is_discord_guild_member_cached(guild, int(discord_id)):
+            live[fluxer_id] = discord_id
+    return live
+
+
+def _translate_embed_mentions(embed: dict, *, users: dict, channels: dict, roles: dict,
+                               live_users: Optional[dict] = None, live_mentioned: Optional[set] = None) -> dict:
     """Same translation, applied to the handful of embed text fields
     that can realistically carry a mention token: description, each
     field's name/value, the footer text, and the author name. Title,
     image/thumbnail URLs, and colors don't take mention syntax, left
     alone. Returns a new dict rather than mutating the one passed in,
     since the caller may still need the original for other targets in
-    a fan-out."""
+    a fan-out. live_users/live_mentioned: see _translate_mentions."""
     if not any((users, channels, roles)):
         return embed
+    kw = dict(users=users, channels=channels, roles=roles, live_users=live_users, live_mentioned=live_mentioned)
     out = dict(embed)
     if out.get("description"):
-        out["description"] = _translate_mentions(out["description"], users=users, channels=channels, roles=roles)
+        out["description"] = _translate_mentions(out["description"], **kw)
     if out.get("fields"):
         out["fields"] = [
-            {**f, "name": _translate_mentions(f.get("name"), users=users, channels=channels, roles=roles) or f.get("name", ""),
-             "value": _translate_mentions(f.get("value"), users=users, channels=channels, roles=roles) or f.get("value", "")}
+            {**f, "name": _translate_mentions(f.get("name"), **kw) or f.get("name", ""),
+             "value": _translate_mentions(f.get("value"), **kw) or f.get("value", "")}
             for f in out["fields"]
         ]
     if out.get("footer", {}).get("text"):
-        out["footer"] = {**out["footer"], "text": _translate_mentions(out["footer"]["text"], users=users, channels=channels, roles=roles)}
+        out["footer"] = {**out["footer"], "text": _translate_mentions(out["footer"]["text"], **kw)}
     if out.get("author", {}).get("name"):
-        out["author"] = {**out["author"], "name": _translate_mentions(out["author"]["name"], users=users, channels=channels, roles=roles)}
+        out["author"] = {**out["author"], "name": _translate_mentions(out["author"]["name"], **kw)}
     return out
 
 
-def _translate_embeds_mentions(embeds: Optional[list], *, users: dict, channels: dict, roles: dict) -> Optional[list]:
+def _translate_embeds_mentions(embeds: Optional[list], *, users: dict, channels: dict, roles: dict,
+                                live_users: Optional[dict] = None, live_mentioned: Optional[set] = None) -> Optional[list]:
     if not embeds or not any((users, channels, roles)):
         return embeds
-    return [_translate_embed_mentions(e, users=users, channels=channels, roles=roles) for e in embeds]
+    return [_translate_embed_mentions(e, users=users, channels=channels, roles=roles,
+                                       live_users=live_users, live_mentioned=live_mentioned) for e in embeds]
 
 
 def _snippet(content: Optional[str], max_chars: int = 80) -> str:
@@ -426,7 +571,8 @@ async def _get_or_create_fluxer_webhook(fluxer_rest: FluxerREST, channel_id: str
 
 async def _send_via_fluxer_webhook(fluxer_rest: FluxerREST, channel_id: str, *, content: Optional[str],
                                     embeds: Optional[list], files: Optional[list[tuple[str, bytes]]],
-                                    username: str, avatar_url: Optional[str]) -> Optional[tuple[dict, str, str]]:
+                                    username: str, avatar_url: Optional[str],
+                                    allowed_mentions: Optional[dict] = None) -> Optional[tuple[dict, str, str]]:
     """None on any failure (never raises), the caller falls back to a
     plain send in that case. On success, returns (result, webhook_id,
     webhook_token), the EXACT credentials that sent this message, not
@@ -444,7 +590,8 @@ async def _send_via_fluxer_webhook(fluxer_rest: FluxerREST, channel_id: str, *, 
     webhook_id, webhook_token = webhook
     try:
         result = await fluxer_rest.execute_webhook(webhook_id, webhook_token, content=content, embeds=embeds,
-                                                     files=files, username=username, avatar_url=avatar_url)
+                                                     files=files, username=username, avatar_url=avatar_url,
+                                                     allowed_mentions=allowed_mentions)
         return result, webhook_id, webhook_token
     except FluxerAPIError as e:
         if e.status != 404:
@@ -455,7 +602,8 @@ async def _send_via_fluxer_webhook(fluxer_rest: FluxerREST, channel_id: str, *, 
             return None
         try:
             result = await fluxer_rest.execute_webhook(webhook2[0], webhook2[1], content=content, embeds=embeds,
-                                                         files=files, username=username, avatar_url=avatar_url)
+                                                         files=files, username=username, avatar_url=avatar_url,
+                                                         allowed_mentions=allowed_mentions)
             return result, webhook2[0], webhook2[1]
         except FluxerAPIError:
             return None
@@ -480,11 +628,20 @@ async def _resolve_link_webhook(link, platform: str) -> Optional[tuple[str, str]
 
 
 class RelayClient(discord.Client):
-    def __init__(self, fluxer_rest: FluxerREST):
+    def __init__(self, fluxer_rest: FluxerREST, bot: Optional[Bot] = None):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(intents=intents)
         self._fluxer_rest = fluxer_rest
+        # Only used for its cached get_member() (see
+        # _live_discord_to_fluxer_mentions), so this can already reuse
+        # the 60s TTL membership cache bot/commands.py's Bot maintains
+        # rather than this module needing a second one of its own.
+        # Optional/defaults to None purely so existing direct
+        # RelayClient(...) construction (tests, anything not going
+        # through build_relay_client) doesn't break; live-mention
+        # resolution just no-ops without it, same as an unlinked user.
+        self._bot = bot
 
     def _is_self(self, user_id) -> bool:
         return bool(self.user and str(user_id) == str(self.user.id))
@@ -639,9 +796,96 @@ class RelayClient(discord.Client):
     async def on_message(self, message: discord.Message) -> None:
         if self._is_self(message.author.id):
             return  # this relay's own post (from the fluxer_to_discord direction), never re-relay it
+        if message.guild is None:
+            if not message.author.bot:
+                await self._handle_link_command(message, in_guild=False)
+            return  # DMs are never relay content, nothing else to do with one either way
         if message.webhook_id and await self._is_own_webhook("discord", str(message.channel.id), message.webhook_id):
             return  # this relay's own webhook echo, same loop risk as above, just a different identity
+        if not message.author.bot and await self._handle_link_command(message, in_guild=True):
+            return  # was an f!link command, fully handled, don't also relay it as regular content
         await self._relay_discord_message(message)
+
+    async def _handle_link_command(self, message: discord.Message, *, in_guild: bool) -> bool:
+        """Returns True if this message was an f!link command (bare or
+        with a code) and has been fully handled, meaning the caller in
+        a guild channel should NOT also relay it as regular content.
+        False means it wasn't an f!link command at all.
+
+        Two entry points feed into this, both landing here:
+          - !link on Fluxer (bot/modules/account_links.py) DMs a code
+            and says to send it back here as "f!link <code>".
+          - Discoverability the other way: someone who starts on
+            Discord first and doesn't know about the Fluxer command
+            yet can run bare "f!link" (guild channel or DM) and gets
+            DMed the same instructions, so there's a working entry
+            point on both platforms, not just one.
+
+        "f!" rather than a bare "!" so this doesn't collide with every
+        other Discord bot in the server that also happens to use "!"
+        as its prefix, see _LINK_COMMAND_RE.
+
+        A message that includes an actual CODE only ever gets
+        REDEEMED from a DM, even though the regex matches in a guild
+        channel too: codes are short-lived, single-use secrets (see
+        common.db.create_link_code), posting one in a public channel
+        is exactly the exposure the whole code-exchange design exists
+        to avoid. A guild-channel "f!link <code>" is intercepted (not
+        relayed, not redeemed) and the sender is redirected to send it
+        again in a DM instead; the code itself is untouched and still
+        valid for them to use there."""
+        m = _LINK_COMMAND_RE.match((message.content or "").strip())
+        if not m:
+            return False
+        code = m.group(1)
+
+        if in_guild:
+            try:
+                await message.author.send(
+                    f"🔗 To link your Discord and Fluxer accounts: run `!link` on Fluxer (in any server "
+                    f"this bot manages) to get a short code, then send it back to me here **in this DM** "
+                    f"as `f!link <code>`."
+                    + (f" You just posted a code in a public channel — it's still valid, just send it "
+                       f"to me here instead of there, a code is meant to be a private, single-use "
+                       f"secret." if code else "")
+                )
+            except discord.HTTPException:
+                try:
+                    await message.channel.send(
+                        f"{message.author.mention} I couldn't DM you (check that DMs from server "
+                        f"members are allowed) — allow DMs from this server, then run `f!link` again.",
+                        allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=[message.author]),
+                    )
+                except discord.HTTPException:
+                    pass
+            return True
+
+        # Already in a DM.
+        if not code:
+            try:
+                await message.channel.send(
+                    "🔗 To link your Discord and Fluxer accounts: run `!link` on Fluxer (in any server "
+                    "this bot manages) to get a short code, then send it to me here as `f!link <code>`."
+                )
+            except discord.HTTPException:
+                pass
+            return True
+
+        fluxer_user_id = await db.redeem_link_code(code, str(message.author.id))
+        try:
+            if fluxer_user_id:
+                await message.channel.send(
+                    "🔗 Linked! Mentioning you in a bridged channel now translates to a real ping on "
+                    "the other platform, wherever your linked account is actually a member. Run "
+                    "`!unlink` on Fluxer any time to undo this."
+                )
+            else:
+                await message.channel.send(
+                    "That code is invalid or expired. Run `!link` again on Fluxer to get a fresh one."
+                )
+        except discord.Forbidden:
+            pass  # can't DM them back, nothing more to do, the link itself (if any) already went through
+        return True
 
     async def _relay_discord_message(self, message: discord.Message, mappings: Optional[list] = None) -> None:
         """The actual "take this Discord message and relay it to Fluxer"
@@ -660,13 +904,20 @@ class RelayClient(discord.Client):
         if not mappings:
             return
 
-        raw_content = message.content or None
+        raw_source_content = message.content or None
         users, channels, roles = ({}, {}, {})
-        if raw_content or message.embeds:
+        if raw_source_content or message.embeds:
             users, channels, roles = _discord_mention_maps(message)
-            raw_content = _translate_mentions(raw_content, users=users, channels=channels, roles=roles)
-        embeds = [_convert_embed(e) for e in message.embeds] if message.embeds else None
-        embeds = _translate_embeds_mentions(embeds, users=users, channels=channels, roles=roles)
+        source_embeds = [_convert_embed(e) for e in message.embeds] if message.embeds else None
+
+        # Base (no live mentions yet) translation, just to decide
+        # whether there's anything worth forwarding at all. The real,
+        # possibly-live translation happens per mapping below, since
+        # whether a mentioned user's account link counts as "live"
+        # depends on the DESTINATION Fluxer guild (are they actually a
+        # member there), which differs per mapping in a fan-out.
+        base_content = _translate_mentions(raw_source_content, users=users, channels=channels, roles=roles)
+        base_embeds = _translate_embeds_mentions(source_embeds, users=users, channels=channels, roles=roles)
 
         files: list[tuple[str, bytes]] = []
         for attachment in message.attachments:
@@ -680,14 +931,13 @@ class RelayClient(discord.Client):
                 log.warning("Couldn't download attachment %s from Discord message %s",
                              attachment.filename, message.id, exc_info=True)
 
-        if not raw_content and not embeds and not files:
+        if not base_content and not base_embeds and not files:
             return  # nothing worth forwarding (e.g. a sticker-only message, not supported here)
-
-        if message.reference and message.reference.message_id:
-            raw_content = await self._prepend_reply_prefix(message, raw_content)
 
         display_name = message.author.display_name
         avatar_url = _proxied_discord_avatar_url(message.author.display_avatar.url if message.author.display_avatar else None)
+        mentioned_discord_ids = list(users.keys())
+        is_reply = bool(message.reference and message.reference.message_id)
 
         for mapping in mappings:
             # Atomic claim, not just a check: the reconnect backfill (a
@@ -701,13 +951,36 @@ class RelayClient(discord.Client):
                 continue
 
             target = mapping["fluxer_channel_id"]
+
+            # Re-translate per mapping: a mentioned user's link only
+            # counts as "live" for THIS mapping's destination Fluxer
+            # guild if they're actually a member there, so a fan-out to
+            # several Fluxer guilds can (correctly) produce a live
+            # mention for one and inert text for another, for the same
+            # mentioned user in the same source message.
+            live_mentioned: set = set()
+            if mentioned_discord_ids:
+                live_users = await _live_discord_to_fluxer_mentions(self, mentioned_discord_ids, mapping["fluxer_guild_id"])
+            else:
+                live_users = {}
+            if live_users:
+                raw_content = _translate_mentions(raw_source_content, users=users, channels=channels, roles=roles,
+                                                   live_users=live_users, live_mentioned=live_mentioned)
+                embeds = _translate_embeds_mentions(source_embeds, users=users, channels=channels, roles=roles,
+                                                     live_users=live_users, live_mentioned=live_mentioned)
+            else:
+                raw_content, embeds = base_content, base_embeds
+            if is_reply:
+                raw_content = await self._prepend_reply_prefix(message, raw_content)
+            allowed_mentions = FluxerREST.mention_only(*live_mentioned) if live_mentioned else None
+
             result, sent_via_webhook = None, False
             used_webhook_id, used_webhook_token = None, None
 
             if mapping["show_attribution"]:
                 webhook_send = await _send_via_fluxer_webhook(
                     self._fluxer_rest, target, content=raw_content, embeds=embeds, files=files,
-                    username=display_name, avatar_url=avatar_url,
+                    username=display_name, avatar_url=avatar_url, allowed_mentions=allowed_mentions,
                 )
                 if webhook_send is not None:
                     result, used_webhook_id, used_webhook_token = webhook_send
@@ -718,9 +991,11 @@ class RelayClient(discord.Client):
                 content = _with_attribution(raw_content, prefix)
                 try:
                     if files:
-                        result = await self._fluxer_rest.send_message_with_files(target, files, content=content, embeds=embeds)
+                        result = await self._fluxer_rest.send_message_with_files(target, files, content=content, embeds=embeds,
+                                                                                    allowed_mentions=allowed_mentions)
                     else:
-                        result = await self._fluxer_rest.send_message(target, content=content, embeds=embeds)
+                        result = await self._fluxer_rest.send_message(target, content=content, embeds=embeds,
+                                                                         allowed_mentions=allowed_mentions)
                 except FluxerAPIError:
                     log.warning("Failed to relay Discord message %s to Fluxer channel %s",
                                 message.id, target, exc_info=True)
@@ -742,31 +1017,45 @@ class RelayClient(discord.Client):
         author = (payload.data or {}).get("author", {})
         if author and self._is_self(author.get("id")):
             return
-        new_content = payload.data.get("content") if payload.data else None
-        if new_content is None:
+        new_source_content = payload.data.get("content") if payload.data else None
+        if new_source_content is None:
             return  # not a content-bearing update
-        users, channels, roles = _discord_mention_maps_from_raw(self, payload.guild_id, new_content, payload.data or {})
-        new_content = _translate_mentions(new_content, users=users, channels=channels, roles=roles)
+        users, channels, roles = _discord_mention_maps_from_raw(self, payload.guild_id, new_source_content, payload.data or {})
+        mentioned_discord_ids = list(users.keys())
         links = await db.get_relay_message_links("discord", str(payload.message_id))
         for link in links:
             if link["target_platform"] != "fluxer":
                 continue
             try:
+                # Fetched for both branches now: live-mention resolution
+                # needs the destination guild id regardless of whether
+                # this link went through a webhook or a plain send.
+                mapping = await db.get_discord_relay_mapping_by_id(link["mapping_id"]) if link["mapping_id"] else None
+                live_mentioned: set = set()
+                live_users = (
+                    await _live_discord_to_fluxer_mentions(self, mentioned_discord_ids, mapping["fluxer_guild_id"])
+                    if mentioned_discord_ids and mapping else {}
+                )
+                new_content = _translate_mentions(new_source_content, users=users, channels=channels, roles=roles,
+                                                    live_users=live_users, live_mentioned=live_mentioned)
+                allowed_mentions = FluxerREST.mention_only(*live_mentioned) if live_mentioned else None
+
                 if link["sent_via_webhook"]:
                     webhook = await _resolve_link_webhook(link, "fluxer")
                     if not webhook:
                         continue  # webhook's gone, nothing to edit through, leave the original as-is
                     await self._fluxer_rest.edit_webhook_message(
                         webhook[0], webhook[1], link["target_message_id"], content=new_content,
+                        allowed_mentions=allowed_mentions,
                     )
                 else:
-                    mapping = await db.get_discord_relay_mapping_by_id(link["mapping_id"]) if link["mapping_id"] else None
                     prefix = None
                     if mapping and mapping["show_attribution"]:
                         display_name = author.get("global_name") or author.get("username", "unknown")
                         prefix = f"**[Discord] {display_name}:**"
                     content = _with_attribution(new_content, prefix)
-                    await self._fluxer_rest.edit_message(link["target_channel_id"], link["target_message_id"], content=content)
+                    await self._fluxer_rest.edit_message(link["target_channel_id"], link["target_message_id"], content=content,
+                                                           allowed_mentions=allowed_mentions)
             except FluxerAPIError as e:
                 if e.status == 404:
                     log.info("Fluxer message %s to edit is already gone, nothing to sync", link["target_message_id"])
@@ -840,7 +1129,9 @@ class RelayClient(discord.Client):
     async def send_to_discord(self, discord_channel_id: str, *, content: Optional[str],
                                embeds: Optional[list[dict]], files: Optional[list[tuple[str, bytes]]] = None,
                                username: Optional[str] = None, avatar_url: Optional[str] = None,
-                               fallback_content: Optional[str] = None) -> tuple[Optional[str], bool, Optional[str], Optional[str]]:
+                               fallback_content: Optional[str] = None,
+                               allowed_mentions: Optional[discord.AllowedMentions] = None
+                               ) -> tuple[Optional[str], bool, Optional[str], Optional[str]]:
         """Returns (sent_message_id, sent_via_webhook, webhook_id,
         webhook_token). The last two are the EXACT credentials that
         sent this message when sent_via_webhook is True (needed for a
@@ -853,8 +1144,11 @@ class RelayClient(discord.Client):
         the same content with a "[Fluxer] username:" prefix re-applied,
         since a plain send can't show the real identity any other way)
         if that fails, same graceful-degradation shape as the Fluxer
-        side."""
+        side. allowed_mentions defaults to DISCORD_SAFE_ALLOWED_MENTIONS
+        (blocks everything); pass one allow-listing specific user ids
+        for content that carries a live cross-platform mention."""
         discord_embeds = [discord.Embed.from_dict(e) for e in embeds] if embeds else None
+        allowed_mentions = allowed_mentions or DISCORD_SAFE_ALLOWED_MENTIONS
 
         if username:
             webhook = await self._get_or_create_discord_webhook(discord_channel_id)
@@ -864,7 +1158,7 @@ class RelayClient(discord.Client):
                     sent = await webhook.send(content=content or None, embeds=discord_embeds or [],
                                                files=discord_files or [], username=username,
                                                avatar_url=avatar_url, wait=True,
-                                               allowed_mentions=DISCORD_SAFE_ALLOWED_MENTIONS)
+                                               allowed_mentions=allowed_mentions)
                     return str(sent.id), True, str(webhook.id), webhook.token
                 except discord.NotFound:
                     await db.delete_relay_webhook("discord", discord_channel_id)
@@ -875,7 +1169,7 @@ class RelayClient(discord.Client):
                             sent = await webhook2.send(content=content or None, embeds=discord_embeds or [],
                                                         files=discord_files2 or [], username=username,
                                                         avatar_url=avatar_url, wait=True,
-                                                        allowed_mentions=DISCORD_SAFE_ALLOWED_MENTIONS)
+                                                        allowed_mentions=allowed_mentions)
                             return str(sent.id), True, str(webhook2.id), webhook2.token
                         except discord.HTTPException:
                             pass
@@ -890,7 +1184,7 @@ class RelayClient(discord.Client):
         discord_files = [discord.File(fp=io.BytesIO(b), filename=name) for name, b in (files or [])]
         plain_content = fallback_content if fallback_content is not None else content
         sent = await channel.send(content=plain_content or None, embeds=discord_embeds or [], files=discord_files or [],
-                                   allowed_mentions=DISCORD_SAFE_ALLOWED_MENTIONS)
+                                   allowed_mentions=allowed_mentions)
         return str(sent.id), False, None, None
 
 
@@ -978,11 +1272,12 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
         if not mappings:
             return
 
-        raw_content = data.get("content") or None
-        embeds = data.get("embeds") or None
-        users, channels, roles = await _fluxer_mention_maps(bot, guild_id, raw_content or "", data)
-        raw_content = _translate_mentions(raw_content, users=users, channels=channels, roles=roles)
-        embeds = _translate_embeds_mentions(embeds, users=users, channels=channels, roles=roles)
+        raw_source_content = data.get("content") or None
+        source_embeds = data.get("embeds") or None
+        users, channels, roles = await _fluxer_mention_maps(bot, guild_id, raw_source_content or "", data)
+        mentioned_fluxer_ids = list(users.keys())
+        base_content = _translate_mentions(raw_source_content, users=users, channels=channels, roles=roles)
+        base_embeds = _translate_embeds_mentions(source_embeds, users=users, channels=channels, roles=roles)
 
         # Just the references at this point (filename + url), not the
         # downloaded bytes: if the relay turns out to be down below,
@@ -994,10 +1289,8 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
             for a in (data.get("attachments", []) or []) if a.get("url")
         ]
 
-        if not raw_content and not embeds and not attachment_refs:
+        if not base_content and not base_embeds and not attachment_refs:
             return
-
-        raw_content = await _prepend_fluxer_reply_prefix(bot, data, raw_content)
 
         username = author.get("username", "unknown")
         avatar_url = await _fluxer_avatar_url(str(author.get("id")), author.get("avatar")) if mappings and any(m["show_attribution"] for m in mappings) else None
@@ -1010,12 +1303,21 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
             # is just "attempt delivery with what's here", nothing left
             # to rebuild), drained automatically the moment the relay
             # reconnects (see RelayClient._recover_after_reconnect).
-            embeds_json = json.dumps(embeds) if embeds else None
+            #
+            # Deliberately NOT live-mention-aware: resolving "is the
+            # linked account actually a member of the destination
+            # guild" needs a working connection to check against, which
+            # is exactly what's missing right now. Queued messages get
+            # the same safe, inert-text translation as an unlinked
+            # mention always has, nothing here downgrades on delivery,
+            # it just never had a live mention to begin with.
+            queued_content = await _prepend_fluxer_reply_prefix(bot, data, base_content)
+            embeds_json = json.dumps(base_embeds) if base_embeds else None
             attachments_json = json.dumps(attachment_refs) if attachment_refs else None
             for mapping in mappings:
-                fallback_content = _with_attribution(raw_content, f"**[Fluxer] {username}:**") if mapping["show_attribution"] else None
+                fallback_content = _with_attribution(queued_content, f"**[Fluxer] {username}:**") if mapping["show_attribution"] else None
                 await db.enqueue_fluxer_to_discord_message(
-                    mapping["id"], str(message_id), mapping["discord_channel_id"], raw_content, embeds_json,
+                    mapping["id"], str(message_id), mapping["discord_channel_id"], queued_content, embeds_json,
                     attachments_json, username if mapping["show_attribution"] else None,
                     avatar_url if mapping["show_attribution"] else None, fallback_content,
                 )
@@ -1035,15 +1337,40 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
         for mapping in mappings:
             target = mapping["discord_channel_id"]
             try:
+                # Re-translate per mapping, same reasoning as the
+                # Discord -> Fluxer direction: a mentioned user's link
+                # only counts as "live" for THIS mapping's destination
+                # Discord guild if they're actually a member there.
+                live_mentioned: set = set()
+                if mentioned_fluxer_ids:
+                    channel = await relay_client._get_channel(target)
+                    discord_guild_id = channel.guild.id if channel and channel.guild else None
+                else:
+                    discord_guild_id = None
+                live_users = (
+                    await _live_fluxer_to_discord_mentions(relay_client, mentioned_fluxer_ids, discord_guild_id)
+                    if discord_guild_id else {}
+                )
+                if live_users:
+                    raw_content = _translate_mentions(raw_source_content, users=users, channels=channels, roles=roles,
+                                                       live_users=live_users, live_mentioned=live_mentioned)
+                    embeds = _translate_embeds_mentions(source_embeds, users=users, channels=channels, roles=roles,
+                                                         live_users=live_users, live_mentioned=live_mentioned)
+                else:
+                    raw_content, embeds = base_content, base_embeds
+                raw_content = await _prepend_fluxer_reply_prefix(bot, data, raw_content)
+                allowed_mentions = _discord_allowed_mentions_for(live_mentioned)
+
                 if mapping["show_attribution"]:
                     fallback_content = _with_attribution(raw_content, f"**[Fluxer] {username}:**")
                     sent_id, sent_via_webhook, used_webhook_id, used_webhook_token = await relay_client.send_to_discord(
                         target, content=raw_content, embeds=embeds, files=files,
                         username=username, avatar_url=avatar_url, fallback_content=fallback_content,
+                        allowed_mentions=allowed_mentions,
                     )
                 else:
                     sent_id, sent_via_webhook, used_webhook_id, used_webhook_token = await relay_client.send_to_discord(
-                        target, content=raw_content, embeds=embeds, files=files)
+                        target, content=raw_content, embeds=embeds, files=files, allowed_mentions=allowed_mentions)
                 if sent_id:
                     await db.add_relay_message_link(mapping["id"], "fluxer", str(message_id),
                                                       "discord", sent_id, target, sent_via_webhook=sent_via_webhook,
@@ -1058,35 +1385,47 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
         if author and self_id and str(author.get("id")) == str(self_id):
             return
         message_id = data.get("id")
-        new_content = data.get("content")
-        if not message_id or new_content is None:
+        new_source_content = data.get("content")
+        if not message_id or new_source_content is None:
             return
         guild_id = data.get("guild_id")
-        users, channels, roles = await _fluxer_mention_maps(bot, guild_id, new_content, data)
-        new_content = _translate_mentions(new_content, users=users, channels=channels, roles=roles)
+        users, channels, roles = await _fluxer_mention_maps(bot, guild_id, new_source_content, data)
+        mentioned_fluxer_ids = list(users.keys())
         links = await db.get_relay_message_links("fluxer", str(message_id))
         for link in links:
             if link["target_platform"] != "discord":
                 continue
             try:
+                # Fetched up front for both branches: live-mention
+                # resolution needs the destination guild id regardless
+                # of whether this link went through a webhook or not.
+                channel = await relay_client._get_channel(link["target_channel_id"])
+                if channel is None:
+                    continue
+                live_mentioned: set = set()
+                live_users = (
+                    await _live_fluxer_to_discord_mentions(relay_client, mentioned_fluxer_ids, channel.guild.id)
+                    if mentioned_fluxer_ids and channel.guild else {}
+                )
+                new_content = _translate_mentions(new_source_content, users=users, channels=channels, roles=roles,
+                                                   live_users=live_users, live_mentioned=live_mentioned)
+                allowed_mentions = _discord_allowed_mentions_for(live_mentioned) or DISCORD_SAFE_ALLOWED_MENTIONS
+
                 if link["sent_via_webhook"]:
                     webhook_creds = await _resolve_link_webhook(link, "discord")
                     if not webhook_creds:
                         continue
                     webhook = discord.Webhook.partial(int(webhook_creds[0]), webhook_creds[1], client=relay_client)
                     await webhook.edit_message(int(link["target_message_id"]), content=new_content,
-                                                allowed_mentions=DISCORD_SAFE_ALLOWED_MENTIONS)
+                                                allowed_mentions=allowed_mentions)
                 else:
-                    channel = await relay_client._get_channel(link["target_channel_id"])
-                    if channel is None:
-                        continue
                     mapping = await db.get_discord_relay_mapping_by_id(link["mapping_id"]) if link["mapping_id"] else None
                     prefix = None
                     if mapping and mapping["show_attribution"]:
                         prefix = f"**[Fluxer] {author.get('username', 'unknown')}:**"
                     content = _with_attribution(new_content, prefix)
                     discord_msg = await channel.fetch_message(int(link["target_message_id"]))
-                    await discord_msg.edit(content=content, allowed_mentions=DISCORD_SAFE_ALLOWED_MENTIONS)
+                    await discord_msg.edit(content=content, allowed_mentions=allowed_mentions)
             except discord.NotFound:
                 log.info("Discord message %s to edit is already gone, nothing to sync", link["target_message_id"])
             except Exception:
@@ -1145,7 +1484,7 @@ def build_relay_client(bot: Bot) -> RelayClient:
     asyncio.create_task around the same point in main.py, with no
     guarantee which runs first). Calling this directly, before either
     task starts, makes the ordering guaranteed rather than probable."""
-    client = RelayClient(bot.rest)
+    client = RelayClient(bot.rest, bot)
     register_fluxer_side(bot, client)
     return client
 

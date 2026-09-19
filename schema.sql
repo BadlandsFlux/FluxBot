@@ -534,6 +534,39 @@ CREATE TABLE IF NOT EXISTS discord_relay_send_claims (
 );
 CREATE INDEX IF NOT EXISTS idx_relay_send_claims_claimed_at ON discord_relay_send_claims(claimed_at);
 
+-- Self-service Discord <-> Fluxer account linking (bot/modules/
+-- account_links.py, bot/discord_relay.py's live-mention resolution).
+-- One Discord account maps to at most one Fluxer account and vice
+-- versa (both sides UNIQUE), a 1:1 identity link, not a many-to-one
+-- "who do we ping" ambiguity. Bot-wide, not per-guild: the same
+-- person is the same person across every server this bot bridges.
+-- Verified via a short-lived code exchanged between the two
+-- platforms (see account_link_codes below), never just typed in by
+-- either side unverified, that would let anyone redirect someone
+-- else's pings to themselves.
+CREATE TABLE IF NOT EXISTS account_links (
+    discord_user_id   TEXT PRIMARY KEY,
+    fluxer_user_id    TEXT NOT NULL UNIQUE,
+    linked_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One row per in-progress link attempt, started from the Fluxer side
+-- (!link) and redeemed from the Discord side (DMing the relay bot
+-- !link <code>). code is the whole point of this table: short,
+-- typeable, single-use proof that whoever redeems it on Discord is
+-- the same person who ran !link on Fluxer (or at least someone they
+-- shared the code with, the same trust model as e.g. a 2FA backup
+-- code or an email verification link). Expired/consumed codes are
+-- swept by the scheduler, same backstop pattern as everything else
+-- time-bounded in this schema.
+CREATE TABLE IF NOT EXISTS account_link_codes (
+    code              TEXT PRIMARY KEY,
+    fluxer_user_id    TEXT NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at        TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_account_link_codes_expires_at ON account_link_codes(expires_at);
+
 -- Migrations for columns added to already-existing tables after this
 -- schema's earlier migration block (further up this file) was last
 -- updated. That block runs early, before several of the tables below
