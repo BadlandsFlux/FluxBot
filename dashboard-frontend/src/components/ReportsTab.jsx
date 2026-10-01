@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, XCircle, RotateCcw, Copy, Save, Search } from "lucide-react";
+import { Link } from "react-router-dom";
+import { CheckCircle2, XCircle, RotateCcw, Copy, Save, Search, MessageSquare } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "./Flash";
 import Combobox from "./Combobox";
@@ -155,7 +156,9 @@ export default function ReportsTab({ guildId, guild, channels, reports, onChange
                   : r.content;
                 return (
                   <tr key={r.id}>
-                    <td>#{r.id}</td>
+                    <td>
+                      <Link className="report-id-link" to={`/guild/${guildId}/reports/${r.id}`}>#{r.id}</Link>
+                    </td>
                     <td>
                       <div className="report-status-cell">
                         <span className={`tag ${STATUS_TAG_CLASS[r.status]}`}>{STATUS_LABEL[r.status]}</span>
@@ -165,6 +168,11 @@ export default function ReportsTab({ guildId, guild, channels, reports, onChange
                         {r.status === "open" && r.possible_duplicate_of ? (
                           <span className="tag tag-kick" title="Auto-flagged, not confirmed">
                             ⚠️ like #{r.possible_duplicate_of}
+                          </span>
+                        ) : null}
+                        {r.needs_staff_reply ? (
+                          <span className="tag tag-warn" title="The reporter replied, waiting on staff">
+                            💬 needs reply
                           </span>
                         ) : null}
                       </div>
@@ -178,6 +186,9 @@ export default function ReportsTab({ guildId, guild, channels, reports, onChange
                     </td>
                     <td>
                       <div className="member-actions">
+                        <Link className="btn btn-ghost btn-small" to={`/guild/${guildId}/reports/${r.id}`}>
+                          <MessageSquare size={14} /> Reply{r.reply_count ? ` (${r.reply_count})` : ""}
+                        </Link>
                         {r.status !== "resolved" && (
                           <button className="btn btn-ghost btn-small" disabled={busyId === r.id}
                                   onClick={() => updateStatus(r.id, "resolved")}>

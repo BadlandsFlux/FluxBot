@@ -298,8 +298,9 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!reportchannel #channel` | Manage Guild | Set the channel reports are captured from |
 | `!reporttracker #channel` | Manage Guild | Set the channel reports are tracked in |
 | `!report status <id> <open\|duplicate\|resolved\|wontfix> [note]` | Kick Members | Update a report's status |
+| `!report reply <id> <message>` | Kick Members | DM the reporter and record it as part of the report's thread |
 | `!report list [status]` | Kick Members | List reports, optionally filtered |
-| `!report info <id>` | Kick Members | Full detail on one report |
+| `!report info <id>` | Kick Members | Full detail on one report, including its most recent replies |
 
 `!info` is gated by `BOT_OWNER_ID` in `.env`, not a per-server permission, it's meant for you, not server admins.
 
@@ -320,7 +321,7 @@ bot/
   permissions.py       role/permission bit checks
   timeutil.py          snowflake to date, duration string parsing
   moderation_actions.py  shared kick/ban/timeout/warn logic (chat + dashboard)
-  report_actions.py    shared report status/tracker-embed logic (chat + dashboard)
+  report_actions.py    shared report status/tracker-embed/reply logic (chat + dashboard)
   scheduler.py          background loop: reminders, polls, voice session flushing
   voice_tracker.py       voice presence tracking for activity stats and voice XP
   discord_relay.py      the Discord-side bridge (gateway client, webhook relay)
@@ -337,7 +338,8 @@ bot/
     logging_mod.py       writes mod_actions rows + posts to the log channel
     account_links.py     !link/!unlink/!linkstatus, Discord <-> Fluxer linking
     reports.py            captures bug/issue reports, tracker embed, duplicate
-                        detection, !reportchannel/!reporttracker/!report
+                        detection, two-way reply thread over DM,
+                        !reportchannel/!reporttracker/!report
   main.py                entrypoint, also starts the scheduler task
 dashboard/
   app.py                FastAPI app, JSON API (/api/*) + serves the built SPA
@@ -346,8 +348,10 @@ dashboard-frontend/      React SPA (Vite), see its own README for the full API r
   src/
     api.js               fetch wrapper for the backend's /api/* routes
     App.jsx               routing + auth-gate
-    pages/                Login, GuildPicker, GuildDetail, BotProfile,
-                          DiscordRelaySetup, Commands, Status
+    context/              GuildsContext (shared guild-list fetch for the picker
+                          and the top-bar switcher)
+    pages/                Login, GuildPicker, GuildDetail, ReportDetail,
+                          BotProfile, DiscordRelaySetup, Commands, Status
     components/           one per dashboard tab/widget (MembersTab, LevelsTab,
                           ReportsTab, DiscordRelayTab, ActivityLogTab, TagsTab,
                           ReactionRoleBuilder, AnnouncementBuilder, DangerZone, …)

@@ -1532,6 +1532,86 @@ async def list_reports(guild_id: str, status: Optional[str] = None, limit: int =
     )
 
 
+async def get_report_reply_counts(guild_id: str) -> dict[int, asyncpg.Record]:
+    """report_id -> {reply_count, last_author_type} for every report in
+    this guild that has at least one human (staff/reporter) reply, used
+    to badge the dashboard's report list without an N+1 query per row.
+    'system' rows (see report_replies' own comment in schema.sql) don't
+    count: they're DM-matching anchors, not part of the conversation."""
+    rows = await pool().fetch(
+        """
+        SELECT rr.report_id, COUNT(*) AS reply_count,
+               (ARRAY_AGG(rr.author_type ORDER BY rr.created_at DESC))[1] AS last_author_type
+        FROM report_replies rr
+        JOIN reports r ON r.id = rr.report_id
+        WHERE r.guild_id = $1 AND rr.author_type IN ('staff', 'reporter')
+        GROUP BY rr.report_id
+        """,
+        guild_id,
+    )
+    return {row["report_id"]: row for row in rows}
+
+
+async def create_report_reply(report_id: int, author_type: str, content: str, *,
+                               author_id: Optional[str] = None,
+                               dm_message_id: Optional[str] = None) -> asyncpg.Record:
+    if author_type not in ("staff", "reporter", "system"):
+        raise ValueError(f"Unknown report reply author_type: {author_type!r}")
+    return await pool().fetchrow(
+        """
+        INSERT INTO report_replies (report_id, author_type, author_id, content, dm_message_id)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+        """,
+        report_id, author_type, author_id, content, dm_message_id,
+    )
+
+
+async def list_report_replies(report_id: int, *, include_system: bool = False) -> list[asyncpg.Record]:
+    if include_system:
+        return await pool().fetch("SELECT * FROM report_replies WHERE report_id=$1 ORDER BY created_at", report_id)
+    return await pool().fetch(
+        "SELECT * FROM report_replies WHERE report_id=$1 AND author_type != 'system' ORDER BY created_at",
+        report_id,
+    )
+
+
+async def get_report_by_dm_message(dm_message_id: str) -> Optional[asyncpg.Record]:
+    """Finds the report a reporter's inbound DM reply belongs to, by
+    looking up the message id their reply quotes (message_reference)
+    against every DM ever sent/received about a report. Safe to look up
+    unscoped by guild: dm_message_id is a Discord/Fluxer snowflake we
+    generated or received ourselves for this exact DM conversation, not
+    a guessable id like a bare report number, see get_report's own
+    scoping comment for the contrast."""
+    return await pool().fetchrow(
+        """
+        SELECT r.* FROM reports r
+        JOIN report_replies rr ON rr.report_id = r.id
+        WHERE rr.dm_message_id = $1
+        """,
+        dm_message_id,
+    )
+
+
+async def get_report_reply_by_dm_message(dm_message_id: str) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow("SELECT * FROM report_replies WHERE dm_message_id=$1", dm_message_id)
+
+
+async def get_open_reports_by_reporter(reporter_id: str) -> list[asyncpg.Record]:
+    """Every OPEN report filed by this person, across every guild the
+    bot is in. Unscoped by guild deliberately, like
+    account_links.get_link_by_fluxer: reporter_id here is the DM
+    author's own id, not an attacker-supplied lookup key, so there's
+    nothing to scope against. The fallback for matching a reporter's DM
+    reply when it doesn't reference a specific earlier message (see
+    bot/modules/reports.py): if they have exactly one open report,
+    that's unambiguous enough to attribute the reply to without asking."""
+    return await pool().fetch(
+        "SELECT * FROM reports WHERE reporter_id=$1 AND status='open' ORDER BY created_at DESC", reporter_id,
+    )
+
+
 if __name__ == "__main__":
     # `python -m common.db`, one-off convenience to create the schema
     # without starting the bot or dashboard.

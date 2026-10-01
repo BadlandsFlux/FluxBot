@@ -101,7 +101,7 @@ No auth required.
   "autoroles": ["666", "777"],
   "reaction_roles": [ { "id": 1, "channel_id": "888", "message_id": "999", "emoji": "🎉", "role_id": "666", "label": "VIP" } ],
   "tags": [ { "id": 1, "name": "rules", "content": "Read the pins.", "created_by": "555", "created_at": "..." } ],
-  "reports": [ { "id": 1, "reporter_id": "444", "reporter_username": "someone", "content": "...", "visibility": "public", "status": "open", "duplicate_of": null, "possible_duplicate_of": null, "resolution_note": null, "created_at": "...", "updated_at": "..." } ],
+  "reports": [ { "id": 1, "reporter_id": "444", "reporter_username": "someone", "content": "...", "visibility": "public", "status": "open", "duplicate_of": null, "possible_duplicate_of": null, "resolution_note": null, "created_at": "...", "updated_at": "...", "reply_count": 2, "needs_staff_reply": true } ],
   "active_warning_count": 1,
   "open_report_count": 1
 }
@@ -191,6 +191,25 @@ A narrower alternative to the full Settings form, so the Reports tab can set jus
 `status` is one of `open` / `duplicate` / `resolved` / `wontfix`. `duplicate_of` (a report id) is required when `status` is `"duplicate"`. **Errors:** 400 on an unknown status, a missing/self-referential/nonexistent `duplicate_of`.
 
 **Response:** `{ "reports": [ "full updated reports array, same shape as guild detail" ] }`
+
+### `GET /api/guilds/{guild_id}/reports/{report_id}`
+Backs the per-report detail page (a GitHub-issue-style view for the report's full two-way conversation with its reporter).
+```json
+{
+  "report": { "id": 1, "...": "same shape as guild detail's reports array" },
+  "replies": [ { "id": 1, "author_type": "staff", "author_id": "555", "author_username": "mod", "content": "Can you share more details?", "created_at": "..." } ]
+}
+```
+`author_type` is `"staff"` or `"reporter"` (a third internal `"system"` type exists in storage for DM-reply matching but is never returned here). On a `private` report, a `"reporter"`-authored reply's `author_id`/`author_username` are `null`, same privacy guarantee as the report itself. **Errors:** 404 if the report doesn't exist in this guild.
+
+### `POST /api/guilds/{guild_id}/reports/{report_id}/replies`
+Sends a reply to the reporter by DM (mirrored into the tracker channel too) and records it in the thread.
+```json
+{ "content": "Can you share more details?" }
+```
+**Errors:** 400 if `content` is empty; 400/404 via the same report-lookup errors as the status endpoint.
+
+**Response:** same shape as the GET above, plus `"delivered": true`, whether the DM actually reached the reporter (still recorded either way, e.g. if they have DMs closed).
 
 ---
 
@@ -478,6 +497,8 @@ If `dashboard-frontend/dist` doesn't exist (frontend never built), `GET /` retur
 | DELETE | `/api/guilds/{id}/reactionroles/message/{message_id}` | manage |
 | POST | `/api/guilds/{id}/reports/channels` | manage |
 | POST | `/api/guilds/{id}/reports/{report_id}/status` | manage |
+| GET | `/api/guilds/{id}/reports/{report_id}` | manage |
+| POST | `/api/guilds/{id}/reports/{report_id}/replies` | manage |
 | GET | `/api/guilds/{id}/roles` | manage |
 | GET | `/api/guilds/{id}/channels` | manage |
 | GET | `/api/guilds/{id}/members` | manage |
