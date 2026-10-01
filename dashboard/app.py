@@ -19,6 +19,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from bot import moderation_actions
 from bot import report_actions
+from bot.bounded_cache import BoundedDict
 from bot.moderation_actions import ModerationBlocked
 from bot import voice_tracker
 from bot.commands import Bot as BotFramework
@@ -1128,17 +1129,36 @@ async def api_remove_tag(request: Request, guild_id: str, tag_name: str):
 
 
 # --------------------------------------------------------------------- stats --
+# Several pages (Overview, Warnings/Mod Log, Reports, the Levels leaderboard)
+# resolve usernames for display, and every one of them is behind the 8s
+# background poll in GuildDetail.jsx -- without a cache, a server with a
+# long warnings/actions/reports history re-issues one REST call PER UNIQUE
+# USER on every single poll tick, forever, just to keep re-displaying the
+# same names. A short TTL (comfortably longer than the poll interval, so
+# most ticks hit cache) cuts that down close to one real lookup per user
+# per TTL window regardless of how many times the page polls in between.
+_USERNAME_CACHE_TTL = 60  # seconds
+_username_cache: BoundedDict[tuple[str, str], tuple[str, float]] = BoundedDict(max_size=5000)
+
+
 async def _resolve_usernames(guild_id: str, user_ids: list[str]) -> dict[str, str]:
     """Best-effort user_id -> username lookup via the bot's own REST
     connection, so lists show names instead of raw snowflakes. Falls back
     to the raw ID per-user if that lookup fails (e.g. they left the
     server) rather than failing the whole request."""
+    now = time.monotonic()
+
     async def _one(uid: str) -> tuple[str, str]:
+        cached = _username_cache.get((guild_id, uid))
+        if cached and (now - cached[1]) < _USERNAME_CACHE_TTL:
+            return uid, cached[0]
         try:
             member = await bot_rest.get_guild_member(guild_id, uid)
-            return uid, member.get("user", member).get("username", uid)
+            username = member.get("user", member).get("username", uid)
         except FluxerAPIError:
-            return uid, uid
+            username = uid
+        _username_cache[(guild_id, uid)] = (username, now)
+        return uid, username
 
     results = await asyncio.gather(*(_one(uid) for uid in user_ids))
     return dict(results)
