@@ -11,6 +11,13 @@
 # service by its Docker DNS name rather than localhost -- the same .env
 # you'd use for a bare-metal install works here unmodified, nothing
 # Docker-specific needs to go in it.
+#
+# Already have your own Postgres (a managed service, one shared across
+# several apps, whatever) and don't want this one at all? See
+# docker-compose.external-db.yml, an override file that skips starting
+# this postgres service and points bot/dashboard at DATABASE_URL from
+# your .env as-is instead of rewriting it:
+#   docker compose -f docker-compose.yml -f docker-compose.external-db.yml up -d --build
 
 services:
   postgres:
@@ -38,6 +45,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        # required: false (not just a default) so this still starts cleanly
+        # under docker-compose.external-db.yml, where the postgres service
+        # isn't part of the run at all, not just slow to become healthy.
+        required: false
 
   dashboard:
     build: .
@@ -56,6 +67,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
 
 volumes:
   postgres_data:

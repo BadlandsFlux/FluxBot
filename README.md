@@ -201,6 +201,14 @@ docker compose down -v              # stop everything AND delete the database
 docker compose up -d --build        # after pulling code changes, rebuild and restart
 ```
 
+**Already have a Postgres you'd rather use** (a managed service, one instance shared across several apps, whatever), instead of the bundled one? Set `DATABASE_URL` in `.env` to that instance (reachable from these containers: a host on your network, a managed service's connection string, etc.) and bring the stack up with the external-db override instead:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.external-db.yml up -d --build
+```
+
+That extra file skips starting the bundled `postgres` service entirely and uses `DATABASE_URL` from `.env` exactly as given, rather than rewriting it to the bundled service's own name the way plain `docker compose up` does. `bot`/`dashboard` no longer wait on a local healthcheck either, since there's nothing local to wait on, just your `DATABASE_URL` needing to already be reachable when they start.
+
 TLS/reverse-proxying still isn't part of this, same as the bare-metal path: put nginx (containerized or not) in front of the published dashboard port yourself if you want HTTPS, and set `DASHBOARD_COOKIE_SECURE=true`/`TRUSTED_PROXY_IPS` in `.env` to match once you do, see "Reverse proxy (nginx)" below, the same guidance applies either way.
 
 ## Reverse proxy (nginx)

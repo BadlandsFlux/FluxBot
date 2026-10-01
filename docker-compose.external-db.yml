@@ -1,0 +1,26 @@
+# Optional override: use your own Postgres instead of the bundled
+# `postgres` service in docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.external-db.yml up -d --build
+#
+# Point DATABASE_URL in .env at your external Postgres first (anything
+# reachable from these containers: a host on your network, a managed
+# service, a Postgres shared with other apps). It's used exactly as
+# given here, unlike docker-compose.yml alone, which always rewrites
+# it to the bundled service's own name.
+#
+# The bundled postgres service itself is tagged with a profile no run
+# ever activates, so it's simply never started, not just left idle;
+# `required: false` on bot/dashboard's depends_on (see docker-compose.yml)
+# is what lets them start cleanly without it.
+services:
+  postgres:
+    profiles: ["unused"]
+
+  bot:
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+
+  dashboard:
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
