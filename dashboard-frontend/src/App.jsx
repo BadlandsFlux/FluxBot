@@ -7,6 +7,7 @@ import { GuildsProvider } from "./context/GuildsContext";
 import Login from "./pages/Login";
 import GuildPicker from "./pages/GuildPicker";
 import GuildDetail from "./pages/GuildDetail";
+import ReportDetail from "./pages/ReportDetail";
 import Commands from "./pages/Commands";
 import Status from "./pages/Status";
 import BotProfile from "./pages/BotProfile";
@@ -48,6 +49,10 @@ export default function App() {
             <Routes>
               <Route path="/" element={me.user ? <GuildPicker /> : <Login botName={botName} />} />
               <Route path="/guild/:id" element={me.user ? <GuildDetail /> : <Login botName={botName} />} />
+              <Route
+                path="/guild/:id/reports/:reportId"
+                element={me.user ? <ReportDetail /> : <Login botName={botName} />}
+              />
               <Route path="/commands" element={<Commands />} />
               <Route path="/status" element={<Status />} />
               <Route

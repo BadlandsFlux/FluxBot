@@ -294,8 +294,9 @@ Kick/ban/timeout/warn (chat commands and the dashboard's Members tab alike, both
 | `!reportchannel #channel` | Manage Guild | Set the channel reports are captured from, see "Reports" below |
 | `!reporttracker #channel` | Manage Guild | Set the channel reports are tracked in |
 | `!report status <id> <open\|duplicate\|resolved\|wontfix> [note]` | Kick Members | Update a report's status |
+| `!report reply <id> <message>` | Kick Members | DM the reporter and record it as part of the report's thread |
 | `!report list [status]` | Kick Members | List reports, optionally filtered |
-| `!report info <id>` | Kick Members | Full detail on one report |
+| `!report info <id>` | Kick Members | Full detail on one report, including its most recent replies |
 
 `!info` is gated by `BOT_OWNER_ID` in `.env` (your own Fluxer user ID), not by any per-server permission, it's meant for you, not server admins.
 
@@ -317,6 +318,8 @@ Most day-to-day admin work can be done entirely from the dashboard, no need to t
 
   **A real trust boundary worth understanding before enabling this for communities you don't already trust with each other**: this is one shared Discord bot across every Fluxer guild the bot manages, and nothing verifies that a Fluxer guild manager configuring a `fluxer_to_discord` (or `both`) mapping actually has any real claim to the Discord channel ID they enter, only that they manage the Fluxer guild the mapping is filed under. If this bot is ever hosted for multiple unrelated Fluxer communities, any of their managers could in principle direct the shared bot to post into any Discord channel it happens to have access to. Each mapping records who created it (for after-the-fact accountability, not prevention), but if you're hosting this for people who don't already trust each other, that's worth knowing going in.
 - **Reports tab**: member-submitted bug/issue reports, captured from a dedicated channel with no command needed. Set both channels right from this tab (a small "Channels" card at the top, same two pickers as Settings, calling a narrower endpoint so saving them can't accidentally reset anything else in Settings), or with `!reportchannel`/`!reporttracker`. Setting (or changing) the report channel posts a one-time explainer embed into it so nobody has to already know "just post here" is the convention, including a copy-pasteable template (`Title:` / `Description:` / `Steps to reproduce:` / `Private:`), though plain free text works exactly the same if you'd rather skip it. The original message is always removed from the report channel once it's logged, public or private alike (best-effort, needs Manage Messages), a report only actually lives on in the tracker channel from then on, so the report channel itself never ends up holding a mix of raw submissions and bot clutter. `Private: yes` in the report itself is what controls attribution there: set it and the tracker entry never shows the reporter's identity at all, their confirmation (and a note if the duplicate check below flagged something similar) arrives by DM instead, since there's no public message left to reply under either way. Reports are tracked in that second status-tagged channel so people can see what's already been reported before filing another one, with a basic text-similarity check flagging likely duplicates for staff automatically. From the Reports tab you can search/filter the list, resolve/won't-fix/reopen a report, or mark one a confirmed duplicate of another (also doable with `!report status`, same shared logic either way so the tracker entry and the reporter's DM never drift between the two), with labeled (not just icon) buttons and a confirmed-vs-auto-flagged-duplicate distinction in the table so it's clear at a glance what each one means and does. Like every other tab, it picks up new/changed reports from the same quiet 8-second background poll the rest of the dashboard already uses, with a toast flashed specifically when a new report comes in while you're looking at the tab, so that's actually noticeable rather than a silent re-render.
+
+  Each report also has its own page (click its `#id` or the **Reply** button, same GitHub-issue-style detail view for a growing conversation rather than cramming it into the table) for a real two-way thread with the reporter: staff reply from there (or with `!report reply <id> <message>`), it DMs the reporter, and they reply the same way anyone replies to a DM, no command needed on their end, matched back to the right report by which of the bot's messages they quoted so it still works correctly even if they've got more than one open report going. Every reply either side sends is also mirrored into the tracker channel as its own message, so staff watching there see the conversation live without needing the dashboard open at all. The report list badges which ones are actually waiting on staff (the reporter replied last) and shows a running reply count, and the thread page itself polls and toasts new replies the same way the list does new reports.
 - **Danger Zone** (bottom of Settings): bulk, irreversible actions (clear all warnings, reset all XP, wipe all reaction roles), each gated behind typing "CONFIRM" before it runs, and logged to Mod Log.
 - **Per-user XP management** (Levels tab): add or remove a specific amount of XP for one member, or reset just their level/XP back to zero, distinct from the Danger Zone's server-wide reset. Both are logged to Mod Log.
 - **Onboarding checklist**: closeable with the X for the current visit, or permanently with "Don't remind me again" (persisted per-server in your browser), if you'd rather not see it again even before finishing setup.
@@ -341,8 +344,9 @@ bot/
   timeutil.py          snowflake to date, duration + shared duration-string parsing
   moderation_actions.py  shared kick/ban/timeout/warn logic, used by both chat
                         commands and the dashboard's Members tab
-  report_actions.py     shared report status/tracker-embed logic, used by both
-                        the !report chat command and the dashboard's Reports tab
+  report_actions.py     shared report status/tracker-embed/reply logic, used by
+                        both the !report chat command and the dashboard's
+                        Reports tab
   scheduler.py          background loop: delivers due reminders, closes and
                         tallies due polls, flushes in-progress voice sessions,
                         independent of the gateway connection
@@ -367,8 +371,9 @@ bot/
     reports.py            captures member bug/issue reports from a dedicated
                         channel (no command needed), posts/updates a
                         status-tagged tracker embed, basic text-similarity
-                        duplicate detection, !reportchannel/!reporttracker/
-                        !report status/list/info
+                        duplicate detection, two-way reply thread with the
+                        reporter over DM, !reportchannel/!reporttracker/
+                        !report status/reply/list/info
   main.py                entrypoint, also starts the scheduler task
 dashboard/
   app.py                FastAPI app, JSON API (/api/*) + serves the built SPA
@@ -379,7 +384,7 @@ dashboard-frontend/      React SPA (Vite)
     App.jsx               routing + auth-gate
     context/              GuildsContext (shared guild-list fetch for the picker
                           and the top-bar switcher)
-    pages/                Login, GuildPicker, GuildDetail, Commands
+    pages/                Login, GuildPicker, GuildDetail, ReportDetail, Commands
     components/           TopBar, GuildSwitcher, Flash (toasts), Spinner, Switch,
                           Combobox (role/channel picker), EmojiPicker, BarChart,
                           ReactionRoleBuilder, AnnouncementBuilder, MembersTab,

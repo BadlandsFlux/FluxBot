@@ -173,6 +173,33 @@ async def submit_report(rest, guild_id: str, reporter_id: str, content: str, sub
     return report
 
 
+async def send_reporter_dm(rest, report: asyncpg.Record, author_type: str, content: str, *,
+                            author_id: Optional[str] = None) -> bool:
+    """Every DM this module ever sends about a report goes through here,
+    staff replies and system notifications alike: it's what anchors a
+    reporter's later reply (they quote this exact message) back to this
+    report, see report_replies' comment in schema.sql and
+    bot/modules/reports.py's DM-reply handler. `content` is always the
+    clean, storable text; a staff reply gets wrapped with DM framing
+    (who it's from, how to respond) only in what's actually sent, never
+    in what's stored, so the dashboard/!report info thread shows plain
+    text either way. Best-effort like every other DM in this module --
+    a reporter with DMs closed still gets their report tracked and the
+    reply recorded, it just never physically arrives; the return value
+    is whether it did."""
+    dm_text = (f"💬 **Reply from staff on report #{report['id']}:**\n{content}\n\n"
+               f"_Reply to this message to respond._") if author_type == "staff" else content
+    dm_message_id = None
+    try:
+        dm = await rest.create_dm(report["reporter_id"])
+        message = await rest.send_message(dm["id"], content=dm_text)
+        dm_message_id = str(message["id"])
+    except FluxerAPIError:
+        log.warning("Failed to DM reporter %s about report #%s", report["reporter_id"], report["id"])
+    await db.create_report_reply(report["id"], author_type, content, author_id=author_id, dm_message_id=dm_message_id)
+    return dm_message_id is not None
+
+
 async def _notify_reporter(rest, report: asyncpg.Record) -> None:
     status = report["status"]
     if status == "duplicate":
@@ -184,11 +211,39 @@ async def _notify_reporter(rest, report: asyncpg.Record) -> None:
         text = f"🚫 Your report #{report['id']} was reviewed and marked as won't-fix."
     if report["resolution_note"]:
         text += f"\n\nNote from staff: {report['resolution_note']}"
+    await send_reporter_dm(rest, report, "system", text)
+
+
+async def post_reply_to_tracker(rest, report: asyncpg.Record, author_type: str, content: str) -> None:
+    """Best-effort visibility for staff watching the tracker channel
+    rather than the dashboard: posts the reply as its own message there,
+    not folded into the single status embed sync_tracker_entry keeps
+    edited in place (a growing conversation doesn't fit an edited-in-
+    place embed the way a status change does). A no-op if this report
+    was never posted to a tracker channel in the first place."""
+    if not report["tracker_channel_id"]:
+        return
+    who = "Staff" if author_type == "staff" else "The reporter"
+    text = f"💬 {who} replied to report #{report['id']}:\n>>> {content[:1800]}"
     try:
-        dm = await rest.create_dm(report["reporter_id"])
-        await rest.send_message(dm["id"], content=text)
+        await rest.send_message(report["tracker_channel_id"], content=text)
     except FluxerAPIError:
-        pass  # can't DM them, nothing more to do, the status change itself already landed
+        log.warning("Failed to mirror report #%s's reply into the tracker channel", report["id"])
+
+
+async def add_staff_reply(rest, guild_id: str, report_id: int, staff_id: str,
+                           content: str) -> tuple[asyncpg.Record, bool]:
+    """Staff replying to the reporter, shared by the dashboard's reply
+    endpoint and `!report reply` so the two can never drift. Returns the
+    report and whether the DM to the reporter actually landed, so
+    either caller can tell staff if it didn't (same as every other
+    best-effort DM in this module, e.g. a reporter with DMs closed)."""
+    report = await db.get_report(guild_id, report_id)
+    if not report:
+        raise ValueError(f"No report #{report_id} in this server.")
+    delivered = await send_reporter_dm(rest, report, "staff", content, author_id=staff_id)
+    await post_reply_to_tracker(rest, report, "staff", content)
+    return report, delivered
 
 
 async def set_status(rest, guild_id: str, report_id: int, status: str, *, duplicate_of: Optional[int] = None,

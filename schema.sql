@@ -638,6 +638,39 @@ CREATE TABLE IF NOT EXISTS reports (
 CREATE INDEX IF NOT EXISTS idx_reports_guild_status  ON reports(guild_id, status);
 CREATE INDEX IF NOT EXISTS idx_reports_guild_created ON reports(guild_id, created_at DESC);
 
+-- The two-way conversation on a report: staff replying to the reporter,
+-- and the reporter replying back, see bot/report_actions.py's
+-- add_staff_reply and bot/modules/reports.py's DM-reply handler. Always
+-- delivered/received by DM (the reporter never has a dashboard login,
+-- and there's no public message left for them to reply under once the
+-- original is removed, see the reports table's own comment above), so
+-- every row that corresponds to an actual DM carries that DM's message
+-- id in dm_message_id. That's not just a record: it's how the next
+-- inbound DM from the reporter gets matched back to the right report at
+-- all, by reading the message_reference on their reply and looking up
+-- which report that referenced message id belongs to (reports.id is
+-- otherwise invisible to them, there's no "type the report number"
+-- step). 'system' rows (the initial submission confirmation, status-
+-- change notifications) are anchors for that matching only, not part of
+-- the human conversation a report's dashboard page or !report info
+-- shows -- without them, replying to anything other than the most
+-- recent staff message would fail to match.
+CREATE TABLE IF NOT EXISTS report_replies (
+    id            BIGSERIAL PRIMARY KEY,
+    report_id     BIGINT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    author_type   TEXT NOT NULL CHECK (author_type IN ('staff', 'reporter', 'system')),
+    -- The staff member's or reporter's own id for 'staff'/'reporter' rows.
+    -- Unused (NULL) for 'system' rows, there's no human author.
+    author_id     TEXT,
+    content       TEXT NOT NULL,
+    -- Unique per row when set (never reused across reports/replies), so
+    -- a lookup by this id alone is enough to find the report it belongs
+    -- to with no further scoping needed, see get_report_by_dm_message.
+    dm_message_id TEXT UNIQUE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_report_replies_report ON report_replies(report_id, created_at);
+
 -- Migrations for columns added to already-existing tables after this
 -- schema's earlier migration block (further up this file) was last
 -- updated. That block runs early, before several of the tables below
