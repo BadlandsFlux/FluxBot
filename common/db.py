@@ -1441,29 +1441,27 @@ async def prune_expired_link_codes() -> int:
 
 # --------------------------------------------------------------- reports --
 REPORT_STATUSES = ("open", "duplicate", "resolved", "wontfix")
-_DEFAULT_PRIVACY_TTL_MINUTES = 10
 
 
 async def create_report(guild_id: str, reporter_id: str, content: str, submit_channel_id: str,
                          submit_message_id: str, *, visibility: str = "public",
-                         possible_duplicate_of: Optional[int] = None,
-                         privacy_ttl_minutes: int = _DEFAULT_PRIVACY_TTL_MINUTES) -> asyncpg.Record:
-    # visibility is normally left at the 'public' default and flipped later
-    # by mark_report_private (the reactive 🔒-within-the-window path), but a
-    # report can also be born private: see bot/modules/reports.py's "Private:
-    # yes" template field. Taking it here, rather than always creating
-    # public and immediately calling mark_report_private, means the row
-    # (and the very first tracker post built from it) is correct from the
-    # start, with no brief window where it's sitting there attributed.
+                         possible_duplicate_of: Optional[int] = None) -> asyncpg.Record:
+    # visibility is decided entirely at submission time (see
+    # bot/modules/reports.py's "Private: yes" template field), there's no
+    # reactive flip-to-private step anymore: the original message is
+    # always removed from the report channel right after capture
+    # regardless of visibility, so there'd be nothing left to react to.
+    # Deciding it here means the row (and the very first tracker post
+    # built from it) is correct from the start either way.
     return await pool().fetchrow(
         """
         INSERT INTO reports (guild_id, reporter_id, content, visibility, possible_duplicate_of,
-                              submit_channel_id, submit_message_id, privacy_deadline)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, now() + ($8 || ' minutes')::interval)
+                              submit_channel_id, submit_message_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
         """,
         guild_id, reporter_id, content, visibility, possible_duplicate_of,
-        submit_channel_id, submit_message_id, str(privacy_ttl_minutes),
+        submit_channel_id, submit_message_id,
     )
 
 
@@ -1505,19 +1503,6 @@ async def set_report_tracker_message(guild_id: str, report_id: int, tracker_chan
         "UPDATE reports SET tracker_channel_id=$3, tracker_message_id=$4, updated_at=now() "
         "WHERE guild_id=$1 AND id=$2",
         guild_id, report_id, tracker_channel_id, tracker_message_id,
-    )
-
-
-async def mark_report_private(guild_id: str, report_id: int) -> Optional[asyncpg.Record]:
-    """Only ever called for a report that's still 'open' and still
-    'public' and still inside its privacy window, see the caller
-    (bot/modules/reports.py's reaction handler) -- enforced there, not
-    repeated here as a WHERE clause, since the caller already needs to
-    fetch the row first to check the reacting user actually IS the
-    original reporter."""
-    return await pool().fetchrow(
-        "UPDATE reports SET visibility='private', updated_at=now() WHERE guild_id=$1 AND id=$2 RETURNING *",
-        guild_id, report_id,
     )
 
 

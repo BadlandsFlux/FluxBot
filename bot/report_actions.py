@@ -50,10 +50,9 @@ def build_channel_intro_embed(tracker_channel_id: Optional[str] = None) -> dict:
     lines = [
         "**Post anything here and it becomes a report**, no command needed. Free text works, or copy "
         "the template below and fill it in.",
-        ("Set `Private: yes` in your report to keep it private from the moment you post it: your name "
-         "never shows up anywhere and the message is removed right away, no window where it's sitting "
-         "there attributed. Forgot to set it? React 🔒 on your own report within 10 minutes instead and "
-         "I'll do the same thing after the fact."),
+        ("Your message is always moved out of this channel once it's logged, you'll find it in the "
+         "tracker instead. Set `Private: yes` in your report if you'd also like your name left off it, "
+         "otherwise it's attributed to you there."),
     ]
     if tracker_channel_id:
         lines.append(f"Check <#{tracker_channel_id}> first to see if your issue is already being "
@@ -172,13 +171,6 @@ async def submit_report(rest, guild_id: str, reporter_id: str, content: str, sub
             await db.set_report_tracker_message(guild_id, report["id"], tracker_channel_id, str(message["id"]))
             report = await db.get_report(guild_id, report["id"])
     return report
-
-
-async def privatize_report(rest, guild_id: str, report_id: int) -> Optional[asyncpg.Record]:
-    updated = await db.mark_report_private(guild_id, report_id)
-    if updated:
-        await sync_tracker_entry(rest, updated)
-    return updated
 
 
 async def _notify_reporter(rest, report: asyncpg.Record) -> None:

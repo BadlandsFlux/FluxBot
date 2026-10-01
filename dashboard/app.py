@@ -19,6 +19,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from bot import moderation_actions
 from bot import report_actions
+from bot.bounded_cache import BoundedDict
 from bot.moderation_actions import ModerationBlocked
 from bot import voice_tracker
 from bot.commands import Bot as BotFramework
@@ -448,6 +449,19 @@ class SettingsPayload(BaseModel):
     report_tracker_channel_id: str = ""
 
 
+async def _maybe_post_report_intro(previous, guild_cfg) -> None:
+    """Shared by every path that can change report_channel_id (the full
+    settings form, and the Reports tab's own narrower channel picker):
+    posts the explainer embed only when that channel actually changed,
+    never on an unrelated save that happens to pass the same value
+    through again."""
+    new_report_channel = guild_cfg["report_channel_id"]
+    if new_report_channel and new_report_channel != (previous["report_channel_id"] if previous else None):
+        await report_actions.post_channel_intro(
+            bot_rest, new_report_channel, guild_cfg["report_tracker_channel_id"],
+        )
+
+
 @app.post("/api/guilds/{guild_id}/settings")
 async def api_update_settings(request: Request, guild_id: str, payload: SettingsPayload):
     await _require_manage(request, guild_id)
@@ -472,11 +486,7 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
         report_tracker_channel_id=payload.report_tracker_channel_id or None,
     )
     guild_cfg = await db.get_guild(guild_id)
-    new_report_channel = guild_cfg["report_channel_id"]
-    if new_report_channel and new_report_channel != (previous["report_channel_id"] if previous else None):
-        await report_actions.post_channel_intro(
-            bot_rest, new_report_channel, guild_cfg["report_tracker_channel_id"],
-        )
+    await _maybe_post_report_intro(previous, guild_cfg)
     return {"guild": _guild_to_json(guild_cfg)}
 
 
@@ -833,6 +843,30 @@ async def api_remove_reaction_role_message(request: Request, guild_id: str, mess
 
 
 # ------------------------------------------------------------------ reports --
+class ReportChannelsPayload(BaseModel):
+    report_channel_id: str = ""
+    report_tracker_channel_id: str = ""
+
+
+@app.post("/api/guilds/{guild_id}/reports/channels")
+async def api_set_report_channels(request: Request, guild_id: str, payload: ReportChannelsPayload):
+    """A narrower alternative to the full /settings form, so the
+    Reports tab can offer its own channel pickers without having to
+    carry (and risk clobbering) every other setting just to change
+    these two. update_guild_settings only ever touches the columns
+    it's actually passed, so this is safe to call with just these two."""
+    await _require_manage(request, guild_id)
+    previous = await db.get_guild(guild_id)
+    await db.update_guild_settings(
+        guild_id,
+        report_channel_id=payload.report_channel_id or None,
+        report_tracker_channel_id=payload.report_tracker_channel_id or None,
+    )
+    guild_cfg = await db.get_guild(guild_id)
+    await _maybe_post_report_intro(previous, guild_cfg)
+    return {"guild": _guild_to_json(guild_cfg)}
+
+
 class ReportStatusPayload(BaseModel):
     status: str
     duplicate_of: Optional[int] = None
@@ -1095,17 +1129,36 @@ async def api_remove_tag(request: Request, guild_id: str, tag_name: str):
 
 
 # --------------------------------------------------------------------- stats --
+# Several pages (Overview, Warnings/Mod Log, Reports, the Levels leaderboard)
+# resolve usernames for display, and every one of them is behind the 8s
+# background poll in GuildDetail.jsx -- without a cache, a server with a
+# long warnings/actions/reports history re-issues one REST call PER UNIQUE
+# USER on every single poll tick, forever, just to keep re-displaying the
+# same names. A short TTL (comfortably longer than the poll interval, so
+# most ticks hit cache) cuts that down close to one real lookup per user
+# per TTL window regardless of how many times the page polls in between.
+_USERNAME_CACHE_TTL = 60  # seconds
+_username_cache: BoundedDict[tuple[str, str], tuple[str, float]] = BoundedDict(max_size=5000)
+
+
 async def _resolve_usernames(guild_id: str, user_ids: list[str]) -> dict[str, str]:
     """Best-effort user_id -> username lookup via the bot's own REST
     connection, so lists show names instead of raw snowflakes. Falls back
     to the raw ID per-user if that lookup fails (e.g. they left the
     server) rather than failing the whole request."""
+    now = time.monotonic()
+
     async def _one(uid: str) -> tuple[str, str]:
+        cached = _username_cache.get((guild_id, uid))
+        if cached and (now - cached[1]) < _USERNAME_CACHE_TTL:
+            return uid, cached[0]
         try:
             member = await bot_rest.get_guild_member(guild_id, uid)
-            return uid, member.get("user", member).get("username", uid)
+            username = member.get("user", member).get("username", uid)
         except FluxerAPIError:
-            return uid, uid
+            username = uid
+        _username_cache[(guild_id, uid)] = (username, now)
+        return uid, username
 
     results = await asyncio.gather(*(_one(uid) for uid in user_ids))
     return dict(results)

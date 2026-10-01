@@ -582,7 +582,10 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
   font-size: 13px;
 }
 .member-name { font-weight: 600; font-size: 14px; }
-.member-actions { display: flex; gap: 4px; }
+.member-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.report-status-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.report-status-cell .tag { text-transform: none; }
+.report-dup-group { display: inline-flex; align-items: center; gap: 4px; }
 .member-action-panel {
   display: flex;
   align-items: center;
