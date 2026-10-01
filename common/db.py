@@ -184,9 +184,19 @@ async def log_action(guild_id: str, action: str, user_id: str = "", moderator_id
     )
 
 
-async def list_actions(guild_id: str, limit: int = 100) -> list[asyncpg.Record]:
+async def list_actions(guild_id: str, limit: int = 100, before_id: Optional[int] = None) -> list[asyncpg.Record]:
+    # before_id (not an OFFSET) for "load more": ids are assigned in the
+    # same order as created_at, so "id < before_id" continues exactly
+    # where a previous page left off even if new rows have landed at the
+    # top since, an OFFSET-based page would silently skip or repeat rows
+    # once that happens.
+    if before_id is not None:
+        return await pool().fetch(
+            "SELECT * FROM mod_actions WHERE guild_id=$1 AND id<$3 ORDER BY created_at DESC, id DESC LIMIT $2",
+            guild_id, limit, before_id,
+        )
     return await pool().fetch(
-        "SELECT * FROM mod_actions WHERE guild_id=$1 ORDER BY created_at DESC LIMIT $2",
+        "SELECT * FROM mod_actions WHERE guild_id=$1 ORDER BY created_at DESC, id DESC LIMIT $2",
         guild_id, limit,
     )
 
@@ -1521,14 +1531,29 @@ async def set_report_status(guild_id: str, report_id: int, status: str, *, dupli
     )
 
 
-async def list_reports(guild_id: str, status: Optional[str] = None, limit: int = 25) -> list[asyncpg.Record]:
+async def list_reports(guild_id: str, status: Optional[str] = None, limit: int = 25,
+                        before_id: Optional[int] = None) -> list[asyncpg.Record]:
+    # before_id works the same way as list_actions' own (see its comment):
+    # a stable "load more" cursor that survives new reports landing at
+    # the top while an older page is still being paged through.
+    if status and before_id is not None:
+        return await pool().fetch(
+            "SELECT * FROM reports WHERE guild_id=$1 AND status=$2 AND id<$4 "
+            "ORDER BY created_at DESC, id DESC LIMIT $3",
+            guild_id, status, limit, before_id,
+        )
     if status:
         return await pool().fetch(
-            "SELECT * FROM reports WHERE guild_id=$1 AND status=$2 ORDER BY created_at DESC LIMIT $3",
+            "SELECT * FROM reports WHERE guild_id=$1 AND status=$2 ORDER BY created_at DESC, id DESC LIMIT $3",
             guild_id, status, limit,
         )
+    if before_id is not None:
+        return await pool().fetch(
+            "SELECT * FROM reports WHERE guild_id=$1 AND id<$3 ORDER BY created_at DESC, id DESC LIMIT $2",
+            guild_id, limit, before_id,
+        )
     return await pool().fetch(
-        "SELECT * FROM reports WHERE guild_id=$1 ORDER BY created_at DESC LIMIT $2", guild_id, limit,
+        "SELECT * FROM reports WHERE guild_id=$1 ORDER BY created_at DESC, id DESC LIMIT $2", guild_id, limit,
     )
 
 

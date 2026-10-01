@@ -74,7 +74,13 @@ export const api = {
     request(`/api/guilds/${id}/reactionroles/message/${messageId}`, { method: "DELETE" }),
   roles: (id) => request(`/api/guilds/${id}/roles`),
   channels: (id) => request(`/api/guilds/${id}/channels`),
-  members: (id, q = "") => request(`/api/guilds/${id}/members${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  members: (id, q = "", offset = 0) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (offset) params.set("offset", offset);
+    const qs = params.toString();
+    return request(`/api/guilds/${id}/members${qs ? `?${qs}` : ""}`);
+  },
   kickMember: (id, userId, reason) =>
     request(`/api/guilds/${id}/members/${userId}/kick`, { method: "POST", body: { reason } }),
   banMember: (id, userId, reason) =>
@@ -138,4 +144,6 @@ export const api = {
   reportDetail: (id, reportId) => request(`/api/guilds/${id}/reports/${reportId}`),
   addReportReply: (id, reportId, content) =>
     request(`/api/guilds/${id}/reports/${reportId}/replies`, { method: "POST", body: { content } }),
+  loadMoreActions: (id, beforeId) => request(`/api/guilds/${id}/actions?before_id=${beforeId}`),
+  loadMoreReports: (id, beforeId) => request(`/api/guilds/${id}/reports/list?before_id=${beforeId}`),
 };

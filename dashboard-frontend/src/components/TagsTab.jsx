@@ -69,33 +69,35 @@ export default function TagsTab({ guildId, tags, prefix, onChange }) {
       <div className="card">
         <h2>Existing tags</h2>
         {tags.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Content</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {tags.map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    <code>
-                      {prefix}
-                      {t.name}
-                    </code>
-                  </td>
-                  <td className="muted small">{t.content}</td>
-                  <td>
-                    <button className="btn btn-ghost btn-small btn-icon" onClick={() => handleRemove(t.name)}>
-                      <Trash2 size={14} />
-                    </button>
-                  </td>
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Content</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {tags.map((t) => (
+                  <tr key={t.id}>
+                    <td>
+                      <code>
+                        {prefix}
+                        {t.name}
+                      </code>
+                    </td>
+                    <td className="muted small">{t.content}</td>
+                    <td>
+                      <button className="btn btn-ghost btn-small btn-icon" onClick={() => handleRemove(t.name)}>
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <p className="muted">No tags yet — add one above.</p>
         )}

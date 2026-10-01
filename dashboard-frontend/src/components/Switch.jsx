@@ -6,6 +6,7 @@ export default function Switch({ checked, onChange, label }) {
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={label}
         className={`switch ${checked ? "on" : ""}`}
         onClick={() => onChange(!checked)}
       >

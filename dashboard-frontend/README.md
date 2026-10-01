@@ -106,7 +106,17 @@ No auth required.
   "open_report_count": 1
 }
 ```
-**Errors:** 404 if the bot isn't in that guild. `actions` is capped at 50 most recent. `autoroles` is a flat array of role ID strings. A `private` report's `reporter_id`/`reporter_username` are `null`.
+**Errors:** 404 if the bot isn't in that guild. `actions` is capped at 50 most recent and `reports` at 100 (see the "Load more" endpoints just below for paging past either). `autoroles` is a flat array of role ID strings. A `private` report's `reporter_id`/`reporter_username` are `null`.
+
+---
+
+## Mod log (load more)
+
+### `GET /api/guilds/{guild_id}/actions?before_id=123&limit=50`
+Pages past the first 50 actions guild detail already embeds. `before_id` (optional) is the `id` of the oldest action already shown, not an `OFFSET`, so a new action landing at the top mid-pagination can't shift or duplicate a page that's already been fetched. `limit` is clamped to 1-100.
+```json
+{ "actions": [ "same shape as guild detail's actions array" ], "has_more": true }
+```
 
 ---
 
@@ -123,7 +133,7 @@ No auth required.
   "report_channel_id": "", "report_tracker_channel_id": ""
 }
 ```
-Every field has a default (the frontend always sends the full object). An empty string for a `*_channel_id`/`mute_role_id` field means "unset" (stored as `NULL`). `command_prefix` is truncated server-side to 5 chars, falls back to `"!"` if empty. Setting `report_channel_id` to a new value also posts a one-time explainer embed into that channel.
+Every field has a default (the frontend always sends the full object). An empty string for a `*_channel_id`/`mute_role_id` field means "unset" (stored as `NULL`). `command_prefix` is truncated server-side to 5 chars, falls back to `"!"` if empty. Setting `report_channel_id` to a new value also posts a one-time explainer embed into that channel. Whichever fields actually changed (diffed against the row before the save, so resubmitting the form unchanged logs nothing) get written to Mod Log as a `settings_update` action, naming just those fields, e.g. `Changed: warn-timeout threshold, mute role`.
 
 **Response:** `{ "guild": { "...": "same shape as the guild object in guild detail, updated" } }`
 
@@ -178,7 +188,7 @@ Removes **all** mappings tied to that message, and best-effort deletes the actua
 ## Reports
 
 ### `POST /api/guilds/{guild_id}/reports/channels`
-A narrower alternative to the full Settings form, so the Reports tab can set just these two without risking a reset of everything else.
+A narrower alternative to the full Settings form, so the Reports tab can set just these two without risking a reset of everything else. Logs a `settings_update` Mod Log entry the same way Settings does, only when a channel actually changed.
 ```json
 { "report_channel_id": "222", "report_tracker_channel_id": "333" }
 ```
@@ -211,6 +221,12 @@ Sends a reply to the reporter by DM (mirrored into the tracker channel too) and 
 
 **Response:** same shape as the GET above, plus `"delivered": true`, whether the DM actually reached the reporter (still recorded either way, e.g. if they have DMs closed).
 
+### `GET /api/guilds/{guild_id}/reports/list?before_id=123&limit=50&status=open`
+"Load more" for the Reports tab, same `before_id` cursor as the Mod Log one above (not `/reports`, which is reserved for `/reports/{report_id}`'s own GET). `status` is optional, same four values as the status endpoint.
+```json
+{ "reports": [ "same shape as guild detail's reports array" ], "has_more": true }
+```
+
 ---
 
 ## Roles / channels (picker data)
@@ -232,12 +248,15 @@ Live-fetched from Fluxer. Filtered to text-like channels (`type == 0` or missing
 
 ## Members
 
-### `GET /api/guilds/{guild_id}/members?q=searchterm`
-`q` is optional: substring of username (case-insensitive) or exact user ID. Fetches up to 500 members from Fluxer per request, returns at most 100 after filtering.
+### `GET /api/guilds/{guild_id}/members?q=searchterm&offset=0&limit=100`
+`q` is optional: substring of username (case-insensitive) or exact user ID. Fetches up to 500 members from Fluxer per request and filters in memory; `offset`/`limit` (limit clamped to 1-200, default 100) page through that same filtered, up-to-500 slice for "Load more", not a real cursor into Fluxer's own member list.
 ```json
-{ "members": [ { "id": "444", "username": "someone", "avatar": "a1b2c3", "roles": ["666"], "joined_at": "2024-01-01T00:00:00Z", "message_count": 231 } ] }
+{
+  "members": [ { "id": "444", "username": "someone", "avatar": "a1b2c3", "avatar_url": "https://.../avatars/444/a1b2c3.webp?size=64", "roles": ["666"], "joined_at": "2024-01-01T00:00:00Z", "message_count": 231 } ],
+  "has_more": true
+}
 ```
-`avatar` is the raw Fluxer avatar hash (or `null`), not a URL. `message_count` is this guild's own tracked total.
+`avatar` is the raw Fluxer avatar hash (or `null`), not a URL; `avatar_url` is the ready-to-use image URL built from it (also `null` when there's no avatar). `message_count` is this guild's own tracked total.
 
 ### `POST /api/guilds/{guild_id}/members/{user_id}/kick`
 `{ "reason": "spam" }` (optional, defaults to `""`) → `{ "ok": true }`
@@ -362,7 +381,7 @@ No body. Resets that member's XP/level to zero, logs a `xp_reset` mod action. �
 Everything defaults to `false`/unset until configured.
 
 ### `POST /api/guilds/{guild_id}/activity-log`
-Same shape as the GET response, minus `ignored_users`. → the GET shape, updated.
+Same shape as the GET response, minus `ignored_users`. → the GET shape, updated. Logs a `settings_update` Mod Log entry listing whichever toggles/channel actually changed (a first-time setup, going from completely unconfigured, reads as every field having changed).
 
 ### `POST /api/guilds/{guild_id}/activity-log/ignored-users`
 `{ "user_id": "444" }`. **Errors:** 400 if not numeric. → the GET shape, updated.
@@ -488,6 +507,7 @@ If `dashboard-frontend/dist` doesn't exist (frontend never built), `GET /` retur
 | GET | `/api/commands` | none |
 | GET | `/api/status` | none |
 | GET | `/api/guilds/{id}` | manage |
+| GET | `/api/guilds/{id}/actions` | manage |
 | POST | `/api/guilds/{id}/settings` | manage |
 | POST | `/api/guilds/{id}/warnings/{user_id}/clear` | manage |
 | POST | `/api/guilds/{id}/autoroles` | manage |
@@ -499,6 +519,7 @@ If `dashboard-frontend/dist` doesn't exist (frontend never built), `GET /` retur
 | POST | `/api/guilds/{id}/reports/{report_id}/status` | manage |
 | GET | `/api/guilds/{id}/reports/{report_id}` | manage |
 | POST | `/api/guilds/{id}/reports/{report_id}/replies` | manage |
+| GET | `/api/guilds/{id}/reports/list` | manage |
 | GET | `/api/guilds/{id}/roles` | manage |
 | GET | `/api/guilds/{id}/channels` | manage |
 | GET | `/api/guilds/{id}/members` | manage |

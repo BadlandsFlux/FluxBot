@@ -52,41 +52,56 @@ export default function Combobox({ options, value, onChange, placeholder = "Sear
         type="button"
         className={`combobox-trigger ${flash ? "combobox-trigger-flash" : ""}`}
         onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
       >
         <span className={selected ? "" : "muted"}>
           {selected ? selected.name : value ? `Unknown (${value})` : placeholder}
         </span>
         <span className="combobox-trigger-icons">
-          {allowClear && value && (
-            <span
-              className="combobox-clear"
-              onClick={(e) => {
-                e.stopPropagation();
-                onChange("");
-              }}
-            >
-              <X size={13} />
-            </span>
-          )}
           <ChevronDown size={14} />
         </span>
       </button>
+      {allowClear && value && (
+        // A sibling of the trigger, not nested inside it: a <button> inside
+        // another <button> is invalid HTML (browsers silently hoist it back
+        // out, breaking both the layout and the click handling), which is
+        // also why this couldn't just become a real, keyboard-reachable
+        // button without moving it out here in the first place.
+        <button
+          type="button"
+          className="combobox-clear"
+          aria-label="Clear selection"
+          onClick={(e) => {
+            e.stopPropagation();
+            onChange("");
+          }}
+        >
+          <X size={13} />
+        </button>
+      )}
       {open && (
         <div className="combobox-panel">
           <input
             type="text"
             className="combobox-search"
             placeholder="Type to filter…"
+            aria-label="Filter options"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setOpen(false);
+            }}
             autoFocus
           />
-          <div className="combobox-list">
+          <div className="combobox-list" role="listbox">
             {filtered.length === 0 && <div className="combobox-empty">No matches.</div>}
             {filtered.map((o) => (
               <button
                 type="button"
                 key={o.id}
+                role="option"
+                aria-selected={o.id === value}
                 className={`combobox-option ${o.id === value ? "selected" : ""}`}
                 onClick={() => selectOption(o.id)}
               >

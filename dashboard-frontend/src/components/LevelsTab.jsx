@@ -168,6 +168,7 @@ export default function LevelsTab({ guildId, roles, channels }) {
       <div className="card">
         <h2>Leaderboard</h2>
         {data.leaderboard.length ? (
+          <div className="table-scroll">
           <table className="table">
             <thead>
               <tr><th>#</th><th>User</th><th>Level</th><th>XP</th><th>Manage XP</th></tr>
@@ -217,6 +218,7 @@ export default function LevelsTab({ guildId, roles, channels }) {
               ))}
             </tbody>
           </table>
+          </div>
         ) : (
           <p className="muted">No one has earned XP yet.</p>
         )}

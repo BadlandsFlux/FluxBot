@@ -31,7 +31,7 @@ from bot.rest import FluxerAPIError, FluxerREST
 from common.url_safety import is_safe_external_url
 from common import db
 from common.config import config
-from common.discovery import get_media_base, guild_icon_url
+from common.discovery import get_media_base, guild_icon_url, user_avatar_url
 from dashboard import oauth
 
 log = logging.getLogger("fluxbot.dashboard")
@@ -458,6 +458,38 @@ async def api_guild_detail(request: Request, guild_id: str):
     }
 
 
+@app.get("/api/guilds/{guild_id}/actions")
+async def api_guild_actions(request: Request, guild_id: str, before_id: Optional[int] = None, limit: int = 50):
+    """"Load more" for Mod Log, past the first page guild detail already
+    embeds. before_id is the oldest action id already shown; fetching
+    limit+1 and trimming is how has_more is known without a second
+    COUNT query."""
+    await _require_manage(request, guild_id)
+    limit = max(1, min(limit, 100))
+    rows = await db.list_actions(guild_id, limit=limit + 1, before_id=before_id)
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    ids = {r["user_id"] for r in rows if r["user_id"]} | {r["moderator_id"] for r in rows if r["moderator_id"]}
+    names = await _resolve_usernames(guild_id, list(ids))
+    return {"actions": [_action_to_json(a, names) for a in rows], "has_more": has_more}
+
+
+@app.get("/api/guilds/{guild_id}/reports/list")
+async def api_list_reports_page(request: Request, guild_id: str, before_id: Optional[int] = None,
+                                 limit: int = 50, status: Optional[str] = None):
+    """"Load more" for the Reports tab, same before_id cursor as actions
+    above. A separate path from /reports/{report_id} (not /reports
+    itself) so it can't collide with that detail route."""
+    await _require_manage(request, guild_id)
+    limit = max(1, min(limit, 100))
+    rows = await db.list_reports(guild_id, status=status, limit=limit + 1, before_id=before_id)
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    names = await _resolve_usernames(guild_id, list({r["reporter_id"] for r in rows if r["visibility"] == "public"}))
+    reply_summary = await db.get_report_reply_counts(guild_id)
+    return {"reports": [_report_to_json(r, names, reply_summary) for r in rows], "has_more": has_more}
+
+
 class SettingsPayload(BaseModel):
     log_channel_id: str = ""
     mute_role_id: str = ""
@@ -476,6 +508,67 @@ class SettingsPayload(BaseModel):
     report_tracker_channel_id: str = ""
 
 
+def _diff_fields(previous, updated, field_labels: dict[str, str]) -> list[str]:
+    """Human-readable labels for whichever of field_labels' columns
+    actually changed between previous and updated (both dict-like, e.g.
+    asyncpg.Record; previous may be None for a config row that didn't
+    exist yet, in which case every set field reads as "changed", which
+    is accurate for a first-time setup). Used to log an audit-trail
+    mod_actions row for config changes made from the dashboard, the one
+    category of change that wasn't visible in Mod Log at all before:
+    kicks/bans/warns/etc. always were, but "who changed the mute role"
+    or the warn thresholds left no trace."""
+    changed = []
+    for column, label in field_labels.items():
+        old = previous[column] if previous is not None else None
+        if old != updated[column]:
+            changed.append(label)
+    return changed
+
+
+async def _log_config_change(guild_id: str, actor_id: str, changed_labels: list[str]) -> None:
+    if not changed_labels:
+        return  # e.g. the form was submitted with no actual change, nothing to record
+    await db.log_action(guild_id, "settings_update", moderator_id=actor_id,
+                         reason=f"Changed: {', '.join(changed_labels)}")
+
+
+_SETTINGS_FIELD_LABELS = {
+    "log_channel_id": "mod-log channel",
+    "mute_role_id": "mute role",
+    "command_prefix": "command prefix",
+    "welcome_channel_id": "welcome channel",
+    "welcome_message": "welcome message",
+    "goodbye_channel_id": "goodbye channel",
+    "goodbye_message": "goodbye message",
+    "leveling_enabled": "leveling on/off",
+    "level_up_channel_id": "level-up channel",
+    "level_up_message": "level-up message",
+    "warn_timeout_at": "warn-timeout threshold",
+    "warn_kick_at": "warn-kick threshold",
+    "warn_timeout_minutes": "timeout length",
+    "report_channel_id": "report channel",
+    "report_tracker_channel_id": "report tracker channel",
+}
+
+_ACTIVITY_LOG_FIELD_LABELS = {
+    "log_channel_id": "activity log channel",
+    "log_message_edits": "log message edits",
+    "log_message_deletes": "log message deletes",
+    "log_member_joins": "log member joins",
+    "log_member_leaves": "log member leaves",
+    "log_channel_changes": "log channel changes",
+    "log_role_changes": "log role changes",
+    "log_voice_activity": "log voice activity",
+    "log_privileged_role_changes": "log privileged-role changes",
+}
+
+_REPORT_CHANNEL_FIELD_LABELS = {
+    "report_channel_id": "report channel",
+    "report_tracker_channel_id": "report tracker channel",
+}
+
+
 async def _maybe_post_report_intro(previous, guild_cfg) -> None:
     """Shared by every path that can change report_channel_id (the full
     settings form, and the Reports tab's own narrower channel picker):
@@ -492,6 +585,7 @@ async def _maybe_post_report_intro(previous, guild_cfg) -> None:
 @app.post("/api/guilds/{guild_id}/settings")
 async def api_update_settings(request: Request, guild_id: str, payload: SettingsPayload):
     await _require_manage(request, guild_id)
+    user = require_login(request)
     prefix = (payload.command_prefix or "!").strip()[:5] or "!"
     previous = await db.get_guild(guild_id)
     await db.update_guild_settings(
@@ -514,6 +608,8 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
     )
     guild_cfg = await db.get_guild(guild_id)
     await _maybe_post_report_intro(previous, guild_cfg)
+    await _log_config_change(guild_id, str(user.get("id")),
+                              _diff_fields(previous, guild_cfg, _SETTINGS_FIELD_LABELS))
     return {"guild": _guild_to_json(guild_cfg)}
 
 
@@ -702,6 +798,8 @@ class ActivityLogPayload(BaseModel):
 @app.post("/api/guilds/{guild_id}/activity-log")
 async def api_set_activity_log(request: Request, guild_id: str, payload: ActivityLogPayload):
     await _require_manage(request, guild_id)
+    user = require_login(request)
+    previous = await db.get_activity_log_settings(guild_id)
     await db.set_activity_log_settings(
         guild_id, log_channel_id=payload.log_channel_id or None,
         log_message_edits=payload.log_message_edits, log_message_deletes=payload.log_message_deletes,
@@ -710,6 +808,9 @@ async def api_set_activity_log(request: Request, guild_id: str, payload: Activit
         log_voice_activity=payload.log_voice_activity,
         log_privileged_role_changes=payload.log_privileged_role_changes,
     )
+    updated = await db.get_activity_log_settings(guild_id)
+    await _log_config_change(guild_id, str(user.get("id")),
+                              _diff_fields(previous, updated, _ACTIVITY_LOG_FIELD_LABELS))
     return await _activity_log_response(guild_id)
 
 
@@ -883,6 +984,7 @@ async def api_set_report_channels(request: Request, guild_id: str, payload: Repo
     these two. update_guild_settings only ever touches the columns
     it's actually passed, so this is safe to call with just these two."""
     await _require_manage(request, guild_id)
+    user = require_login(request)
     previous = await db.get_guild(guild_id)
     await db.update_guild_settings(
         guild_id,
@@ -891,6 +993,8 @@ async def api_set_report_channels(request: Request, guild_id: str, payload: Repo
     )
     guild_cfg = await db.get_guild(guild_id)
     await _maybe_post_report_intro(previous, guild_cfg)
+    await _log_config_change(guild_id, str(user.get("id")),
+                              _diff_fields(previous, guild_cfg, _REPORT_CHANNEL_FIELD_LABELS))
     return {"guild": _guild_to_json(guild_cfg)}
 
 
@@ -1013,13 +1117,20 @@ async def api_guild_channels(request: Request, guild_id: str):
 
 # ------------------------------------------------------------------ members --
 @app.get("/api/guilds/{guild_id}/members")
-async def api_guild_members(request: Request, guild_id: str, q: str = ""):
+async def api_guild_members(request: Request, guild_id: str, q: str = "", offset: int = 0, limit: int = 100):
     """Best-effort member list/search. Fluxer's member-list endpoint (like
     Discord's) is paginated and capped per-request; this fetches one page
     (up to 500) and filters client-side-ish here, which comfortably covers
     small-to-medium communities. For very large servers this won't show
-    every member, search by exact ID also works around that."""
+    every member, search by exact ID also works around that.
+
+    offset/limit page through that same up-to-500 in-memory slice (not a
+    real cursor into Fluzer's own member list) so "Load more" in the
+    dashboard can reveal more of what's already been fetched instead of
+    everything past the first 100 just disappearing."""
     await _require_manage(request, guild_id)
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
     try:
         members = await bot_rest.list_guild_members(guild_id, limit=500)
     except FluxerAPIError as e:
@@ -1034,21 +1145,24 @@ async def api_guild_members(request: Request, guild_id: str, q: str = ""):
         if q_lower and q_lower not in username.lower() and q_lower != user_id:
             continue
         filtered.append((m, user, user_id, username))
-    filtered = filtered[:100]
+    total_matched = len(filtered)
+    page = filtered[offset:offset + limit]
 
-    message_counts = await db.get_member_message_counts(guild_id, [uid for _, _, uid, _ in filtered])
+    media_base = await get_media_base()
+    message_counts = await db.get_member_message_counts(guild_id, [uid for _, _, uid, _ in page])
     result = [
         {
             "id": user_id,
             "username": username,
             "avatar": user.get("avatar"),
+            "avatar_url": user_avatar_url(media_base, user_id, user.get("avatar"), size=64),
             "roles": m.get("roles", []),
             "joined_at": m.get("joined_at"),
             "message_count": message_counts.get(user_id, 0),
         }
-        for m, user, user_id, username in filtered
+        for m, user, user_id, username in page
     ]
-    return {"members": result}
+    return {"members": result, "has_more": offset + limit < total_matched}
 
 
 class MemberActionPayload(BaseModel):
