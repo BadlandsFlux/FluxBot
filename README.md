@@ -36,6 +36,7 @@ Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohtt
 - [Setup](#setup)
 - [Updating](#updating)
 - [Running at startup on Ubuntu (systemd)](#running-at-startup-on-ubuntu-systemd)
+- [Docker](#docker)
 - [Reverse proxy (nginx)](#reverse-proxy-nginx)
 - [Creating the bot application on Fluxer](#creating-the-bot-application-on-fluxer)
 - [Self-hosting a Fluxer instance](#self-hosting-a-fluxer-instance)
@@ -119,6 +120,13 @@ If you're on the `deploy/` systemd services, run the `git pull`/`pip install`/`p
 sudo systemctl restart fluxbot-bot.service fluxbot-dashboard.service
 ```
 
+If you're on Docker (see "Docker" below), updating is just:
+```bash
+git pull
+docker compose up -d --build
+```
+The rebuild picks up new Python/npm deps and schema changes on its own, nothing else to run separately.
+
 ## Running at startup on Ubuntu (systemd)
 
 `python run_bot.py` and `python run_dashboard.py` running in a terminal stop when you log out. For a real deployment, run both as `systemd` services, they'll start on boot and restart automatically if either crashes.
@@ -170,6 +178,30 @@ sudo systemctl restart fluxbot-bot.service fluxbot-dashboard.service
    ```
 
 If Postgres runs on this same machine, uncomment the `Requires=postgresql.service` line in both unit files before installing them, so they wait for the database on boot. Leave it commented out if Postgres is on a remote host, systemd can't depend on a service running on a different machine.
+
+## Docker
+
+An alternative to the systemd path above, not a replacement for it, use whichever fits how you host things.
+
+```bash
+cp .env.example .env   # fill in FLUXER_BOT_TOKEN, the OAuth2 creds, DASHBOARD_SESSION_SECRET, etc.
+docker compose up -d --build
+```
+
+That's `docker-compose.yml` bringing up three containers: `postgres` (official `postgres:16-alpine` image, data in a named volume so it survives a rebuild), `bot`, and `dashboard`, the last two built from the same `Dockerfile` (a multi-stage build: a Node stage compiles the dashboard's React frontend, then a Python stage installs `requirements.txt` and copies in `bot/`, `common/`, `dashboard/`, and the built frontend, nothing else, no system packages needed beyond what the base images already have) and just running `run_bot.py`/`run_dashboard.py` respectively, same as the non-Docker path.
+
+The one thing `docker-compose.yml` changes versus what's in your `.env`: it overrides `DATABASE_URL` to point at the `postgres` service by its Docker DNS name rather than `localhost`, and `DASHBOARD_HOST` to `0.0.0.0` so the dashboard is actually reachable through the port Docker publishes (`DASHBOARD_PORT` from `.env`, `8000` by default). Everything else in `.env` is used exactly as-is, the same file works whether you run this way or bare-metal.
+
+Schema setup is automatic: both processes already apply `schema.sql` on their own startup (same as the non-Docker path, see "Updating" above), there's no separate migration step or init container.
+
+```bash
+docker compose logs -f bot          # or dashboard / postgres
+docker compose down                 # stop everything, keeps the postgres_data volume
+docker compose down -v              # stop everything AND delete the database
+docker compose up -d --build        # after pulling code changes, rebuild and restart
+```
+
+TLS/reverse-proxying still isn't part of this, same as the bare-metal path: put nginx (containerized or not) in front of the published dashboard port yourself if you want HTTPS, and set `DASHBOARD_COOKIE_SECURE=true`/`TRUSTED_PROXY_IPS` in `.env` to match once you do, see "Reverse proxy (nginx)" below, the same guidance applies either way.
 
 ## Reverse proxy (nginx)
 
@@ -380,6 +412,10 @@ schema.sql              Postgres schema (idempotent, CREATE TABLE IF NOT EXISTS,
 run_bot.py / run_dashboard.py
 deploy/                systemd unit files + nginx reverse proxy config for running
                         both processes at boot on Ubuntu
+Dockerfile              multi-stage build (Node stage for the frontend, Python
+                        stage for bot + dashboard), see "Docker" above
+docker-compose.yml      bot + dashboard + Postgres, alternative to deploy/
+.dockerignore
 ```
 
 ## On API completeness
