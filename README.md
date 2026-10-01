@@ -15,8 +15,6 @@ A self-hosted moderation and community bot for [Fluxer](https://fluxer.app), pai
 - **A real dashboard**: a full React app with live search, near-real-time updates from chat, a Members tab you can moderate straight from, a leaderboard/level-role editor, a custom embed builder, a public status page, and more.
 - **Self-hostable end to end**: the bot and dashboard both talk to the Fluxer REST API directly (no third-party wrapper's undocumented internals), Postgres for storage, and every Fluxer-specific URL is a config value.
 
-See [What's editable from the dashboard vs. chat-only](#whats-editable-from-the-dashboard-vs-chat-only) for the full tour.
-
 ## Table of contents
 
 - [Setup](#setup)
@@ -28,9 +26,7 @@ See [What's editable from the dashboard vs. chat-only](#whats-editable-from-the-
 - [Self-hosting a Fluxer instance](#self-hosting-a-fluxer-instance)
 - [Dashboard access](#dashboard-access)
 - [Commands](#commands)
-- [What's editable from the dashboard vs. chat-only](#whats-editable-from-the-dashboard-vs-chat-only)
 - [Project layout](#project-layout)
-- [On API completeness](#on-api-completeness)
 
 ## Setup
 
@@ -309,28 +305,6 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 
 Tags can also be managed from the dashboard's Tags tab. Invoking `!<tagname>` posts its content as a fallback whenever a message doesn't match a built-in command; tag names can't collide with a real command name.
 
-## What's editable from the dashboard vs. chat-only
-
-Most day-to-day admin work can be done entirely from the dashboard:
-
-- **Settings**: mod-log channel, command prefix, mute role, welcome/goodbye channel and message, leveling on/off and its channel/message, warning-escalation thresholds. Searchable role/channel pickers instead of raw IDs.
-- **Members**: search, sort by username/join date/messages sent, and kick/ban/timeout/warn with a reason. Same shared logic as chat commands, logged and escalated identically either way.
-- **Autoroles / Reaction Roles**: add/remove autoroles, and build reaction-role embeds (the dashboard posts the message, reacts to it, and stores the mapping). A reaction-role message is managed as a unit: deleting it removes every mapping on it, not one emoji at a time. Neither feature will target a role with moderation/admin permissions (Administrator, Manage Guild, Kick/Ban/Moderate Members, Manage Messages), that's a privilege-escalation path, blocked outright.
-- **Levels**: XP leaderboard, level-role rewards (level N grants role X), XP-excluded channels, and role-based XP multipliers (highest applicable one wins, they don't stack). Per-user XP add/remove or a reset to zero, separate from the Danger Zone's server-wide reset.
-- **Tags**: add/remove custom `!tagname` shortcuts.
-- **Announce**: compose and send a custom embed (title, description, color, image, footer) to any channel.
-- **Warnings / Mod Log**: view and clear warnings, browse full action history.
-- **Activity Log**: broader than Mod Log (which only covers this bot's own actions): message edits/deletes, joins/leaves, channel/role changes, voice activity, and privileged-role grants, each independently togglable to a channel, plus a per-user ignore list. Off by default. Edited/deleted message content comes from an in-memory cache that resets on bot restart (Fluxer's gateway doesn't include the original text), so older messages show as unavailable.
-- **Discord Relay**: map Discord channels to Fluxer channels, one way or both: text, embeds, and attachments forward; edits and deletes sync; replies and mentions translate (a mention is only ever live/clickable for someone with a linked account, see `!link`, otherwise it's plain text). Each mapping has a pause toggle and a "send test message" button. If Discord disconnects and reconnects, both directions catch up automatically (bounded to a 24h outage). Requires its own Discord bot application, set up once bot-wide from the owner-only **Discord Relay Setup** page (token, live connection status).
-
-  ⚠️ **Trust boundary:** this is one shared Discord bot across every Fluxer guild it manages, and nothing verifies a guild manager's mapping actually points at a Discord channel they control, only that they manage the Fluxer guild it's filed under. Don't enable this for communities that don't already trust each other.
-- **Reports**: bug/issue reports posted in a dedicated channel are captured automatically (no command) and tracked in a second channel as a status-tagged embed, with likely duplicates flagged for staff. Set both channels from the tab's own Channels card, or `!reportchannel`/`!reporttracker`. `Private: yes` in a report keeps the reporter's identity off the tracker entry. Resolve/won't-fix/reopen/mark-duplicate from the table, same shared logic as `!report status`.
-- **Danger Zone** (bottom of Settings): bulk, irreversible actions (clear all warnings, reset all XP, wipe all reaction roles), each gated behind typing "CONFIRM", logged to Mod Log.
-- **Staff notes**: view, add, and remove private notes on any member, from the Members tab.
-- **Onboarding checklist**: closeable for the current visit, or permanently via "Don't remind me again" (persisted per-server in your browser).
-
-Chat-only for now (no dashboard equivalent): `!purge`, `!roll`/`!coinflip`/`!wheel`, `!avatar`/`!serverinfo`/`!userinfo`/`!info`, reminders (`!remind`/`!reminders`/`!delreminder`), and account linking (`!link`/`!unlink`/`!linkstatus`, bot-wide rather than per-server). Starting a poll (`!poll`) is chat-only too, though its auto-close and results tally happen automatically regardless of how it started.
-
 ## Project layout
 
 ```
@@ -386,27 +360,4 @@ Dockerfile              multi-stage build (Node for the frontend, Python for bot
 docker-compose.yml      bot + dashboard + Postgres, alternative to deploy/
 ```
 
-## On API completeness
-
-Fluxer's public API reference is still being filled in (as of mid-2026). A few routes, the moderation endpoints (`ban`/`timeout`/`purge`), member-list pagination, and the OAuth2 guild-list shape, follow the Discord-like conventions Fluxer is modeled on, since that's the best information available. Everything funnels through a small number of places, so a mismatch with your instance is a one-line fix, not a rewrite:
-
-| What | Where |
-|---|---|
-| REST calls (member list, kick/ban/timeout, …) | `bot/rest.py` |
-| Permission bit values | `bot/permissions.py` |
-| OAuth2 guild permission check | `dashboard/oauth.py::can_manage` |
-| CDN URL paths, snowflake → date | `common/discovery.py`, `bot/timeutil.py` |
-| AFK-channel field name (assumed `afk_channel_id`) | `bot/voice_tracker.py` |
-| Mention suppression (`allowed_mentions`) | `bot/rest.py` |
-| Bot avatar update (Bot Profile page) | `dashboard/oauth.py::update_bot_avatar` |
-| Webhooks (Discord relay attribution) | `bot/rest.py` |
-
-If your instance's OpenAPI spec (`<api_base>/openapi.json`, or its own `/api-reference` page) disagrees with a path or bit value here, that's the source of truth.
-
-**Bot avatar update** is confirmed against Fluxer's own docs (`PATCH /oauth2/applications/{id}/bot`, Bearer-authenticated as the application owner, raw base64), but at least one real instance has rejected it with `403 ACCESS_DENIED` regardless, possibly because this endpoint needs "sudo mode" (fresh re-auth, the same requirement Fluxer's docs note for the related token-reset endpoint) which OAuth login can't satisfy, or a missing scope. Because of this, the dashboard's own favicon always updates immediately regardless of this call; the Fluxer avatar update is attempted separately and reported back, with a fallback of setting it by hand from Fluxer's own Bot Application page if it fails.
-
-**Member list** is capped at 500 per request (Fluxer's endpoint is paginated like Discord's). Large servers won't show every member in search; exact-ID search still works around that.
-
-**Mention safety:** every outgoing message defaults to pinging nobody (`FluxerREST.SAFE_ALLOWED_MENTIONS`) unless the calling code explicitly allow-lists one user ID (`FluxerREST.mention_only(user_id)`). This closes a mass-ping path: several messages embed free text a member controls (reminder text, their own username in welcome/level-up messages), and without this default, anyone could type `@everyone` into one of those fields and have the bot broadcast it. If you add code that sends a message with plain `content`, don't rely on Fluxer's own default, since it's unknown on any given instance, either accept this one or opt in explicitly.
-
-P.S. [`dashboard-frontend/README.md`](dashboard-frontend/README.md) has the full HTTP API reference, every endpoint the frontend calls. Useful as a porting checklist for a backend rewrite, or if you want to reuse the frontend for something else.
+Fluxer's own API docs are at [fluxer.dev](https://fluxer.dev). [`dashboard-frontend/README.md`](dashboard-frontend/README.md) has the full HTTP API reference for this project's own dashboard backend, every endpoint the frontend calls, useful as a porting checklist for a backend rewrite, or if you want to reuse the frontend for something else.

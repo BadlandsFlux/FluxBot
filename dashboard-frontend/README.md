@@ -432,7 +432,7 @@ Multipart form upload, field name `file`. PNG/JPEG/WEBP only, 8 MiB max.
 ```json
 { "ok": true, "fluxer_updated": true, "fluxer_error": null }
 ```
-The dashboard's own favicon/top-bar icon always updates once the image is valid. Setting the bot's actual Fluxer avatar is attempted separately and best-effort (some instances reject it, see the root README's [On API completeness](../README.md#on-api-completeness)); `fluxer_updated`/`fluxer_error` report that outcome independently of the favicon succeeding. **Errors:** 400 on a bad content type, empty file, or over the size cap.
+The dashboard's own favicon/top-bar icon always updates once the image is valid. Setting the bot's actual Fluxer avatar is attempted separately and best-effort (some instances reject it); `fluxer_updated`/`fluxer_error` report that outcome independently of the favicon succeeding. **Errors:** 400 on a bad content type, empty file, or over the size cap.
 
 ### `GET /favicon.ico` / `GET /api/bot-profile/icon`
 No auth required. Both serve the same uploaded image (falling back to a static default if nothing's been set), just for two different spots in the UI (the browser tab, and the dashboard's own top bar).
