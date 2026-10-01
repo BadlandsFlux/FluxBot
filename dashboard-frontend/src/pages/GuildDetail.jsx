@@ -166,10 +166,11 @@ export default function GuildDetail() {
           )}
           {tab === "modlog" && <ModLogTab actions={actions} />}
           {tab === "reports" && (
-            <ReportsTab guildId={id} reports={reports}
+            <ReportsTab guildId={id} guild={guild} channels={channels} reports={reports}
                         onChange={(r) => setData((d) => ({
                           ...d, reports: r, open_report_count: r.filter((x) => x.status === "open").length,
-                        }))} />
+                        }))}
+                        onGuildChange={(g) => setData((d) => ({ ...d, guild: g }))} />
           )}
           {tab === "autoroles" && (
             <AutorolesTab guildId={id} autoroles={autoroles} roles={roles}

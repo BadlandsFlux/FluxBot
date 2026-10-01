@@ -2,31 +2,27 @@
 
 No command to file one: any non-bot message posted in the configured
 report channel (!reportchannel #channel) is automatically captured as
-a report, then logged into a second "tracker" channel (!reporttracker
-#channel) as a status-tagged embed the bot keeps edited in place, so
-people can scroll it and see what's already been reported before
-filing another one -- see bot/report_actions.py for the embed/status
-logic shared with the dashboard's Reports tab.
+a report. The original message is always removed from that channel
+right after capture, public or private alike (best-effort, needs
+Manage Messages; if the bot doesn't have it, the report itself is
+still saved and tracked, just logged rather than silently left
+behind). A report only actually lives on in a second "tracker"
+channel (!reporttracker #channel) as a status-tagged embed the bot
+keeps edited in place, so people can scroll it and see what's already
+been reported before filing another one, and the report channel
+itself never ends up holding a mix of raw submissions and bot
+clutter -- see bot/report_actions.py for the embed/status logic
+shared with the dashboard's Reports tab.
 
-Visibility is the reporter's own per-report choice, not a server-wide
-setting, two ways to make that choice:
-  - Include a "Private: yes" line in the report itself (see
-    report_actions.REPORT_TEMPLATE, offered as a copy-pasteable
-    starting point in the channel explainer) -- the report is born
-    private, with no window where it's sitting there public before
-    anyone acts on it. _extract_privacy_field below is deliberately
-    loose about this, any line matching "private: <truthy>" counts,
-    free text with that one line appended works exactly like the full
-    template.
-  - React 🔒 on your own just-submitted public report within a short
-    window, for when you didn't plan ahead -- this happens after the
-    fact, so the message was briefly visible either way.
-Either path best-effort deletes the original message from the report
-channel and drops the reporter's identity from the tracker entry.
-"Best-effort" because the delete needs Manage Messages in the report
-channel; if the bot doesn't have it, the privacy flip still happens
-in the tracker/DB, the original message just can't be removed, logged
-rather than silently swallowed.
+Visibility is the reporter's own per-report choice: include a
+"Private: yes" line in the report itself (see
+report_actions.REPORT_TEMPLATE, offered as a copy-pasteable starting
+point in the channel explainer) to have the tracker entry omit your
+identity. _extract_privacy_field below is deliberately loose about
+this, any line matching "private: <truthy>" counts, free text with
+that one line appended works exactly like the full template. This
+only ever affects attribution in the tracker, not whether the
+original message gets removed, that already always happens.
 
     !reportchannel #channel    set where reports are captured from
     !reporttracker #channel    set where the tracker embeds are posted
@@ -38,7 +34,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
 
 from bot import report_actions
 from bot.commands import Bot, Context
@@ -48,9 +43,6 @@ from bot.rest import FluxerAPIError
 from common import db
 
 log = logging.getLogger("fluxbot.reports")
-
-PRIVACY_EMOJI = "🔒"
-ACK_EMOJI = "✅"
 
 _PRIVATE_FIELD_RE = re.compile(r"^\s*private\s*:\s*(.+?)\s*$", re.IGNORECASE)
 _TRUE_VALUES = {"yes", "y", "true", "1"}
@@ -72,24 +64,27 @@ def _extract_privacy_field(content: str) -> tuple[str, bool]:
     return "\n".join(kept).strip(), want_private
 
 
-async def _confirm_privacy(bot: Bot, channel_id: str, message_id: str, reporter_id: str,
-                            report_id: int, *, extra: str = "") -> None:
-    """Shared tail end of both ways to end up with a private report
-    (see the module docstring): best-effort remove the original public
-    message, then let the reporter know privately it worked."""
+async def _remove_original_and_notify(bot: Bot, channel_id: str, message_id: str, reporter_id: str,
+                                       report_id: int, *, private: bool, extra: str = "") -> None:
+    """Every report ends up here: best-effort remove the now-redundant
+    original message (it's in the tracker now), then let the reporter
+    know by DM, since there's no public message left to reply under."""
     try:
         await bot.rest.delete_message(channel_id, message_id)
     except FluxerAPIError:
         log.warning("Couldn't delete report #%s's original message (missing Manage Messages in the "
                     "report channel?)", report_id)
+    if private:
+        text = (f"🔒 Got it, report #{report_id} is logged and private: your name won't be shown in "
+                f"the tracker, and the original message has been removed from the report channel.{extra}")
+    else:
+        text = (f"✅ Got it, report #{report_id} is logged in the tracker, and the original message "
+                f"has been removed from the report channel.{extra}")
     try:
         dm = await bot.rest.create_dm(reporter_id)
-        await bot.rest.send_message(dm["id"], content=(
-            f"🔒 Got it, report #{report_id} is private: your name won't be shown in the tracker, and "
-            f"the original message has been removed from the report channel.{extra}"
-        ))
+        await bot.rest.send_message(dm["id"], content=text)
     except FluxerAPIError:
-        pass  # can't DM them back, nothing more to do, the privacy itself already landed
+        pass  # can't DM them, nothing more to do, the report itself is already saved and tracked
 
 
 def register(bot: Bot) -> None:
@@ -133,57 +128,11 @@ def register(bot: Bot) -> None:
         dup_note = (f" This also looks similar to report #{report['possible_duplicate_of']}, "
                     f"which may already cover it." if report["possible_duplicate_of"] else "")
 
-        if want_private:
-            # Born private: no public reaction, no public reply -- any trace
-            # in the channel beyond the already-scheduled delete below would
-            # undercut the whole point of asking for this upfront.
-            await _confirm_privacy(bot, channel_id, message_id, reporter_id, report["id"], extra=dup_note)
-            return
-
-        try:
-            await bot.rest.add_reaction(channel_id, message_id, ACK_EMOJI)
-            await bot.rest.add_reaction(channel_id, message_id, PRIVACY_EMOJI)
-        except FluxerAPIError:
-            pass  # cosmetic, the report itself is already saved and tracked regardless
-
-        try:
-            await bot.rest.send_message(
-                channel_id,
-                content=(f"✅ Logged as report #{report['id']}.{dup_note} React with 🔒 within 10 minutes "
-                         f"if you'd rather this stay private."),
-            )
-        except FluxerAPIError:
-            pass  # the report itself is already saved and tracked, this reply is just a courtesy
-
-    @bot.on("MESSAGE_REACTION_ADD")
-    async def on_report_privacy_reaction(data: dict) -> None:
-        emoji_data = data.get("emoji", {})
-        emoji = emoji_data.get("name") if isinstance(emoji_data, dict) else emoji_data
-        if emoji != PRIVACY_EMOJI:
-            return
-        guild_id, message_id = data.get("guild_id"), data.get("message_id")
-        user_id, channel_id = data.get("user_id"), data.get("channel_id")
-        if not (guild_id and message_id and user_id and channel_id):
-            return
-        guild_id, message_id = str(guild_id), str(message_id)
-        user_id, channel_id = str(user_id), str(channel_id)
-
-        bot_user_id = (bot.gateway.user or {}).get("id")
-        if bot_user_id and user_id == str(bot_user_id):
-            return  # our own seed reaction, not a real person reacting
-
-        report = await db.get_report_by_submit_message(guild_id, message_id)
-        if not report:
-            return
-        if report["reporter_id"] != user_id:
-            return  # only the original reporter can privatize their own report
-        if report["status"] != "open" or report["visibility"] != "public":
-            return  # already private, or already closed out -- nothing to flip
-        if report["privacy_deadline"] and datetime.now(timezone.utc) > report["privacy_deadline"]:
-            return  # window's closed, a late reaction is silently ignored
-
-        await report_actions.privatize_report(bot.rest, guild_id, report["id"])
-        await _confirm_privacy(bot, channel_id, message_id, user_id, report["id"])
+        # Always removed from here, public or private alike, see the module
+        # docstring: a report only ever actually lives on in the tracker.
+        await _remove_original_and_notify(
+            bot, channel_id, message_id, reporter_id, report["id"], private=want_private, extra=dup_note,
+        )
 
     @bot.command("reportchannel", category="Moderation", required_permission=PERM_MANAGE_GUILD,
                  help_text="Set the channel people post bug/issue reports in. Usage: !reportchannel #channel")

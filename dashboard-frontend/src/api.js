@@ -134,4 +134,5 @@ export const api = {
   dangerWipeReactionRoles: (id) => request(`/api/guilds/${id}/danger/wipe-reaction-roles`, { method: "POST" }),
   setReportStatus: (id, reportId, payload) =>
     request(`/api/guilds/${id}/reports/${reportId}/status`, { method: "POST", body: payload }),
+  setReportChannels: (id, payload) => request(`/api/guilds/${id}/reports/channels`, { method: "POST", body: payload }),
 };

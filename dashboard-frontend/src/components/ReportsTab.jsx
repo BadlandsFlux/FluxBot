@@ -1,16 +1,21 @@
 import { useState } from "react";
-import { CheckCircle2, XCircle, RotateCcw, Copy } from "lucide-react";
+import { CheckCircle2, XCircle, RotateCcw, Copy, Save } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "./Flash";
+import Combobox from "./Combobox";
+import Spinner from "./Spinner";
 
 const STATUS_TAG_CLASS = { open: "tag-warn", duplicate: "tag-purge", resolved: "tag-unban", wontfix: "tag-ban" };
 const STATUS_LABEL = { open: "Open", duplicate: "Duplicate", resolved: "Resolved", wontfix: "Won't Fix" };
 
-export default function ReportsTab({ guildId, reports, onChange }) {
+export default function ReportsTab({ guildId, guild, channels, reports, onChange, onGuildChange }) {
   const flash = useFlash();
   const [filter, setFilter] = useState("open");
   const [busyId, setBusyId] = useState(null);
   const [dupInputs, setDupInputs] = useState({});
+  const [reportChannelId, setReportChannelId] = useState(guild.report_channel_id || "");
+  const [trackerChannelId, setTrackerChannelId] = useState(guild.report_tracker_channel_id || "");
+  const [savingChannels, setSavingChannels] = useState(false);
 
   const visible = filter === "all" ? reports : reports.filter((r) => r.status === filter);
 
@@ -36,25 +41,66 @@ export default function ReportsTab({ guildId, reports, onChange }) {
     updateStatus(reportId, "duplicate", { duplicate_of: of });
   }
 
-  return (
-    <div className="card">
-      <h2>Bug/issue reports</h2>
-      <p className="muted small">
-        Captured automatically from the report channel configured in Settings, no command needed. Set a tracker
-        channel there too so people can see what's already been reported before filing another one.
-      </p>
+  async function handleSaveChannels(e) {
+    e.preventDefault();
+    setSavingChannels(true);
+    try {
+      const result = await api.setReportChannels(guildId, {
+        report_channel_id: reportChannelId || "",
+        report_tracker_channel_id: trackerChannelId || "",
+      });
+      onGuildChange(result.guild);
+      flash("Report channels saved.");
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setSavingChannels(false);
+    }
+  }
 
-      <div className="filter-bar">
-        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-          <option value="all">All reports</option>
-          <option value="open">Open</option>
-          <option value="duplicate">Duplicate</option>
-          <option value="resolved">Resolved</option>
-          <option value="wontfix">Won't Fix</option>
-        </select>
+  return (
+    <>
+      <div className="card">
+        <h2>Channels</h2>
+        <p className="muted small">
+          Any message posted in the report channel becomes a report, no command needed, and is always moved to the
+          tracker channel below (set here or with <code>!reportchannel</code>/<code>!reporttracker</code>).
+        </p>
+        <form onSubmit={handleSaveChannels} className="settings-form">
+          <label>
+            Report channel
+            <Combobox options={channels} value={reportChannelId} onChange={setReportChannelId}
+                      placeholder="No report channel set" />
+          </label>
+          <label>
+            Tracker channel
+            <Combobox options={channels} value={trackerChannelId} onChange={setTrackerChannelId}
+                      placeholder="Optional, but recommended" />
+          </label>
+          <button className="btn btn-primary btn-small" type="submit" disabled={savingChannels}>
+            {savingChannels ? <Spinner size={14} /> : <Save size={14} />} Save
+          </button>
+        </form>
       </div>
 
-      {visible.length ? (
+      <div className="card">
+        <h2>Bug/issue reports</h2>
+        <p className="muted small">
+          Set <code>Private: yes</code> in a report (see the channel explainer) to leave the reporter's name off
+          the tracker entry below.
+        </p>
+
+        <div className="filter-bar">
+          <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+            <option value="all">All reports</option>
+            <option value="open">Open</option>
+            <option value="duplicate">Duplicate</option>
+            <option value="resolved">Resolved</option>
+            <option value="wontfix">Won't Fix</option>
+          </select>
+        </div>
+
+        {visible.length ? (
         <table className="table">
           <thead>
             <tr>
@@ -122,6 +168,7 @@ export default function ReportsTab({ guildId, reports, onChange }) {
       ) : (
         <p className="muted">No {filter === "all" ? "" : filter} reports.</p>
       )}
-    </div>
+      </div>
+    </>
   );
 }

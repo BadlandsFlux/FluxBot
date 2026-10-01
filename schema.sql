@@ -578,7 +578,9 @@ CREATE INDEX IF NOT EXISTS idx_account_link_codes_expires_at ON account_link_cod
 
 -- Member-submitted bug/issue reports. Captured automatically from a
 -- dedicated channel (guilds.report_channel_id), no command needed to
--- post one, see bot/modules/reports.py. Logged into a second
+-- post one, see bot/modules/reports.py. The original message is
+-- always removed from that channel right after capture, regardless
+-- of visibility, a report only actually lives on in the second
 -- "tracker" channel (guilds.report_tracker_channel_id) as a
 -- status-tagged embed the bot keeps edited in place, so members and
 -- staff can see what's already been reported before filing another
@@ -589,11 +591,12 @@ CREATE TABLE IF NOT EXISTS reports (
     reporter_id            TEXT NOT NULL,
     content                TEXT NOT NULL,
     -- 'public' (default): attributed to the reporter in the tracker.
-    -- 'private': the reporter opted out within the reaction window
-    -- (privacy_deadline below), so the original message was deleted
-    -- from the submit channel (best-effort) and the tracker entry
-    -- omits their identity. See bot/modules/reports.py's reaction
-    -- handler, the only thing that ever flips this after creation.
+    -- 'private': the reporter included a "Private: yes" line in the
+    -- report itself (see bot/modules/reports.py's _extract_privacy_field),
+    -- so the tracker entry omits their identity. Doesn't affect the
+    -- submit_channel_id/submit_message_id below: the original message
+    -- is always removed from the report channel regardless of
+    -- visibility, see this table's own comment at the top.
     visibility             TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
     status                 TEXT NOT NULL DEFAULT 'open'
                                CHECK (status IN ('open', 'duplicate', 'resolved', 'wontfix')),
@@ -606,6 +609,15 @@ CREATE TABLE IF NOT EXISTS reports (
     -- tracker, not a confirmed link: never closes the report or sets
     -- duplicate_of on its own.
     possible_duplicate_of  BIGINT REFERENCES reports(id),
+    -- Where the report was originally posted. Historical record only:
+    -- the message itself is always deleted from this channel right
+    -- after being captured (best-effort, needs Manage Messages),
+    -- public or private alike, so the report channel never ends up
+    -- holding a mix of raw submissions and bot clutter, only the
+    -- tracker channel below is where a report is actually visible
+    -- afterward. These ids are still needed at capture time to issue
+    -- that delete call, and kept on the row afterward only as a
+    -- record of where it came from.
     submit_channel_id      TEXT NOT NULL,
     submit_message_id      TEXT NOT NULL,
     -- Both recorded at post time, not re-derived from the guild's
@@ -621,10 +633,6 @@ CREATE TABLE IF NOT EXISTS reports (
     resolved_by            TEXT,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- The reporter can react 🔒 on their own message to go private up
-    -- until this point (see common.db.create_report's privacy_ttl_minutes);
-    -- past it, the reaction is just ignored (bot/modules/reports.py).
-    privacy_deadline       TIMESTAMPTZ NOT NULL,
     UNIQUE(guild_id, submit_message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_reports_guild_status  ON reports(guild_id, status);

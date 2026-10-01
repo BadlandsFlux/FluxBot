@@ -448,6 +448,19 @@ class SettingsPayload(BaseModel):
     report_tracker_channel_id: str = ""
 
 
+async def _maybe_post_report_intro(previous, guild_cfg) -> None:
+    """Shared by every path that can change report_channel_id (the full
+    settings form, and the Reports tab's own narrower channel picker):
+    posts the explainer embed only when that channel actually changed,
+    never on an unrelated save that happens to pass the same value
+    through again."""
+    new_report_channel = guild_cfg["report_channel_id"]
+    if new_report_channel and new_report_channel != (previous["report_channel_id"] if previous else None):
+        await report_actions.post_channel_intro(
+            bot_rest, new_report_channel, guild_cfg["report_tracker_channel_id"],
+        )
+
+
 @app.post("/api/guilds/{guild_id}/settings")
 async def api_update_settings(request: Request, guild_id: str, payload: SettingsPayload):
     await _require_manage(request, guild_id)
@@ -472,11 +485,7 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
         report_tracker_channel_id=payload.report_tracker_channel_id or None,
     )
     guild_cfg = await db.get_guild(guild_id)
-    new_report_channel = guild_cfg["report_channel_id"]
-    if new_report_channel and new_report_channel != (previous["report_channel_id"] if previous else None):
-        await report_actions.post_channel_intro(
-            bot_rest, new_report_channel, guild_cfg["report_tracker_channel_id"],
-        )
+    await _maybe_post_report_intro(previous, guild_cfg)
     return {"guild": _guild_to_json(guild_cfg)}
 
 
@@ -833,6 +842,30 @@ async def api_remove_reaction_role_message(request: Request, guild_id: str, mess
 
 
 # ------------------------------------------------------------------ reports --
+class ReportChannelsPayload(BaseModel):
+    report_channel_id: str = ""
+    report_tracker_channel_id: str = ""
+
+
+@app.post("/api/guilds/{guild_id}/reports/channels")
+async def api_set_report_channels(request: Request, guild_id: str, payload: ReportChannelsPayload):
+    """A narrower alternative to the full /settings form, so the
+    Reports tab can offer its own channel pickers without having to
+    carry (and risk clobbering) every other setting just to change
+    these two. update_guild_settings only ever touches the columns
+    it's actually passed, so this is safe to call with just these two."""
+    await _require_manage(request, guild_id)
+    previous = await db.get_guild(guild_id)
+    await db.update_guild_settings(
+        guild_id,
+        report_channel_id=payload.report_channel_id or None,
+        report_tracker_channel_id=payload.report_tracker_channel_id or None,
+    )
+    guild_cfg = await db.get_guild(guild_id)
+    await _maybe_post_report_intro(previous, guild_cfg)
+    return {"guild": _guild_to_json(guild_cfg)}
+
+
 class ReportStatusPayload(BaseModel):
     status: str
     duplicate_of: Optional[int] = None
