@@ -132,4 +132,6 @@ export const api = {
   dangerClearAllWarnings: (id) => request(`/api/guilds/${id}/danger/clear-all-warnings`, { method: "POST" }),
   dangerResetAllXp: (id) => request(`/api/guilds/${id}/danger/reset-all-xp`, { method: "POST" }),
   dangerWipeReactionRoles: (id) => request(`/api/guilds/${id}/danger/wipe-reaction-roles`, { method: "POST" }),
+  setReportStatus: (id, reportId, payload) =>
+    request(`/api/guilds/${id}/reports/${reportId}/status`, { method: "POST", body: payload }),
 };

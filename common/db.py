@@ -82,6 +82,7 @@ _ALLOWED_SETTINGS = {
     "goodbye_channel_id", "goodbye_message",
     "leveling_enabled", "level_up_channel_id", "level_up_message",
     "warn_timeout_at", "warn_kick_at", "warn_timeout_minutes",
+    "report_channel_id", "report_tracker_channel_id",
 }
 
 
@@ -1436,6 +1437,114 @@ async def prune_expired_link_codes() -> int:
         return int(result.split()[-1])
     except (ValueError, IndexError):
         return 0
+
+
+# --------------------------------------------------------------- reports --
+REPORT_STATUSES = ("open", "duplicate", "resolved", "wontfix")
+_DEFAULT_PRIVACY_TTL_MINUTES = 10
+
+
+async def create_report(guild_id: str, reporter_id: str, content: str, submit_channel_id: str,
+                         submit_message_id: str, *, visibility: str = "public",
+                         possible_duplicate_of: Optional[int] = None,
+                         privacy_ttl_minutes: int = _DEFAULT_PRIVACY_TTL_MINUTES) -> asyncpg.Record:
+    # visibility is normally left at the 'public' default and flipped later
+    # by mark_report_private (the reactive 🔒-within-the-window path), but a
+    # report can also be born private: see bot/modules/reports.py's "Private:
+    # yes" template field. Taking it here, rather than always creating
+    # public and immediately calling mark_report_private, means the row
+    # (and the very first tracker post built from it) is correct from the
+    # start, with no brief window where it's sitting there attributed.
+    return await pool().fetchrow(
+        """
+        INSERT INTO reports (guild_id, reporter_id, content, visibility, possible_duplicate_of,
+                              submit_channel_id, submit_message_id, privacy_deadline)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, now() + ($8 || ' minutes')::interval)
+        RETURNING *
+        """,
+        guild_id, reporter_id, content, visibility, possible_duplicate_of,
+        submit_channel_id, submit_message_id, str(privacy_ttl_minutes),
+    )
+
+
+async def get_open_reports_for_dedup(guild_id: str, limit: int = 200) -> list[asyncpg.Record]:
+    """Candidate set for the basic text-similarity duplicate check run
+    against a newly-submitted report (see bot/report_actions.py). Only
+    'open' reports: a report already marked duplicate/resolved/wontfix
+    isn't useful to flag a new one against, that's the whole point of
+    staff closing it out in the first place. Capped rather than
+    unbounded: a server with a very long-lived backlog of open reports
+    shouldn't make every new submission do an ever-growing amount of
+    comparison work."""
+    return await pool().fetch(
+        "SELECT id, content FROM reports WHERE guild_id=$1 AND status='open' "
+        "ORDER BY created_at DESC LIMIT $2",
+        guild_id, limit,
+    )
+
+
+async def get_report(guild_id: str, report_id: int) -> Optional[asyncpg.Record]:
+    # Always scoped by guild_id, never looked up by id alone: a report id is
+    # unique per-database, not per-guild, so an unscoped lookup would let a
+    # manager of ANY guild this bot runs in read or (via set_report_status)
+    # silently modify another guild's report just by guessing/incrementing
+    # the id. Same class of bug reaction_roles had before it was scoped
+    # this way too, see that table's own comment in schema.sql.
+    return await pool().fetchrow("SELECT * FROM reports WHERE guild_id=$1 AND id=$2", guild_id, report_id)
+
+
+async def get_report_by_submit_message(guild_id: str, submit_message_id: str) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow(
+        "SELECT * FROM reports WHERE guild_id=$1 AND submit_message_id=$2", guild_id, submit_message_id,
+    )
+
+
+async def set_report_tracker_message(guild_id: str, report_id: int, tracker_channel_id: str,
+                                      tracker_message_id: str) -> None:
+    await pool().execute(
+        "UPDATE reports SET tracker_channel_id=$3, tracker_message_id=$4, updated_at=now() "
+        "WHERE guild_id=$1 AND id=$2",
+        guild_id, report_id, tracker_channel_id, tracker_message_id,
+    )
+
+
+async def mark_report_private(guild_id: str, report_id: int) -> Optional[asyncpg.Record]:
+    """Only ever called for a report that's still 'open' and still
+    'public' and still inside its privacy window, see the caller
+    (bot/modules/reports.py's reaction handler) -- enforced there, not
+    repeated here as a WHERE clause, since the caller already needs to
+    fetch the row first to check the reacting user actually IS the
+    original reporter."""
+    return await pool().fetchrow(
+        "UPDATE reports SET visibility='private', updated_at=now() WHERE guild_id=$1 AND id=$2 RETURNING *",
+        guild_id, report_id,
+    )
+
+
+async def set_report_status(guild_id: str, report_id: int, status: str, *, duplicate_of: Optional[int] = None,
+                             resolution_note: Optional[str] = None,
+                             resolved_by: Optional[str] = None) -> Optional[asyncpg.Record]:
+    if status not in REPORT_STATUSES:
+        raise ValueError(f"Unknown report status: {status!r}")
+    return await pool().fetchrow(
+        """
+        UPDATE reports SET status=$3, duplicate_of=$4, resolution_note=$5, resolved_by=$6, updated_at=now()
+        WHERE guild_id=$1 AND id=$2
+        RETURNING *
+        """,
+        guild_id, report_id, status, duplicate_of, resolution_note, resolved_by,
+    )
+
+
+async def list_reports(guild_id: str, status: Optional[str] = None, limit: int = 25) -> list[asyncpg.Record]:
+    if status:
+        return await pool().fetch(
+            "SELECT * FROM reports WHERE guild_id=$1 AND status=$2 ORDER BY created_at DESC LIMIT $3",
+            guild_id, status, limit,
+        )
+    return await pool().fetch(
+        "SELECT * FROM reports WHERE guild_id=$1 ORDER BY created_at DESC LIMIT $2", guild_id, limit,
+    )
 
 
 if __name__ == "__main__":
