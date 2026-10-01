@@ -1445,16 +1445,24 @@ _DEFAULT_PRIVACY_TTL_MINUTES = 10
 
 
 async def create_report(guild_id: str, reporter_id: str, content: str, submit_channel_id: str,
-                         submit_message_id: str, *, possible_duplicate_of: Optional[int] = None,
+                         submit_message_id: str, *, visibility: str = "public",
+                         possible_duplicate_of: Optional[int] = None,
                          privacy_ttl_minutes: int = _DEFAULT_PRIVACY_TTL_MINUTES) -> asyncpg.Record:
+    # visibility is normally left at the 'public' default and flipped later
+    # by mark_report_private (the reactive 🔒-within-the-window path), but a
+    # report can also be born private: see bot/modules/reports.py's "Private:
+    # yes" template field. Taking it here, rather than always creating
+    # public and immediately calling mark_report_private, means the row
+    # (and the very first tracker post built from it) is correct from the
+    # start, with no brief window where it's sitting there attributed.
     return await pool().fetchrow(
         """
-        INSERT INTO reports (guild_id, reporter_id, content, possible_duplicate_of,
+        INSERT INTO reports (guild_id, reporter_id, content, visibility, possible_duplicate_of,
                               submit_channel_id, submit_message_id, privacy_deadline)
-        VALUES ($1, $2, $3, $4, $5, $6, now() + ($7 || ' minutes')::interval)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, now() + ($8 || ' minutes')::interval)
         RETURNING *
         """,
-        guild_id, reporter_id, content, possible_duplicate_of,
+        guild_id, reporter_id, content, visibility, possible_duplicate_of,
         submit_channel_id, submit_message_id, str(privacy_ttl_minutes),
     )
 

@@ -38,11 +38,22 @@ STATUS_EMOJI = {"open": "📝", "duplicate": "♻️", "resolved": "✅", "wontf
 _SIMILARITY_THRESHOLD = 0.6
 
 
+# The literal text offered as a copy-pasteable starting point in the
+# channel explainer below. Only the "Private:" line is ever actually
+# parsed (see bot/modules/reports.py's _extract_privacy_field) -- the
+# rest is just a suggested shape, a report posted as plain free text
+# with no template at all works exactly the same.
+REPORT_TEMPLATE = "Title: \nDescription: \nSteps to reproduce: \nPrivate: no"
+
+
 def build_channel_intro_embed(tracker_channel_id: Optional[str] = None) -> dict:
     lines = [
-        "**Post anything here and it becomes a report**, no command needed.",
-        ("I'll react ✅ once it's logged, plus 🔒: react with that yourself within 10 minutes if you'd "
-         "rather keep it private. I'll remove the original message and your name won't show up anywhere."),
+        "**Post anything here and it becomes a report**, no command needed. Free text works, or copy "
+        "the template below and fill it in.",
+        ("Set `Private: yes` in your report to keep it private from the moment you post it: your name "
+         "never shows up anywhere and the message is removed right away, no window where it's sitting "
+         "there attributed. Forgot to set it? React 🔒 on your own report within 10 minutes instead and "
+         "I'll do the same thing after the fact."),
     ]
     if tracker_channel_id:
         lines.append(f"Check <#{tracker_channel_id}> first to see if your issue is already being "
@@ -51,6 +62,11 @@ def build_channel_intro_embed(tracker_channel_id: Optional[str] = None) -> dict:
         "title": "📝 How to report a bug or issue",
         "description": "\n\n".join(lines),
         "color": 0x5865F2,
+        "fields": [{
+            "name": "Template (optional)",
+            "value": f"```\n{REPORT_TEMPLATE}\n```",
+            "inline": False,
+        }],
     }
 
 
@@ -141,13 +157,14 @@ async def sync_tracker_entry(rest, report: asyncpg.Record) -> None:
 
 
 async def submit_report(rest, guild_id: str, reporter_id: str, content: str, submit_channel_id: str,
-                         submit_message_id: str, tracker_channel_id: Optional[str]) -> asyncpg.Record:
+                         submit_message_id: str, tracker_channel_id: Optional[str], *,
+                         visibility: str = "public") -> asyncpg.Record:
     """The one place a new report is created, tying together the
     duplicate-guess, the DB row, and the initial tracker post."""
     possible_dup = await find_possible_duplicate(guild_id, content)
     report = await db.create_report(
         guild_id, reporter_id, content, submit_channel_id, submit_message_id,
-        possible_duplicate_of=possible_dup,
+        visibility=visibility, possible_duplicate_of=possible_dup,
     )
     if tracker_channel_id:
         message = await post_to_tracker(rest, tracker_channel_id, report)
