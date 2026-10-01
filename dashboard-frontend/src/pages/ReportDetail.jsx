@@ -6,6 +6,20 @@ import { useFlash } from "../components/Flash";
 import Spinner from "../components/Spinner";
 import usePolling from "../hooks/usePolling";
 
+// This is deliberately the dashboard's only "own URL, drill into a page"
+// view; everywhere else (Members, Warnings, Mod Log, Levels, ...) is a tab
+// inside GuildDetail. The distinction: a report has a genuinely open-ended,
+// growing artifact of its own (the reply thread) that doesn't fit a table
+// row, the same reason GitHub issues get their own page instead of being a
+// modal over the issue list. A "tell me more about this member/warning"
+// need is served by linking INTO an existing tab instead (see
+// MembersTab's "View mod log history" button, which deep-links to
+// GuildDetail's Mod Log tab pre-filtered to that user via a `?q=` param,
+// rather than this becoming the second page of its kind). Before adding
+// another dedicated page, check whether the thing you're building really
+// has its own ongoing thread/conversation, or whether it's better served
+// by linking between existing tabs the same way.
+
 const STATUS_TAG_CLASS = { open: "tag-warn", duplicate: "tag-purge", resolved: "tag-unban", wontfix: "tag-ban" };
 const STATUS_LABEL = { open: "Open", duplicate: "Duplicate", resolved: "Resolved", wontfix: "Won't Fix" };
 

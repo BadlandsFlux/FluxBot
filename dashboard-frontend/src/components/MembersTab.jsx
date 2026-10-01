@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Ban, Clock, LogOut, ShieldAlert, Search, Users, StickyNote, Plus, Trash2 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Ban, Clock, LogOut, ShieldAlert, Search, Users, StickyNote, Plus, Trash2, ScrollText } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "./Flash";
 import Spinner from "./Spinner";
@@ -27,8 +28,11 @@ const ACTION_CALL = {
 
 export default function MembersTab({ guildId, roles }) {
   const flash = useFlash();
+  const [, setParams] = useSearchParams();
   const [query, setQuery] = useState("");
   const [members, setMembers] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
   const [pendingAction, setPendingAction] = useState(null); // {userId, type}
   const [reason, setReason] = useState("");
@@ -54,9 +58,31 @@ export default function MembersTab({ guildId, roles }) {
       .members(guildId, q)
       .then((d) => {
         setMembers(d.members);
+        setHasMore(d.has_more);
         setSelected(new Set());
       })
       .catch((e) => setError(e.message));
+  }
+
+  async function loadMore() {
+    setLoadingMore(true);
+    try {
+      const d = await api.members(guildId, query, members.length);
+      setMembers((prev) => [...prev, ...d.members]);
+      setHasMore(d.has_more);
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  function viewHistory(userId) {
+    setParams((p) => {
+      p.set("tab", "modlog");
+      p.set("q", userId);
+      return p;
+    });
   }
 
   useEffect(() => {
@@ -222,6 +248,7 @@ export default function MembersTab({ guildId, roles }) {
           <input
             type="text"
             placeholder="Search by username or ID…"
+            aria-label="Search members by username or ID"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -304,7 +331,11 @@ export default function MembersTab({ guildId, roles }) {
                     onChange={() => toggleSelect(m.id)}
                     className="member-checkbox"
                   />
-                  <div className="member-avatar">{m.username ? m.username[0].toUpperCase() : "?"}</div>
+                  {m.avatar_url ? (
+                    <img className="member-avatar-img" src={m.avatar_url} alt="" />
+                  ) : (
+                    <div className="member-avatar">{m.username ? m.username[0].toUpperCase() : "?"}</div>
+                  )}
                   <div>
                     <div className="member-name">{m.username}</div>
                     <div className="muted small">
@@ -363,6 +394,13 @@ export default function MembersTab({ guildId, roles }) {
                     >
                       <StickyNote size={14} />
                     </button>
+                    <button
+                      className="btn btn-ghost btn-small btn-icon"
+                      title="View mod log history for this member"
+                      onClick={() => viewHistory(m.id)}
+                    >
+                      <ScrollText size={14} />
+                    </button>
                   </div>
                 )}
 
@@ -411,6 +449,11 @@ export default function MembersTab({ guildId, roles }) {
               </div>
             ))}
           </div>
+          {hasMore && (
+            <button className="btn btn-ghost btn-small" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? <Spinner size={12} /> : null} Load more
+            </button>
+          )}
         </>
       )}
     </div>

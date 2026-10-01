@@ -68,6 +68,7 @@ export default function Commands() {
         <input
           type="text"
           placeholder="Search commands…"
+          aria-label="Search commands"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           autoFocus

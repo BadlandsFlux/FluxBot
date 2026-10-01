@@ -45,6 +45,7 @@ const ACTION_TAG_CLASS = {
   ban: "tag-ban", kick: "tag-kick", timeout: "tag-timeout", warn: "tag-warn",
   unban: "tag-unban", untimeout: "tag-untimeout", clearwarnings: "tag-clearwarnings", purge: "tag-purge",
   danger_clear_warnings: "tag-ban", danger_reset_xp: "tag-ban", danger_wipe_reaction_roles: "tag-ban",
+  settings_update: "tag-purge",
 };
 
 function fmt(iso) {
@@ -53,12 +54,25 @@ function fmt(iso) {
   });
 }
 
+// The background poll only ever re-fetches the default first page of
+// actions/reports, so a wholesale replace would silently drop anything
+// revealed by "Load more" every 8 seconds. Keeps the freshly-polled page
+// (it's authoritative for anything within it, e.g. a status change) and
+// appends whatever was previously loaded further back that isn't in it.
+function mergePolledPage(freshPage, existingList) {
+  if (!existingList || existingList.length <= freshPage.length) return freshPage;
+  const freshIds = new Set(freshPage.map((x) => x.id));
+  return [...freshPage, ...existingList.filter((x) => !freshIds.has(x.id))];
+}
+
 export default function GuildDetail() {
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [lastSynced, setLastSynced] = useState(null);
+  const [actionsHasMore, setActionsHasMore] = useState(false);
+  const [reportsHasMore, setReportsHasMore] = useState(false);
   const tab = params.get("tab") || "overview";
   const { roles, channels } = useRolesChannels(id);
 
@@ -74,7 +88,18 @@ export default function GuildDetail() {
       api
         .guildDetail(id)
         .then((d) => {
-          setData(d);
+          setData((prev) => ({
+            ...d,
+            actions: mergePolledPage(d.actions, prev?.actions),
+            reports: mergePolledPage(d.reports, prev?.reports),
+          }));
+          // Only the initial/guild-switch load gets to reset this from the
+          // page-size heuristic; an in-progress "Load more" already knows
+          // the real answer and a silent poll shouldn't second-guess it.
+          if (!silent) {
+            setActionsHasMore(d.actions.length >= 50);
+            setReportsHasMore(d.reports.length >= 100);
+          }
           setLastSynced(new Date());
           if (!silent) setError(null);
         })
@@ -87,6 +112,22 @@ export default function GuildDetail() {
     setError(null);
     load();
   }, [id, load]);
+
+  async function loadMoreActions() {
+    const last = data?.actions?.[data.actions.length - 1];
+    if (!last) return;
+    const result = await api.loadMoreActions(id, last.id);
+    setData((d) => ({ ...d, actions: [...d.actions, ...result.actions] }));
+    setActionsHasMore(result.has_more);
+  }
+
+  async function loadMoreReports() {
+    const last = data?.reports?.[data.reports.length - 1];
+    if (!last) return;
+    const result = await api.loadMoreReports(id, last.id);
+    setData((d) => ({ ...d, reports: [...d.reports, ...result.reports] }));
+    setReportsHasMore(result.has_more);
+  }
 
   // Live-ish updates: quietly refetch every 8s so kicks/bans/warnings from
   // chat commands (or another admin) show up without a manual refresh.
@@ -164,9 +205,13 @@ export default function GuildDetail() {
             <WarningsTab guildId={id} warnings={warnings}
                          onCleared={(w, count) => setData((d) => ({ ...d, warnings: w, active_warning_count: count }))} />
           )}
-          {tab === "modlog" && <ModLogTab actions={actions} />}
+          {tab === "modlog" && (
+            <ModLogTab actions={actions} initialQuery={params.get("q") || ""}
+                       hasMore={actionsHasMore} onLoadMore={loadMoreActions} />
+          )}
           {tab === "reports" && (
             <ReportsTab guildId={id} guild={guild} channels={channels} reports={reports}
+                        hasMore={reportsHasMore} onLoadMore={loadMoreReports}
                         onChange={(r) => setData((d) => ({
                           ...d, reports: r, open_report_count: r.filter((x) => x.status === "open").length,
                         }))}
@@ -317,21 +362,23 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
       <div className="card">
         <h2>Recent activity</h2>
         {actions.length ? (
-          <table className="table">
-            <thead>
-              <tr><th>Action</th><th>User</th><th>Moderator</th><th>When</th></tr>
-            </thead>
-            <tbody>
-              {actions.slice(0, 8).map((a) => (
-                <tr key={a.id}>
-                  <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
-                  <td><code>{a.user_id || "none"}</code></td>
-                  <td><code>{a.moderator_id || "system"}</code></td>
-                  <td>{fmt(a.created_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr><th>Action</th><th>User</th><th>Moderator</th><th>When</th></tr>
+              </thead>
+              <tbody>
+                {actions.slice(0, 8).map((a) => (
+                  <tr key={a.id}>
+                    <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
+                    <td><code>{a.user_id || "none"}</code></td>
+                    <td><code>{a.moderator_id || "system"}</code></td>
+                    <td>{fmt(a.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <p className="muted">No mod actions logged yet.</p>
         )}
@@ -572,6 +619,7 @@ function WarningsTab({ guildId, warnings, onCleared }) {
           <input
             type="text"
             placeholder="Search by username, ID, or reason…"
+            aria-label="Search warnings by username, ID, or reason"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -587,46 +635,51 @@ function WarningsTab({ guildId, warnings, onCleared }) {
       ) : filtered.length === 0 ? (
         <p className="muted">No warnings match your filters.</p>
       ) : (
-        <table className="table">
-          <thead>
-            <tr><th>User</th><th>Moderator</th><th>Reason</th><th>When</th><th>Status</th><th></th></tr>
-          </thead>
-          <tbody>
-            {filtered.map((w) => (
-              <tr key={w.id}>
-                <td>
-                  <div>{w.username}</div>
-                  <div className="muted small"><code>{w.user_id}</code></div>
-                </td>
-                <td>
-                  <div>{w.moderator_username}</div>
-                  <div className="muted small"><code>{w.moderator_id}</code></div>
-                </td>
-                <td>{w.reason}</td>
-                <td>{fmt(w.created_at)}</td>
-                <td>
-                  {w.active ? <span className="tag tag-warn">active</span> : <span className="tag tag-unban">cleared</span>}
-                </td>
-                <td>
-                  {w.active && (
-                    <button className="btn btn-ghost btn-small" onClick={() => handleClear(w.user_id)}
-                            disabled={clearingId === w.user_id}>
-                      {clearingId === w.user_id ? <Spinner size={12} /> : "Clear"}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table className="table">
+            <thead>
+              <tr><th>User</th><th>Moderator</th><th>Reason</th><th>When</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+              {filtered.map((w) => (
+                <tr key={w.id}>
+                  <td>
+                    <div>{w.username}</div>
+                    <div className="muted small"><code>{w.user_id}</code></div>
+                  </td>
+                  <td>
+                    <div>{w.moderator_username}</div>
+                    <div className="muted small"><code>{w.moderator_id}</code></div>
+                  </td>
+                  <td>{w.reason}</td>
+                  <td>{fmt(w.created_at)}</td>
+                  <td>
+                    {w.active ? <span className="tag tag-warn">active</span> : <span className="tag tag-unban">cleared</span>}
+                  </td>
+                  <td>
+                    {w.active && (
+                      <button className="btn btn-ghost btn-small" onClick={() => handleClear(w.user_id)}
+                              disabled={clearingId === w.user_id}>
+                        {clearingId === w.user_id ? <Spinner size={12} /> : "Clear"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
 }
 
-function ModLogTab({ actions }) {
-  const [query, setQuery] = useState("");
+function ModLogTab({ actions, initialQuery = "", hasMore, onLoadMore }) {
+  // Lazy initializer, runs once: a deep link from Members (?q=<userId>)
+  // seeds the search box, but typing afterward isn't fought by the URL.
+  const [query, setQuery] = useState(() => initialQuery);
   const [actionFilter, setActionFilter] = useState("all");
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const actionTypes = [...new Set(actions.map((a) => a.action))].sort();
 
@@ -649,6 +702,7 @@ function ModLogTab({ actions }) {
           <input
             type="text"
             placeholder="Search by username, ID, or reason…"
+            aria-label="Search mod log by username, ID, or reason"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -665,40 +719,60 @@ function ModLogTab({ actions }) {
       ) : filtered.length === 0 ? (
         <p className="muted">No actions match your filters.</p>
       ) : (
-        <table className="table">
-          <thead>
-            <tr><th>Action</th><th>User</th><th>Moderator</th><th>Reason</th><th>When</th></tr>
-          </thead>
-          <tbody>
-            {filtered.map((a) => (
-              <tr key={a.id}>
-                <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
-                <td>
-                  {a.user_id ? (
-                    <>
-                      <div>{a.username}</div>
-                      <div className="muted small"><code>{a.user_id}</code></div>
-                    </>
-                  ) : (
-                    <span className="muted">none</span>
-                  )}
-                </td>
-                <td>
-                  {a.moderator_id ? (
-                    <>
-                      <div>{a.moderator_username}</div>
-                      <div className="muted small"><code>{a.moderator_id}</code></div>
-                    </>
-                  ) : (
-                    <span className="muted">system</span>
-                  )}
-                </td>
-                <td>{a.reason}</td>
-                <td>{fmt(a.created_at)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          <div className="table-scroll">
+            <table className="table">
+              <thead>
+                <tr><th>Action</th><th>User</th><th>Moderator</th><th>Reason</th><th>When</th></tr>
+              </thead>
+              <tbody>
+                {filtered.map((a) => (
+                  <tr key={a.id}>
+                    <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
+                    <td>
+                      {a.user_id ? (
+                        <>
+                          <div>{a.username}</div>
+                          <div className="muted small"><code>{a.user_id}</code></div>
+                        </>
+                      ) : (
+                        <span className="muted">none</span>
+                      )}
+                    </td>
+                    <td>
+                      {a.moderator_id ? (
+                        <>
+                          <div>{a.moderator_username}</div>
+                          <div className="muted small"><code>{a.moderator_id}</code></div>
+                        </>
+                      ) : (
+                        <span className="muted">system</span>
+                      )}
+                    </td>
+                    <td>{a.reason}</td>
+                    <td>{fmt(a.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {hasMore && (
+            <button
+              className="btn btn-ghost btn-small"
+              disabled={loadingMore}
+              onClick={async () => {
+                setLoadingMore(true);
+                try {
+                  await onLoadMore();
+                } finally {
+                  setLoadingMore(false);
+                }
+              }}
+            >
+              {loadingMore ? <Spinner size={12} /> : null} Load more
+            </button>
+          )}
+        </>
       )}
     </div>
   );

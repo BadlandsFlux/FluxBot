@@ -427,6 +427,7 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
 }
 
 /* ----------------------------------------------------------------- table */
+.table-scroll { overflow-x: auto; }
 .table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .table th, .table td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); }
 .table th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.02em; }
@@ -512,7 +513,20 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
   100% { border-color: var(--border); box-shadow: none; background: var(--bg-elevated); }
 }
 .combobox-trigger-icons { display: flex; align-items: center; gap: 6px; color: var(--muted); }
-.combobox-clear { display: flex; align-items: center; border-radius: 999px; padding: 2px; }
+.combobox-clear {
+  position: absolute;
+  right: 34px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  border: none;
+  background: none;
+  border-radius: 999px;
+  padding: 3px;
+  color: var(--muted);
+  cursor: pointer;
+}
 .combobox-clear:hover { background: rgba(241, 101, 101, 0.15); color: var(--danger); }
 
 .combobox-panel {
@@ -581,6 +595,7 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
   flex-shrink: 0;
   font-size: 13px;
 }
+.member-avatar-img { width: 36px; height: 36px; border-radius: 10px; object-fit: cover; flex-shrink: 0; }
 .member-name { font-weight: 600; font-size: 14px; }
 .member-actions { display: flex; gap: 4px; flex-wrap: wrap; }
 .report-status-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

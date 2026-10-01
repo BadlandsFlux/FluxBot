@@ -16,12 +16,13 @@ function fmt(iso) {
   });
 }
 
-export default function ReportsTab({ guildId, guild, channels, reports, onChange, onGuildChange }) {
+export default function ReportsTab({ guildId, guild, channels, reports, hasMore, onLoadMore, onChange, onGuildChange }) {
   const flash = useFlash();
   const [filter, setFilter] = useState("open");
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState(null);
   const [dupInputs, setDupInputs] = useState({});
+  const [loadingMore, setLoadingMore] = useState(false);
   const [reportChannelId, setReportChannelId] = useState(guild.report_channel_id || "");
   const [trackerChannelId, setTrackerChannelId] = useState(guild.report_tracker_channel_id || "");
   const [savingChannels, setSavingChannels] = useState(false);
@@ -124,6 +125,7 @@ export default function ReportsTab({ guildId, guild, channels, reports, onChange
             <input
               type="text"
               placeholder="Search report text…"
+              aria-label="Search report text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -138,6 +140,7 @@ export default function ReportsTab({ guildId, guild, channels, reports, onChange
         </div>
 
         {visible.length ? (
+          <div className="table-scroll">
           <table className="table">
             <thead>
               <tr>
@@ -229,8 +232,26 @@ export default function ReportsTab({ guildId, guild, channels, reports, onChange
               })}
             </tbody>
           </table>
+          </div>
         ) : (
           <p className="muted">No {filter === "all" ? "" : filter} reports{query.trim() ? " match that search" : ""}.</p>
+        )}
+        {hasMore && (
+          <button
+            className="btn btn-ghost btn-small"
+            style={{ marginTop: 12 }}
+            disabled={loadingMore}
+            onClick={async () => {
+              setLoadingMore(true);
+              try {
+                await onLoadMore();
+              } finally {
+                setLoadingMore(false);
+              }
+            }}
+          >
+            {loadingMore ? <Spinner size={12} /> : null} Load more
+          </button>
         )}
       </div>
     </>
