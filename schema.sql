@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS guilds (
     warn_timeout_at       INTEGER NOT NULL DEFAULT 3,   -- warn count that triggers auto-timeout
     warn_kick_at          INTEGER NOT NULL DEFAULT 5,   -- warn count that triggers auto-kick
     warn_timeout_minutes  INTEGER NOT NULL DEFAULT 60,
+    report_channel_id         TEXT,  -- see reports table below; feature is off until this is set
+    report_tracker_channel_id TEXT,
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -178,6 +180,13 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS leveling_enabled BOOLEAN NOT NULL DE
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS level_up_channel_id TEXT;
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS level_up_message TEXT NOT NULL DEFAULT
     'GG {user}, you reached level {level}! 🎉';
+
+-- Migration for databases created before the bug/issue report system
+-- existed: the two channels it's built around (see the reports table
+-- further down), both optional, the feature stays off until a report
+-- channel is configured.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS report_channel_id TEXT;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS report_tracker_channel_id TEXT;
 
 -- Migration for databases created before voice activity tracking existed.
 ALTER TABLE guild_daily_stats ADD COLUMN IF NOT EXISTS voice_minutes DOUBLE PRECISION NOT NULL DEFAULT 0;
@@ -566,6 +575,60 @@ CREATE TABLE IF NOT EXISTS account_link_codes (
     expires_at        TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_account_link_codes_expires_at ON account_link_codes(expires_at);
+
+-- Member-submitted bug/issue reports. Captured automatically from a
+-- dedicated channel (guilds.report_channel_id), no command needed to
+-- post one, see bot/modules/reports.py. Logged into a second
+-- "tracker" channel (guilds.report_tracker_channel_id) as a
+-- status-tagged embed the bot keeps edited in place, so members and
+-- staff can see what's already been reported before filing another
+-- one instead of everyone re-reporting the same thing blind.
+CREATE TABLE IF NOT EXISTS reports (
+    id                     BIGSERIAL PRIMARY KEY,
+    guild_id               TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    reporter_id            TEXT NOT NULL,
+    content                TEXT NOT NULL,
+    -- 'public' (default): attributed to the reporter in the tracker.
+    -- 'private': the reporter opted out within the reaction window
+    -- (privacy_deadline below), so the original message was deleted
+    -- from the submit channel (best-effort) and the tracker entry
+    -- omits their identity. See bot/modules/reports.py's reaction
+    -- handler, the only thing that ever flips this after creation.
+    visibility             TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
+    status                 TEXT NOT NULL DEFAULT 'open'
+                               CHECK (status IN ('open', 'duplicate', 'resolved', 'wontfix')),
+    -- Set once staff confirms (!report status <id> duplicate <of_id>,
+    -- or the dashboard) this is the same issue as another report.
+    duplicate_of           BIGINT REFERENCES reports(id),
+    -- Set automatically at submission time by a basic text-similarity
+    -- check against currently-open reports (bot/report_actions.py's
+    -- find_possible_duplicate). A *guess* surfaced to staff in the
+    -- tracker, not a confirmed link: never closes the report or sets
+    -- duplicate_of on its own.
+    possible_duplicate_of  BIGINT REFERENCES reports(id),
+    submit_channel_id      TEXT NOT NULL,
+    submit_message_id      TEXT NOT NULL,
+    -- Both recorded at post time, not re-derived from the guild's
+    -- CURRENT report_tracker_channel_id when a later edit is needed:
+    -- if that setting is ever reconfigured, an older report's tracker
+    -- entry still lives in the channel it was actually posted to.
+    -- Same reasoning as discord_relay_message_links remembering the
+    -- exact webhook that sent it rather than "whichever one is
+    -- currently on file for that channel", see that table's comment.
+    tracker_channel_id     TEXT,
+    tracker_message_id     TEXT,
+    resolution_note        TEXT,
+    resolved_by            TEXT,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- The reporter can react 🔒 on their own message to go private up
+    -- until this point (see common.db.create_report's privacy_ttl_minutes);
+    -- past it, the reaction is just ignored (bot/modules/reports.py).
+    privacy_deadline       TIMESTAMPTZ NOT NULL,
+    UNIQUE(guild_id, submit_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reports_guild_status  ON reports(guild_id, status);
+CREATE INDEX IF NOT EXISTS idx_reports_guild_created ON reports(guild_id, created_at DESC);
 
 -- Migrations for columns added to already-existing tables after this
 -- schema's earlier migration block (further up this file) was last

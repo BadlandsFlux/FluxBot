@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users,
-  Tag as TagIcon, TrendingUp, Megaphone, Search, FileClock, ArrowLeftRight,
+  Tag as TagIcon, TrendingUp, Megaphone, Search, FileClock, ArrowLeftRight, Flag,
 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "../components/Flash";
@@ -15,6 +15,7 @@ import TagsTab from "../components/TagsTab";
 import LevelsTab from "../components/LevelsTab";
 import ActivityLogTab from "../components/ActivityLogTab";
 import DiscordRelayTab from "../components/DiscordRelayTab";
+import ReportsTab from "../components/ReportsTab";
 import OnboardingChecklist from "../components/OnboardingChecklist";
 import DangerZone from "../components/DangerZone";
 import AnnouncementBuilder from "../components/AnnouncementBuilder";
@@ -29,6 +30,7 @@ const TABS = [
   { id: "members", label: "Members", icon: Users, category: "Moderation" },
   { id: "warnings", label: "Warnings", icon: ShieldAlert, category: "Moderation" },
   { id: "modlog", label: "Mod Log", icon: ScrollText, category: "Moderation" },
+  { id: "reports", label: "Reports", icon: Flag, category: "Moderation" },
   { id: "settings", label: "Settings", icon: Settings, category: "Configuration" },
   { id: "autoroles", label: "Autoroles", icon: UserPlus, category: "Configuration" },
   { id: "reactionroles", label: "Reaction Roles", icon: Smile, category: "Configuration" },
@@ -112,8 +114,8 @@ export default function GuildDetail() {
   }
 
   const {
-    guild, actions, warnings, autoroles, reaction_roles: reactionRoles, tags,
-    active_warning_count: activeWarningCount,
+    guild, actions, warnings, autoroles, reaction_roles: reactionRoles, tags, reports,
+    active_warning_count: activeWarningCount, open_report_count: openReportCount,
   } = data;
 
   const counts = {
@@ -121,6 +123,7 @@ export default function GuildDetail() {
     autoroles: autoroles.length,
     reactionroles: reactionRoles.length,
     tags: tags.length,
+    reports: openReportCount,
   };
 
   return (
@@ -162,6 +165,12 @@ export default function GuildDetail() {
                          onCleared={(w, count) => setData((d) => ({ ...d, warnings: w, active_warning_count: count }))} />
           )}
           {tab === "modlog" && <ModLogTab actions={actions} />}
+          {tab === "reports" && (
+            <ReportsTab guildId={id} reports={reports}
+                        onChange={(r) => setData((d) => ({
+                          ...d, reports: r, open_report_count: r.filter((x) => x.status === "open").length,
+                        }))} />
+          )}
           {tab === "autoroles" && (
             <AutorolesTab guildId={id} autoroles={autoroles} roles={roles}
                           onChange={(a) => setData((d) => ({ ...d, autoroles: a }))} />
@@ -336,6 +345,7 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
   const [welcomeOn, setWelcomeOn] = useState(!!guild.welcome_channel_id);
   const [goodbyeOn, setGoodbyeOn] = useState(!!guild.goodbye_channel_id);
   const [levelingOn, setLevelingOn] = useState(!!guild.leveling_enabled);
+  const [reportsOn, setReportsOn] = useState(!!guild.report_channel_id);
   const [saving, setSaving] = useState(false);
 
   function set(field, value) {
@@ -350,6 +360,14 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
   function toggleGoodbye(next) {
     setGoodbyeOn(next);
     if (!next) set("goodbye_channel_id", "");
+  }
+
+  function toggleReports(next) {
+    setReportsOn(next);
+    if (!next) {
+      set("report_channel_id", "");
+      set("report_tracker_channel_id", "");
+    }
   }
 
   async function handleSubmit(e) {
@@ -370,11 +388,14 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
         warn_timeout_at: Number(form.warn_timeout_at),
         warn_kick_at: Number(form.warn_kick_at),
         warn_timeout_minutes: Number(form.warn_timeout_minutes),
+        report_channel_id: reportsOn ? form.report_channel_id || "" : "",
+        report_tracker_channel_id: reportsOn ? form.report_tracker_channel_id || "" : "",
       });
       onSaved(result.guild);
       setWelcomeOn(!!result.guild.welcome_channel_id);
       setGoodbyeOn(!!result.guild.goodbye_channel_id);
       setLevelingOn(!!result.guild.leveling_enabled);
+      setReportsOn(!!result.guild.report_channel_id);
       flash("Settings saved.");
     } catch (err) {
       flash(err.message, "error");
@@ -475,6 +496,27 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
               <input type="text" value={form.level_up_message || ""} onChange={(e) => set("level_up_message", e.target.value)}
                      placeholder="GG {user}, you reached level {level}! 🎉" />
             </label>
+          </div>
+        )}
+
+        <h2 className="section-divider">Bug/issue reports</h2>
+        <Switch checked={reportsOn} onChange={toggleReports}
+                label="Capture reports from a dedicated channel — no command needed" />
+        {reportsOn && (
+          <div className="switch-panel">
+            <label>
+              Report channel — any message posted here becomes a report
+              <Combobox options={channels} value={form.report_channel_id || ""}
+                        onChange={(v) => set("report_channel_id", v)} placeholder="Pick a channel" />
+            </label>
+            <label>
+              Tracker channel — status-tagged log of every report, so people can check before filing another
+              <Combobox options={channels} value={form.report_tracker_channel_id || ""}
+                        onChange={(v) => set("report_tracker_channel_id", v)} placeholder="Optional, but recommended" />
+            </label>
+            {!form.report_channel_id && (
+              <p className="muted small">Pick a channel above to finish turning this on.</p>
+            )}
           </div>
         )}
 

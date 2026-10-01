@@ -18,11 +18,12 @@ from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from bot import moderation_actions
+from bot import report_actions
 from bot.moderation_actions import ModerationBlocked
 from bot import voice_tracker
 from bot.commands import Bot as BotFramework
 from bot.discord_relay import INVITE_PERMISSIONS as DISCORD_RELAY_INVITE_PERMISSIONS
-from bot.modules import account_links, achievements, fun, info as info_module, leveling, moderation, mydata, reminders, roles, staffnotes, tags, trivia, utility
+from bot.modules import account_links, achievements, fun, info as info_module, leveling, moderation, mydata, reminders, reports, roles, staffnotes, tags, trivia, utility
 from bot.modules import afk as afk_module
 from bot.permissions import permission_name, role_is_privileged
 from bot.rest import FluxerAPIError, FluxerREST
@@ -66,6 +67,7 @@ def _build_command_catalog() -> list:
     staffnotes.register(catalog_bot)
     mydata.register(catalog_bot)
     account_links.register(catalog_bot)
+    reports.register(catalog_bot)
     seen = set()
     commands = []
     for cmd in catalog_bot.commands.values():
@@ -338,6 +340,8 @@ def _guild_to_json(row) -> dict:
         "warn_timeout_at": row["warn_timeout_at"],
         "warn_kick_at": row["warn_kick_at"],
         "warn_timeout_minutes": row["warn_timeout_minutes"],
+        "report_channel_id": row["report_channel_id"],
+        "report_tracker_channel_id": row["report_tracker_channel_id"],
     }
 
 
@@ -376,6 +380,24 @@ def _tag_to_json(row) -> dict:
     }
 
 
+def _report_to_json(row, names: Optional[dict] = None) -> dict:
+    names = names or {}
+    is_public = row["visibility"] == "public"
+    return {
+        "id": row["id"],
+        "reporter_id": row["reporter_id"] if is_public else None,
+        "reporter_username": names.get(row["reporter_id"], row["reporter_id"]) if is_public else None,
+        "content": row["content"],
+        "visibility": row["visibility"],
+        "status": row["status"],
+        "duplicate_of": row["duplicate_of"],
+        "possible_duplicate_of": row["possible_duplicate_of"],
+        "resolution_note": row["resolution_note"],
+        "created_at": row["created_at"].isoformat(),
+        "updated_at": row["updated_at"].isoformat(),
+    }
+
+
 @app.get("/api/guilds/{guild_id}")
 async def api_guild_detail(request: Request, guild_id: str):
     await _require_manage(request, guild_id)
@@ -388,9 +410,11 @@ async def api_guild_detail(request: Request, guild_id: str):
     autoroles = await db.list_autoroles(guild_id)
     reaction_roles = await db.list_reaction_roles(guild_id)
     guild_tags = await db.list_tags(guild_id)
+    reports_list = await db.list_reports(guild_id, limit=100)
 
     all_ids = {a["user_id"] for a in actions if a["user_id"]} | {a["moderator_id"] for a in actions if a["moderator_id"]}
     all_ids |= {w["user_id"] for w in warnings} | {w["moderator_id"] for w in warnings}
+    all_ids |= {r["reporter_id"] for r in reports_list if r["visibility"] == "public"}
     names = await _resolve_usernames(guild_id, list(all_ids))
 
     return {
@@ -401,6 +425,8 @@ async def api_guild_detail(request: Request, guild_id: str):
         "reaction_roles": [_reaction_role_to_json(r) for r in reaction_roles],
         "tags": [_tag_to_json(t) for t in guild_tags],
         "active_warning_count": sum(1 for w in warnings if w["active"]),
+        "reports": [_report_to_json(r, names) for r in reports_list],
+        "open_report_count": sum(1 for r in reports_list if r["status"] == "open"),
     }
 
 
@@ -418,12 +444,15 @@ class SettingsPayload(BaseModel):
     warn_timeout_at: int = 3
     warn_kick_at: int = 5
     warn_timeout_minutes: int = 60
+    report_channel_id: str = ""
+    report_tracker_channel_id: str = ""
 
 
 @app.post("/api/guilds/{guild_id}/settings")
 async def api_update_settings(request: Request, guild_id: str, payload: SettingsPayload):
     await _require_manage(request, guild_id)
     prefix = (payload.command_prefix or "!").strip()[:5] or "!"
+    previous = await db.get_guild(guild_id)
     await db.update_guild_settings(
         guild_id,
         log_channel_id=payload.log_channel_id or None,
@@ -439,8 +468,15 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
         warn_timeout_at=payload.warn_timeout_at,
         warn_kick_at=payload.warn_kick_at,
         warn_timeout_minutes=payload.warn_timeout_minutes,
+        report_channel_id=payload.report_channel_id or None,
+        report_tracker_channel_id=payload.report_tracker_channel_id or None,
     )
     guild_cfg = await db.get_guild(guild_id)
+    new_report_channel = guild_cfg["report_channel_id"]
+    if new_report_channel and new_report_channel != (previous["report_channel_id"] if previous else None):
+        await report_actions.post_channel_intro(
+            bot_rest, new_report_channel, guild_cfg["report_tracker_channel_id"],
+        )
     return {"guild": _guild_to_json(guild_cfg)}
 
 
@@ -794,6 +830,30 @@ async def api_remove_reaction_role_message(request: Request, guild_id: str, mess
             pass  # message may already be gone; mapping cleanup still proceeds
     await db.remove_reaction_roles_by_message(guild_id, message_id)
     return {"reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)]}
+
+
+# ------------------------------------------------------------------ reports --
+class ReportStatusPayload(BaseModel):
+    status: str
+    duplicate_of: Optional[int] = None
+    note: str = ""
+
+
+@app.post("/api/guilds/{guild_id}/reports/{report_id}/status")
+async def api_set_report_status(request: Request, guild_id: str, report_id: int, payload: ReportStatusPayload):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    try:
+        await report_actions.set_status(
+            bot_rest, guild_id, report_id, payload.status.strip().lower(),
+            duplicate_of=payload.duplicate_of, resolution_note=payload.note.strip() or None,
+            resolved_by=str(user.get("id")),
+        )
+    except ValueError as e:
+        raise _ApiError(400, str(e))
+    rows = await db.list_reports(guild_id, limit=100)
+    names = await _resolve_usernames(guild_id, list({r["reporter_id"] for r in rows if r["visibility"] == "public"}))
+    return {"reports": [_report_to_json(r, names) for r in rows]}
 
 
 # --------------------------------------------------------- roles / channels --
