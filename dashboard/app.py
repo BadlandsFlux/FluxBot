@@ -381,9 +381,10 @@ def _tag_to_json(row) -> dict:
     }
 
 
-def _report_to_json(row, names: Optional[dict] = None) -> dict:
+def _report_to_json(row, names: Optional[dict] = None, reply_summary: Optional[dict] = None) -> dict:
     names = names or {}
     is_public = row["visibility"] == "public"
+    summary = (reply_summary or {}).get(row["id"])
     return {
         "id": row["id"],
         "reporter_id": row["reporter_id"] if is_public else None,
@@ -396,6 +397,31 @@ def _report_to_json(row, names: Optional[dict] = None) -> dict:
         "resolution_note": row["resolution_note"],
         "created_at": row["created_at"].isoformat(),
         "updated_at": row["updated_at"].isoformat(),
+        "reply_count": summary["reply_count"] if summary else 0,
+        # True once the reporter has replied and staff haven't answered
+        # back yet, so the Reports tab can badge "needs a reply" instead
+        # of staff having to open every report to find out whose turn
+        # it is to respond.
+        "needs_staff_reply": bool(summary) and summary["last_author_type"] == "reporter",
+    }
+
+
+def _report_reply_to_json(row, names: Optional[dict] = None, *, show_reporter_identity: bool = True) -> dict:
+    """Same privacy rule as _report_to_json's reporter_username: a
+    reporter-authored reply on a report marked private stays
+    attributed to "the reporter", never their real id/username, even
+    though only staff with dashboard access ever see this thread --
+    private means private, not just hidden from other members."""
+    names = names or {}
+    author_id = row["author_id"]
+    hide = row["author_type"] == "reporter" and not show_reporter_identity
+    return {
+        "id": row["id"],
+        "author_type": row["author_type"],
+        "author_id": None if hide else author_id,
+        "author_username": None if hide else (names.get(author_id, author_id) if author_id else None),
+        "content": row["content"],
+        "created_at": row["created_at"].isoformat(),
     }
 
 
@@ -417,6 +443,7 @@ async def api_guild_detail(request: Request, guild_id: str):
     all_ids |= {w["user_id"] for w in warnings} | {w["moderator_id"] for w in warnings}
     all_ids |= {r["reporter_id"] for r in reports_list if r["visibility"] == "public"}
     names = await _resolve_usernames(guild_id, list(all_ids))
+    reply_summary = await db.get_report_reply_counts(guild_id)
 
     return {
         "guild": _guild_to_json(guild_cfg),
@@ -426,7 +453,7 @@ async def api_guild_detail(request: Request, guild_id: str):
         "reaction_roles": [_reaction_role_to_json(r) for r in reaction_roles],
         "tags": [_tag_to_json(t) for t in guild_tags],
         "active_warning_count": sum(1 for w in warnings if w["active"]),
-        "reports": [_report_to_json(r, names) for r in reports_list],
+        "reports": [_report_to_json(r, names, reply_summary) for r in reports_list],
         "open_report_count": sum(1 for r in reports_list if r["status"] == "open"),
     }
 
@@ -887,7 +914,64 @@ async def api_set_report_status(request: Request, guild_id: str, report_id: int,
         raise _ApiError(400, str(e))
     rows = await db.list_reports(guild_id, limit=100)
     names = await _resolve_usernames(guild_id, list({r["reporter_id"] for r in rows if r["visibility"] == "public"}))
-    return {"reports": [_report_to_json(r, names) for r in rows]}
+    reply_summary = await db.get_report_reply_counts(guild_id)
+    return {"reports": [_report_to_json(r, names, reply_summary) for r in rows]}
+
+
+async def _report_detail_response(guild_id: str, report_id: int) -> dict:
+    report = await db.get_report(guild_id, report_id)
+    if not report:
+        raise _ApiError(404, f"No report #{report_id} in this server.")
+    is_public = report["visibility"] == "public"
+    replies = await db.list_report_replies(report_id)
+    reply_summary = await db.get_report_reply_counts(guild_id)
+
+    ids = set()
+    if is_public:
+        ids.add(report["reporter_id"])
+    ids |= {r["author_id"] for r in replies if r["author_id"] and (r["author_type"] != "reporter" or is_public)}
+    names = await _resolve_usernames(guild_id, list(ids))
+
+    return {
+        "report": _report_to_json(report, names, reply_summary),
+        "replies": [_report_reply_to_json(r, names, show_reporter_identity=is_public) for r in replies],
+    }
+
+
+@app.get("/api/guilds/{guild_id}/reports/{report_id}")
+async def api_report_detail(request: Request, guild_id: str, report_id: int):
+    """Backs the per-report dashboard page: the report itself plus its
+    full reply thread, see _report_detail_response. Polled every few
+    seconds while that page is open the same way the rest of the
+    dashboard is, so a reporter's DM reply shows up without a manual
+    refresh."""
+    await _require_manage(request, guild_id)
+    return await _report_detail_response(guild_id, report_id)
+
+
+class ReportReplyPayload(BaseModel):
+    content: str
+
+
+@app.post("/api/guilds/{guild_id}/reports/{report_id}/replies")
+async def api_add_report_reply(request: Request, guild_id: str, report_id: int, payload: ReportReplyPayload):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    content = payload.content.strip()
+    if not content:
+        raise _ApiError(400, "Reply can't be empty.")
+    try:
+        _, delivered = await report_actions.add_staff_reply(
+            bot_rest, guild_id, report_id, str(user.get("id")), content,
+        )
+    except ValueError as e:
+        raise _ApiError(400, str(e))
+    result = await _report_detail_response(guild_id, report_id)
+    # Surfaced so the compose box can warn staff the reporter has DMs
+    # closed, same as !report reply's own chat reply does -- the reply
+    # is still saved and mirrored to the tracker channel either way.
+    result["delivered"] = delivered
+    return result
 
 
 # --------------------------------------------------------- roles / channels --

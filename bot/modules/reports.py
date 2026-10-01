@@ -24,9 +24,18 @@ that one line appended works exactly like the full template. This
 only ever affects attribution in the tracker, not whether the
 original message gets removed, that already always happens.
 
+Staff can also hold a two-way conversation with the reporter once a
+report's in: `!report reply <id> <message>` (or the dashboard's report
+page) DMs them and records it; they reply the same way anyone replies
+to a DM, no command needed on their end, and on_report_dm_reply below
+matches it back to the right report. Every reply either side sends is
+also mirrored into the tracker channel so staff watching there see it
+without needing the dashboard open.
+
     !reportchannel #channel    set where reports are captured from
     !reporttracker #channel    set where the tracker embeds are posted
     !report status <id> <open|duplicate|resolved|wontfix> [note]
+    !report reply <id> <message>
     !report list [status]
     !report info <id>
 """
@@ -34,6 +43,8 @@ from __future__ import annotations
 
 import logging
 import re
+
+import asyncpg
 
 from bot import report_actions
 from bot.commands import Bot, Context
@@ -64,27 +75,29 @@ def _extract_privacy_field(content: str) -> tuple[str, bool]:
     return "\n".join(kept).strip(), want_private
 
 
-async def _remove_original_and_notify(bot: Bot, channel_id: str, message_id: str, reporter_id: str,
-                                       report_id: int, *, private: bool, extra: str = "") -> None:
+async def _remove_original_and_notify(bot: Bot, channel_id: str, message_id: str, report: asyncpg.Record, *,
+                                       private: bool, extra: str = "") -> None:
     """Every report ends up here: best-effort remove the now-redundant
     original message (it's in the tracker now), then let the reporter
-    know by DM, since there's no public message left to reply under."""
+    know by DM, since there's no public message left to reply under.
+    Routed through report_actions.send_reporter_dm, not a bare
+    create_dm/send_message here, so this first confirmation DM is
+    recorded the same way every later one is: a reporter who replies to
+    THIS message (before staff have said anything back) still matches
+    to the report, same as replying to any later one would, see
+    report_replies' comment in schema.sql."""
     try:
         await bot.rest.delete_message(channel_id, message_id)
     except FluxerAPIError:
         log.warning("Couldn't delete report #%s's original message (missing Manage Messages in the "
-                    "report channel?)", report_id)
+                    "report channel?)", report["id"])
     if private:
-        text = (f"🔒 Got it, report #{report_id} is logged and private: your name won't be shown in "
+        text = (f"🔒 Got it, report #{report['id']} is logged and private: your name won't be shown in "
                 f"the tracker, and the original message has been removed from the report channel.{extra}")
     else:
-        text = (f"✅ Got it, report #{report_id} is logged in the tracker, and the original message "
+        text = (f"✅ Got it, report #{report['id']} is logged in the tracker, and the original message "
                 f"has been removed from the report channel.{extra}")
-    try:
-        dm = await bot.rest.create_dm(reporter_id)
-        await bot.rest.send_message(dm["id"], content=text)
-    except FluxerAPIError:
-        pass  # can't DM them, nothing more to do, the report itself is already saved and tracked
+    await report_actions.send_reporter_dm(bot.rest, report, "system", text)
 
 
 def register(bot: Bot) -> None:
@@ -131,8 +144,63 @@ def register(bot: Bot) -> None:
         # Always removed from here, public or private alike, see the module
         # docstring: a report only ever actually lives on in the tracker.
         await _remove_original_and_notify(
-            bot, channel_id, message_id, reporter_id, report["id"], private=want_private, extra=dup_note,
+            bot, channel_id, message_id, report, private=want_private, extra=dup_note,
         )
+
+    @bot.on("MESSAGE_CREATE")
+    async def on_report_dm_reply(data: dict) -> None:
+        """The other half of a report's conversation: the reporter
+        replying by DM (there's nothing else they could reply to, see
+        the module docstring). Matched to a specific report by reading
+        the message they're replying to (message_reference) and looking
+        up which report that message belongs to, the same mechanism
+        bot/discord_relay.py uses for its own reply-prefix feature, see
+        db.get_report_by_dm_message. Falls back to "they have exactly
+        one open report" when the DM isn't a reply to anything (or
+        references a message from before replies existed), since
+        that's still unambiguous; with zero or several, there's nothing
+        safe to guess, so this just lets them know how to be specific
+        instead of silently guessing wrong."""
+        if data.get("guild_id"):
+            return  # guild messages are reports or commands, handled above/by _on_message
+        author = data.get("author", {})
+        if author.get("bot") or data.get("webhook_id"):
+            return
+        content = (data.get("content") or "").strip()
+        if not content:
+            return  # e.g. an attachment-only DM, nothing to capture as a reply
+        reporter_id = str(author.get("id"))
+
+        ref_message_id = (data.get("message_reference") or {}).get("message_id")
+        report = await db.get_report_by_dm_message(str(ref_message_id)) if ref_message_id else None
+
+        if not report:
+            candidates = await db.get_open_reports_by_reporter(reporter_id)
+            if len(candidates) == 1:
+                report = candidates[0]
+            elif len(candidates) > 1:
+                ids = ", ".join(f"#{r['id']}" for r in candidates)
+                try:
+                    dm = await bot.rest.create_dm(reporter_id)
+                    await bot.rest.send_message(
+                        dm["id"],
+                        content=(f"You've got more than one open report ({ids}), so I can't tell which one "
+                                 f"this is for. Reply directly to one of my messages about the specific "
+                                 f"report instead and I'll know."),
+                    )
+                except FluxerAPIError:
+                    pass
+                return
+            else:
+                return  # not a reply to anything we recognize, and no single open report to guess
+
+        message_id = str(data.get("id"))
+        if await db.get_report_reply_by_dm_message(message_id):
+            return  # already recorded (e.g. gateway redelivery), don't double it up
+
+        await db.create_report_reply(report["id"], "reporter", content, author_id=reporter_id,
+                                      dm_message_id=message_id)
+        await report_actions.post_reply_to_tracker(bot.rest, report, "reporter", content)
 
     @bot.command("reportchannel", category="Moderation", required_permission=PERM_MANAGE_GUILD,
                  help_text="Set the channel people post bug/issue reports in. Usage: !reportchannel #channel")
@@ -167,10 +235,10 @@ def register(bot: Bot) -> None:
 
     @bot.command("report", category="Moderation", required_permission=PERM_KICK_MEMBERS,
                  help_text="Manage bug/issue reports. Usage: !report status <id> <open|duplicate|resolved|wontfix> "
-                            "[note], !report list [status], !report info <id>")
+                            "[note], !report reply <id> <message>, !report list [status], !report info <id>")
     async def report(ctx: Context) -> None:
         usage = ("Usage: `!report status <id> <open|duplicate|resolved|wontfix> [note]`, "
-                 "`!report list [status]`, `!report info <id>`")
+                 "`!report reply <id> <message>`, `!report list [status]`, `!report info <id>`")
         if not ctx.args:
             await ctx.reply(usage)
             return
@@ -213,7 +281,43 @@ def register(bot: Bot) -> None:
                                 "inline": True})
             if r["resolution_note"]:
                 fields.append({"name": "Note", "value": r["resolution_note"], "inline": False})
+            replies = await db.list_report_replies(r["id"])
+            if replies:
+                lines = []
+                for reply in replies[-5:]:
+                    who = "Staff" if reply["author_type"] == "staff" else "Reporter"
+                    snippet = reply["content"][:150].replace("\n", " ")
+                    lines.append(f"**{who}:** {snippet}")
+                more = len(replies) - 5
+                if more > 0:
+                    lines.append(f"…and {more} earlier repl{'y' if more == 1 else 'ies'}, see the dashboard "
+                                  f"for the full thread.")
+                fields.append({"name": f"Replies ({len(replies)})", "value": "\n".join(lines), "inline": False})
             await ctx.embed(f"Report #{r['id']}", r["content"] or "", fields=fields)
+            return
+
+        if sub == "reply":
+            # Pulled from raw_args rather than the shlex-split ctx.args, so
+            # whatever staff typed as the message (quoting, spacing) comes
+            # through exactly rather than being re-joined with single spaces.
+            parts = ctx.raw_args.split(None, 2)
+            if len(parts) < 3 or not parts[1].isdigit() or not parts[2].strip():
+                await ctx.reply("Usage: `!report reply <id> <message>`")
+                return
+            report_id = int(parts[1])
+            message = parts[2].strip()
+            try:
+                _, delivered = await report_actions.add_staff_reply(
+                    ctx.bot.rest, ctx.guild_id, report_id, str(ctx.author["id"]), message,
+                )
+            except ValueError as e:
+                await ctx.reply(str(e))
+                return
+            if delivered:
+                await ctx.reply(f"💬 Reply sent to report #{report_id}'s reporter.")
+            else:
+                await ctx.reply(f"💬 Reply saved on report #{report_id}, but I couldn't DM the reporter "
+                                 f"(they may have DMs from this server disabled).")
             return
 
         if sub == "status":
