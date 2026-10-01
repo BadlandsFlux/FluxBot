@@ -1,0 +1,73 @@
+# Brings up the bot, the dashboard, and the Postgres they share. Doesn't
+# replace deploy/ (systemd units + nginx for a bare-metal install) --
+# that's still there for anyone who'd rather run it that way, this is
+# just the other option.
+#
+# Quickstart:
+#   cp .env.example .env   # fill in FLUXER_BOT_TOKEN, OAuth creds, etc.
+#   docker compose up -d --build
+#
+# DATABASE_URL in .env is overridden below to point at the `postgres`
+# service by its Docker DNS name rather than localhost -- the same .env
+# you'd use for a bare-metal install works here unmodified, nothing
+# Docker-specific needs to go in it.
+#
+# Already have your own Postgres (a managed service, one shared across
+# several apps, whatever) and don't want this one at all? See
+# docker-compose.external-db.yml, an override file that skips starting
+# this postgres service and points bot/dashboard at DATABASE_URL from
+# your .env as-is instead of rewriting it:
+#   docker compose -f docker-compose.yml -f docker-compose.external-db.yml up -d --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fluxerbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fluxerbot}
+      POSTGRES_DB: ${POSTGRES_DB:-fluxerbot}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fluxerbot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  bot:
+    build: .
+    command: ["python", "run_bot.py"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fluxerbot}:${POSTGRES_PASSWORD:-fluxerbot}@postgres:5432/${POSTGRES_DB:-fluxerbot}
+    depends_on:
+      postgres:
+        condition: service_healthy
+        # required: false (not just a default) so this still starts cleanly
+        # under docker-compose.external-db.yml, where the postgres service
+        # isn't part of the run at all, not just slow to become healthy.
+        required: false
+
+  dashboard:
+    build: .
+    command: ["python", "run_dashboard.py"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-fluxerbot}:${POSTGRES_PASSWORD:-fluxerbot}@postgres:5432/${POSTGRES_DB:-fluxerbot}
+      # Must listen on all interfaces to be reachable through the
+      # published port below -- 127.0.0.1 (the .env default, correct
+      # for the bare-metal/behind-local-nginx case) is only reachable
+      # from inside this container.
+      DASHBOARD_HOST: 0.0.0.0
+    ports:
+      - "${DASHBOARD_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+
+volumes:
+  postgres_data:
