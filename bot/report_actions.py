@@ -41,8 +41,8 @@ _SIMILARITY_THRESHOLD = 0.6
 def build_channel_intro_embed(tracker_channel_id: Optional[str] = None) -> dict:
     lines = [
         "**Post anything here and it becomes a report**, no command needed.",
-        "I'll react ✅ once it's logged, plus 🔒: react with that yourself within 10 minutes if you'd "
-        "rather keep it private. I'll remove the original message and your name won't show up anywhere.",
+        ("I'll react ✅ once it's logged, plus 🔒: react with that yourself within 10 minutes if you'd "
+         "rather keep it private. I'll remove the original message and your name won't show up anywhere."),
     ]
     if tracker_channel_id:
         lines.append(f"Check <#{tracker_channel_id}> first to see if your issue is already being "

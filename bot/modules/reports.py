@@ -94,7 +94,7 @@ def register(bot: Bot) -> None:
                          f"if you'd rather this stay private."),
             )
         except FluxerAPIError:
-            pass
+            pass  # the report itself is already saved and tracked, this reply is just a courtesy
 
     @bot.on("MESSAGE_REACTION_ADD")
     async def on_report_privacy_reaction(data: dict) -> None:
@@ -138,7 +138,7 @@ def register(bot: Bot) -> None:
                 f"tracker, and the original message has been removed from the report channel."
             ))
         except FluxerAPIError:
-            pass
+            pass  # can't DM them back, nothing more to do, the privacy flip itself already landed
 
     @bot.command("reportchannel", category="Moderation", required_permission=PERM_MANAGE_GUILD,
                  help_text="Set the channel people post bug/issue reports in. Usage: !reportchannel #channel")
