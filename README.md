@@ -6,30 +6,14 @@ A self-hosted moderation and community bot for [Fluxer](https://fluxer.app), pai
 
 ## What you get
 
-**Moderation:** kick, ban, timeout, purge, and a warning system that auto-escalates (warn → timeout → kick), all logged to a channel. Chat commands and the dashboard's Members tab share the exact same underlying logic, so behavior never drifts between the two.
-
-**Leveling & engagement:** XP from both chat and voice activity, level-up announcements, level-role rewards, achievements, a leaderboard, visual `!rank` cards, an all-time "wrapped" recap image, and live trivia.
-
-**Roles & welcomes:** autoroles, reaction roles, welcome and goodbye messages, custom `!tag` shortcuts, and a per-server command prefix.
-
-**Activity logging:** a detailed log for message edits/deletes, member joins/leaves, channel and role changes (including who did it, and exactly what changed), voice activity, and privileged-role grants, each independently togglable to its own channel.
-
-**Discord relay:** bridges specific Discord channels to Fluxer channels, one way or both, text/embeds/attachments included, configured entirely from the dashboard (token, connection status, and a guided setup walkthrough on an owner-only page, per-server channel mappings on each server's own tab).
-
-**A real dashboard, not just a control panel:** a full React app with a left sidebar, live search, near-real-time updates from chat, a Members tab you can moderate straight from, a leaderboard/level-role editor, a custom embed builder, a public status page, and more. See "What's editable from the dashboard vs. chat-only" below for the full tour.
-
-**Self-hostable end to end:** the bot and dashboard both talk to the Fluxer REST API directly (no third-party wrapper's undocumented internals to work around), Postgres for storage, and every Fluxer-specific URL is a config value, not a hardcoded assumption.
-
-<details>
-<summary><strong>Full feature list</strong> (click to expand, this is the complete technical rundown)</summary>
-
-- **Bot**: kick / ban / unban / timeout / purge, a warning system with auto-escalation (warn to auto-timeout to auto-kick), mod-action logging to a channel, autoroles, reaction roles, welcome **and goodbye** messages, custom tags (`!tagname` shortcuts), per-server command prefixes, info commands (`!avatar`, `!serverinfo`, `!userinfo`, owner-only `!info`), reminders (`!remind`), a leveling/XP system covering **both text and voice activity** (chat XP with a cooldown, plus voice-time XP at a lower rate that only counts when 2+ people are connected, no one's self-deafened, and it's not the AFK channel) with level-up announcements and level-role rewards (`!rank`, `!leaderboard`), timed polls that auto-close with a results tally (`!poll ... 1h`), `!ping` with real gateway/API/DB latency and uptime stats, and fun commands (dice, coinflip, wheel spin). A background scheduler delivers due reminders, closes due polls, and periodically flushes in-progress voice sessions, all independent of the gateway connection. Moderation logic (REST calls, logging, warn escalation) lives in one shared module (`bot/moderation_actions.py`) used by both chat commands and the dashboard's Members tab, so behavior can't drift between the two.
-- **Dashboard**: a React SPA (Vite) served by FastAPI as static files, talking to a JSON API (`/api/*`), with real client-side routing, no full-page reloads, live search on the commands page, and a quiet 8-second poll on each server's page so kicks/bans/warnings from chat show up without a manual refresh. A top-bar server switcher shows the current server's name/icon and lets you jump between manageable servers without going back to the picker. Per-server navigation is a left sidebar grouped into categories (Moderation, Configuration, Engagement, plus Overview on its own), with a sliding accent indicator that glides to whichever section is active, a quiet fade-in when the content switches, and a collapse toggle for a narrower icon-only mode, all persisted per browser. Sections: Overview, Settings, Members, Warnings, Mod Log, Autoroles, Reaction Roles, **Levels**, Tags, **Announce**, with searchable role/channel pickers everywhere instead of raw ID text boxes, real server icons in the picker, a Members tab to search and kick/ban/timeout/warn directly from the browser, welcome/goodbye message configuration behind toggle switches, a leveling tab (leaderboard + level-role reward setup), a custom embed/announcement builder, a reaction-role builder (emoji picker, per-choice label, role picker, embed color) that posts the embed, reacts to it, and starts listening for you, and an Overview tab with **separate 14-day charts for message and voice activity** plus most-active-members lists for each. A public `/commands` page lists every command, always in sync with the bot since it's generated from the same code. A public `/status` page (also no login required) shows whether the bot is currently online, uptime, gateway latency, and server count, "is it down or is it just me" shouldn't need an account to check. The Overview tab also shows each server's most-used commands, and an all-time activity heatmap (message volume by hour and day of week, in UTC) for picking good event times. A **Bot Profile** page, linked in the top bar only for whoever `BOT_OWNER_ID` is set to, lets you upload one image for the dashboard's own favicon and the small icon next to the bot's name in the top bar, both updated immediately regardless of anything else, and tries to set the same image as the bot's Fluxer avatar too, though that part isn't guaranteed to work on every instance (see the API completeness note below), falling back to a clear message pointing you at setting it manually from Fluxer's own Bot Application page if it doesn't. Access to the rest of the dashboard is via "Login with Fluxer" OAuth2, see "Dashboard access" below.
-- **Storage**: Postgres, shared by both processes over a real connection pool (not a shared SQLite file), via `asyncpg`.
-
-Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohttp`/gateway handshake) rather than depending on a third-party wrapper's undocumented internals, so self-hosting support is just config.
-
-</details>
+- **Moderation**: kick, ban, timeout, purge, and an auto-escalating warning system (warn → timeout → kick), all logged to a channel. Chat commands and the dashboard's Members tab share the same logic, so behavior never drifts between the two.
+- **Leveling & engagement**: XP from chat and voice activity, level-up announcements, level-role rewards, achievements, a leaderboard, visual `!rank` cards, an all-time "wrapped" recap image, and live trivia.
+- **Roles & welcomes**: autoroles, reaction roles, welcome/goodbye messages, custom `!tag` shortcuts, and a per-server command prefix.
+- **Bug/issue reports**: members post in a dedicated channel, no command needed. Tracked in a second channel as a status-tagged embed, with automatic duplicate flagging and an option to stay anonymous.
+- **Activity logging**: message edits/deletes, member joins/leaves, channel/role changes, voice activity, and privileged-role grants, each independently togglable to its own channel.
+- **Discord relay**: bridges Discord channels to Fluxer channels, one way or both, with attachments, edits/deletes, and translated mentions, configured entirely from the dashboard.
+- **A real dashboard**: a full React app with live search, near-real-time updates from chat, a Members tab you can moderate straight from, a leaderboard/level-role editor, a custom embed builder, a public status page, and more.
+- **Self-hostable end to end**: the bot and dashboard both talk to the Fluxer REST API directly (no third-party wrapper's undocumented internals), Postgres for storage, and every Fluxer-specific URL is a config value.
 
 ## Table of contents
 
@@ -42,9 +26,7 @@ Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohtt
 - [Self-hosting a Fluxer instance](#self-hosting-a-fluxer-instance)
 - [Dashboard access](#dashboard-access)
 - [Commands](#commands)
-- [What's editable from the dashboard vs. chat-only](#whats-editable-from-the-dashboard-vs-chat-only)
 - [Project layout](#project-layout)
-- [On API completeness](#on-api-completeness)
 
 ## Setup
 
@@ -68,12 +50,12 @@ Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohtt
    cp .env.example .env
    ```
    Fill in:
-   - `FLUXER_BOT_TOKEN`, your bot's token (see "Creating the bot application on Fluxer" below if you don't have one yet).
+   - `FLUXER_BOT_TOKEN`, your bot's token (see [Creating the bot application on Fluxer](#creating-the-bot-application-on-fluxer) if you don't have one yet).
    - `BOT_OWNER_ID`, your own Fluxer user ID, gates the owner-only `!info` command and the dashboard's Bot Profile and Discord Relay Setup pages.
-   - `DISCORD_BOT_TOKEN` (optional), only needed for the Discord relay feature (see below), and can be set from the dashboard instead once the bot's running, so it's fine to leave blank here.
-   - `FLUXER_API_BASE` / `FLUXER_WEB_BASE` / `FLUXER_GATEWAY_URL`, leave as the official instance, or point at your self-hosted domain (see below).
+   - `DISCORD_BOT_TOKEN` (optional), only needed for the Discord relay feature, and can be set from the dashboard instead once the bot's running, so it's fine to leave blank here.
+   - `FLUXER_API_BASE` / `FLUXER_WEB_BASE` / `FLUXER_GATEWAY_URL`, leave as the official instance, or point at your self-hosted domain (see [Self-hosting a Fluxer instance](#self-hosting-a-fluxer-instance)).
    - `DATABASE_URL`, your Postgres connection string.
-   - `FLUXER_OAUTH_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI`, for the dashboard's "Login with Fluxer" button (see "Creating the bot application on Fluxer" below).
+   - `FLUXER_OAUTH_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI`, for the dashboard's "Login with Fluxer" button.
    - `DASHBOARD_SESSION_SECRET`, any long random string.
 
 4. **Install deps.**
@@ -86,14 +68,14 @@ Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohtt
    python -m common.db
    ```
 
-6. **Build the frontend** (one time, it's a static React build, not a server, so this doesn't need repeating unless you change frontend code):
+6. **Build the frontend** (one time, a static build, not a server, so this doesn't need repeating unless you change frontend code):
    ```bash
    cd dashboard-frontend
    npm install
    npm run build      # outputs dashboard-frontend/dist
    cd ..
    ```
-   If `dist/` doesn't exist yet, the dashboard will say so at `/` instead of erroring, so it's obvious if you skip this step.
+   If `dist/` doesn't exist yet, the dashboard will say so at `/` instead of erroring.
 
 7. **Run.**
    ```bash
@@ -102,34 +84,33 @@ Both the bot and the dashboard talk to the Fluxer REST API directly (raw `aiohtt
    ```
    Dashboard defaults to `http://localhost:8000`, one process serves both the API and the built frontend, no Node server needed at runtime.
 
-   **Iterating on the frontend?** Run `npm run dev` in `dashboard-frontend/` (Vite on `:5173`, proxying `/api`, `/login`, `/auth` to the FastAPI backend on `:8000`, see `vite.config.js`) alongside `python run_dashboard.py` in another terminal for hot reload, instead of rebuilding on every change. Run `npm run build` again when you're done to update what gets served in production.
+   **Iterating on the frontend?** Run `npm run dev` in `dashboard-frontend/` (Vite on `:5173`, proxying `/api`, `/login`, `/auth` to the FastAPI backend on `:8000`) alongside `python run_dashboard.py` for hot reload. Run `npm run build` again when you're done, to update what gets served in production.
 
 ## Updating
 
 ```bash
 git pull
 pip install -r requirements.txt          # pick up any new/changed Python deps
-python -m common.db                      # apply any new schema migrations (idempotent, safe to always run)
+python -m common.db                      # apply any new schema migrations (idempotent)
 cd dashboard-frontend && npm install && npm run build && cd ..   # rebuild the frontend
 ```
 
-Then restart both processes, however you're running them, `Ctrl+C` and re-run `python run_bot.py`/`python run_dashboard.py` if running manually, or see the systemd section below for `systemctl restart` if running as a service. There's no harm in running all four commands above even if a given update didn't touch that part (e.g. no new npm deps), they're all safe no-ops in that case.
+Then restart both processes. All four commands above are safe no-ops if a given update didn't touch that part.
 
-If you're on the `deploy/` systemd services, run the `git pull`/`pip install`/`python -m common.db`/`npm run build` sequence as whichever user can write to `/opt/fluxbot` (or `sudo -u fluxbot ...` each command), then restart:
+If you're on the `deploy/` systemd services, run that sequence as whichever user can write to `/opt/fluxbot` (or `sudo -u fluxbot ...` each command), then:
 ```bash
 sudo systemctl restart fluxbot-bot.service fluxbot-dashboard.service
 ```
 
-If you're on Docker (see "Docker" below), updating is just:
+If you're on Docker (see [Docker](#docker)), updating is just:
 ```bash
 git pull
 docker compose up -d --build
 ```
-The rebuild picks up new Python/npm deps and schema changes on its own, nothing else to run separately.
 
 ## Running at startup on Ubuntu (systemd)
 
-`python run_bot.py` and `python run_dashboard.py` running in a terminal stop when you log out. For a real deployment, run both as `systemd` services, they'll start on boot and restart automatically if either crashes.
+`python run_bot.py` / `run_dashboard.py` running in a terminal stop when you log out. For a real deployment, run both as `systemd` services, they'll start on boot and restart automatically if either crashes.
 
 1. **Put the project somewhere systemd-friendly and create a dedicated user:**
    ```bash
@@ -139,20 +120,20 @@ The rebuild picks up new Python/npm deps and schema changes on its own, nothing 
    sudo chown -R fluxbot:fluxbot /opt/fluxbot
    ```
 
-2. **Set up a virtualenv as that user** (keeps dependencies isolated from system Python):
+2. **Set up a virtualenv as that user:**
    ```bash
    sudo -u fluxbot python3 -m venv /opt/fluxbot/venv
    sudo -u fluxbot /opt/fluxbot/venv/bin/pip install -r /opt/fluxbot/requirements.txt
    ```
-   Build the frontend once too (needs Node; see the Setup section above), `dist/` just needs to exist under `/opt/fluxbot/dashboard-frontend/`, it doesn't matter which user built it.
+   Build the frontend once too (needs Node; see [Setup](#setup)), `dist/` just needs to exist under `/opt/fluxbot/dashboard-frontend/`.
 
-3. **Make sure `/opt/fluxbot/.env` exists and is filled in** (copy from `.env.example`, same as regular setup). Since `fluxbot` is a system user, lock it down:
+3. **Make sure `/opt/fluxbot/.env` exists and is filled in**, then lock it down:
    ```bash
    sudo chmod 600 /opt/fluxbot/.env
    sudo chown fluxbot:fluxbot /opt/fluxbot/.env
    ```
 
-4. **Install the unit files** (included in this repo under `deploy/`):
+4. **Install the unit files** (included under `deploy/`):
    ```bash
    sudo cp deploy/fluxbot-bot.service deploy/fluxbot-dashboard.service /etc/systemd/system/
    sudo systemctl daemon-reload
@@ -170,14 +151,11 @@ The rebuild picks up new Python/npm deps and schema changes on its own, nothing 
    journalctl -u fluxbot-bot.service -f          # live logs
    journalctl -u fluxbot-dashboard.service -f
    ```
-   Set `LOG_LEVEL` in `.env` to control verbosity for both processes: `DEBUG` for troubleshooting something specific (e.g. voice tracking), `INFO` (the default) for normal operation, or `WARNING`/`ERROR` to only see actual problems. Restart both processes after changing it.
+   `LOG_LEVEL` in `.env` controls verbosity for both processes (`DEBUG`/`INFO`/`WARNING`/`ERROR`); restart both after changing it.
 
-7. **After pulling code changes**, see "Updating" above, then restart:
-   ```bash
-   sudo systemctl restart fluxbot-bot.service fluxbot-dashboard.service
-   ```
+7. **After pulling code changes**, see [Updating](#updating), then restart as in step 5's commands.
 
-If Postgres runs on this same machine, uncomment the `Requires=postgresql.service` line in both unit files before installing them, so they wait for the database on boot. Leave it commented out if Postgres is on a remote host, systemd can't depend on a service running on a different machine.
+If Postgres runs on this same machine, uncomment `Requires=postgresql.service` in both unit files before installing them. Leave it commented out if Postgres is on a remote host.
 
 ## Docker
 
@@ -188,11 +166,7 @@ cp .env.example .env   # fill in FLUXER_BOT_TOKEN, the OAuth2 creds, DASHBOARD_S
 docker compose up -d --build
 ```
 
-That's `docker-compose.yml` bringing up three containers: `postgres` (official `postgres:16-alpine` image, data in a named volume so it survives a rebuild), `bot`, and `dashboard`, the last two built from the same `Dockerfile` (a multi-stage build: a Node stage compiles the dashboard's React frontend, then a Python stage installs `requirements.txt` and copies in `bot/`, `common/`, `dashboard/`, and the built frontend, nothing else, no system packages needed beyond what the base images already have) and just running `run_bot.py`/`run_dashboard.py` respectively, same as the non-Docker path.
-
-The one thing `docker-compose.yml` changes versus what's in your `.env`: it overrides `DATABASE_URL` to point at the `postgres` service by its Docker DNS name rather than `localhost`, and `DASHBOARD_HOST` to `0.0.0.0` so the dashboard is actually reachable through the port Docker publishes (`DASHBOARD_PORT` from `.env`, `8000` by default). Everything else in `.env` is used exactly as-is, the same file works whether you run this way or bare-metal.
-
-Schema setup is automatic: both processes already apply `schema.sql` on their own startup (same as the non-Docker path, see "Updating" above), there's no separate migration step or init container.
+This brings up three containers: `postgres` (data in a named volume), `bot`, and `dashboard` (both built from the same multi-stage `Dockerfile`: a Node stage compiles the frontend, a Python stage runs the processes). It overrides two things from your `.env`: `DATABASE_URL` points at the `postgres` service's Docker DNS name instead of `localhost`, and `DASHBOARD_HOST` becomes `0.0.0.0` so the published port is reachable. Everything else in `.env` is used as-is. Schema setup is automatic, same as the non-Docker path.
 
 ```bash
 docker compose logs -f bot          # or dashboard / postgres
@@ -201,19 +175,16 @@ docker compose down -v              # stop everything AND delete the database
 docker compose up -d --build        # after pulling code changes, rebuild and restart
 ```
 
-**Already have a Postgres you'd rather use** (a managed service, one instance shared across several apps, whatever), instead of the bundled one? Set `DATABASE_URL` in `.env` to that instance (reachable from these containers: a host on your network, a managed service's connection string, etc.) and bring the stack up with the external-db override instead:
-
+**Already have a Postgres you'd rather use** (a managed service, one instance shared across several apps)? Set `DATABASE_URL` in `.env` to that instance and bring the stack up with the external-db override instead, which skips starting the bundled `postgres` service and uses `DATABASE_URL` exactly as given:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.external-db.yml up -d --build
 ```
 
-That extra file skips starting the bundled `postgres` service entirely and uses `DATABASE_URL` from `.env` exactly as given, rather than rewriting it to the bundled service's own name the way plain `docker compose up` does. `bot`/`dashboard` no longer wait on a local healthcheck either, since there's nothing local to wait on, just your `DATABASE_URL` needing to already be reachable when they start.
-
-TLS/reverse-proxying still isn't part of this, same as the bare-metal path: put nginx (containerized or not) in front of the published dashboard port yourself if you want HTTPS, and set `DASHBOARD_COOKIE_SECURE=true`/`TRUSTED_PROXY_IPS` in `.env` to match once you do, see "Reverse proxy (nginx)" below, the same guidance applies either way.
+TLS/reverse-proxying still isn't part of this, same as bare-metal: put nginx in front of the published dashboard port yourself if you want HTTPS, and set `DASHBOARD_COOKIE_SECURE=true`/`TRUSTED_PROXY_IPS` to match, see [Reverse proxy (nginx)](#reverse-proxy-nginx).
 
 ## Reverse proxy (nginx)
 
-The dashboard listens on plain HTTP (`DASHBOARD_PORT`, default 8000). For a real deployment, put nginx in front of it to handle TLS and expose it on the standard 443 port, a config is included at `deploy/nginx-fluxbot.conf`.
+The dashboard listens on plain HTTP (`DASHBOARD_PORT`, default 8000). For a real deployment, put nginx in front of it to handle TLS and expose it on 443, a config is included at `deploy/nginx-fluxbot.conf`.
 
 1. **Install nginx and certbot:**
    ```bash
@@ -224,7 +195,7 @@ The dashboard listens on plain HTTP (`DASHBOARD_PORT`, default 8000). For a real
    ```bash
    sudo certbot --nginx -d dashboard.example.com
    ```
-   If you'd rather set up the nginx config first and get the cert after, comment out the `server { listen 443 ... }` block in the config below and change the port-80 block's redirect to a `proxy_pass` instead, so you can reach the dashboard over plain `http://` while DNS/certs are still in progress.
+   To set up nginx first and get the cert after, comment out the `server { listen 443 ... }` block below and change the port-80 block's redirect to a `proxy_pass` instead, so you can reach the dashboard over plain `http://` while DNS/certs are in progress.
 
 3. **Install the config:**
    ```bash
@@ -234,40 +205,33 @@ The dashboard listens on plain HTTP (`DASHBOARD_PORT`, default 8000). For a real
    sudo nginx -t && sudo systemctl reload nginx
    ```
 
-4. **Confirm the dashboard is bound to localhost only**, now that nginx is the public entry point (this is the default since `.env.example`, so there's nothing to change here unless you'd previously widened it yourself, e.g. for LAN testing):
+4. **Confirm the dashboard is bound to localhost only** (the default since `.env.example`):
    ```
    DASHBOARD_HOST=127.0.0.1
    DASHBOARD_COOKIE_SECURE=true
    ```
-   The second line marks the login session cookie `Secure`, meaning the browser will only ever send it over HTTPS, worth turning on now that nginx is terminating TLS in front of you. Leave it `false` only if you're deliberately running without HTTPS (not recommended). Restart the dashboard after changing this, then open your firewall for 80/443 only (not 8000):
+   The second line marks the session cookie `Secure` (HTTPS-only), worth turning on now that nginx terminates TLS in front of you. Restart the dashboard, then open your firewall for 80/443 only (not 8000):
    ```bash
    sudo ufw allow 80/tcp
    sudo ufw allow 443/tcp
    ```
 
-5. **Update the OAuth2 redirect URI** to match your real domain, both in `.env` (`FLUXER_OAUTH_REDIRECT_URI=https://dashboard.example.com/auth/callback`) and on the Fluxer application itself (see "Creating the bot application on Fluxer" below), then restart the dashboard. This also fixes the dashboard's own public base URL used by the Discord relay's avatar proxy (`DASHBOARD_PUBLIC_URL`, derived automatically from the redirect URI above unless set explicitly), which otherwise defaults to `localhost` and won't be reachable from Fluxer.
+5. **Update the OAuth2 redirect URI** to match your real domain, both in `.env` (`FLUXER_OAUTH_REDIRECT_URI=https://dashboard.example.com/auth/callback`) and on the Fluxer application itself, then restart. This also fixes `DASHBOARD_PUBLIC_URL` (derived from the redirect URI unless set explicitly), used by the Discord relay's avatar proxy.
 
-The included config proxies everything to the dashboard, sets the standard `X-Forwarded-*` headers, and long-caches the frontend's content-hashed static assets (`/assets/*`) since a new deploy always gets new filenames from Vite's build.
+The included config proxies everything to the dashboard, sets the standard `X-Forwarded-*` headers, and long-caches the frontend's content-hashed static assets.
 
 ## Creating the bot application on Fluxer
 
-One Fluxer "Application" gives you everything: the bot token, the OAuth2 client ID/secret for the dashboard's login, and the invite link. Steps, from the actual Fluxer web UI:
+One Fluxer "Application" gives you everything: the bot token, the OAuth2 client ID/secret for the dashboard's login, and the invite link.
 
-1. **Enable Developer Mode** (lets you copy IDs anywhere by right-clicking): User Settings → Advanced → Developer → toggle **Developer Mode** on.
+1. **Enable Developer Mode** (lets you copy IDs by right-clicking): User Settings → Advanced → Developer → toggle **Developer Mode** on.
+2. **Create the application**: User Settings → Applications → **Create Application**.
+3. **Get the bot token** for `.env`'s `FLUXER_BOT_TOKEN`: **Secrets & tokens** → **Bot token** → **Regenerate**. Copy it immediately, it won't be shown again. Treat it like a password.
+4. **Get the OAuth2 credentials**: **Application ID** at the top is `FLUXER_OAUTH_CLIENT_ID`; **Client secret** under Secrets & tokens is `FLUXER_OAUTH_CLIENT_SECRET`.
+5. **Add the dashboard's redirect URI**: under **Redirect URIs**, add exactly what you set as `FLUXER_OAUTH_REDIRECT_URI` (e.g. `https://your-dashboard-domain/auth/callback`). Has to match exactly, including trailing slashes.
+6. **Invite the bot to your server**: under **OAuth2 URL builder**, check the `bot` scope, then under **Bot permissions** check what the bot actually uses: Kick Members, Ban Members, Moderate Members (timeout), Manage Roles, Manage Messages, Manage Guild, Send Messages, Embed Links, Add Reactions, View Channel, Read Message History. Open the generated Authorize URL to add the bot.
 
-2. **Create the application**: User Settings → Applications → **Create Application**, give it a name (e.g. `FluxBot`).
-
-3. **Get the bot token** for `.env`'s `FLUXER_BOT_TOKEN`: on the application page, under **Secrets & tokens** → **Bot token** → click **Regenerate**. Copy it immediately, it won't be shown again. Treat it like a password; regenerating later breaks anything still using the old one.
-
-4. **Get the OAuth2 credentials** for the dashboard's "Login with Fluxer": still on the application page, **Application ID** at the top is your `FLUXER_OAUTH_CLIENT_ID`; **Client secret** under Secrets & tokens (click Regenerate to reveal it) is your `FLUXER_OAUTH_CLIENT_SECRET`.
-
-5. **Add the dashboard's redirect URI**: under **Redirect URIs**, add exactly what you set as `FLUXER_OAUTH_REDIRECT_URI` in `.env` (e.g. `https://your-dashboard-domain/auth/callback`), then **Add redirect**. This has to match exactly, including scheme and trailing slashes, or the login flow will fail.
-
-6. **Invite the bot to your server**: scroll down to **OAuth2 URL builder**. Check the `bot` scope, then under **Bot permissions** check exactly what the bot actually uses: Kick Members, Ban Members, Moderate Members (timeout), Manage Roles, Manage Messages, Manage Guild, Send Messages, Embed Links, Add Reactions, View Channel, Read Message History. Copy the generated **Authorize URL** and open it in a browser to add the bot to your server. The redirect URI dropdown there doesn't matter for this step, it's only relevant for identify/guilds-scope logins, not a plain bot invite.
-
-   Least privilege matters here independently of anything the bot's own code does: even with the hierarchy/self/owner protections and the privileged-role guardrails described elsewhere in this README, a smaller granted permission set is still a smaller blast radius if the bot's token or session is ever compromised, or if a bug turns up in the bot's own checks. Don't grant more than it needs just because it's one click easier.
-
-   If you'd genuinely rather not manage individual permission bits, checking **Administrator** instead guarantees every command works without fiddling with them, at the cost of exactly that reduced blast radius.
+   Least privilege matters here independently of the bot's own hierarchy/self/owner protections: a smaller permission set is a smaller blast radius if the bot's token is ever compromised. Checking **Administrator** instead guarantees every command works, at the cost of that reduced blast radius.
 
 ## Self-hosting a Fluxer instance
 
@@ -283,17 +247,17 @@ FLUXER_GATEWAY_URL=wss://your-domain.com/gateway   # only if GET /gateway/bot is
 
 Anyone can log in with "Login with Fluxer", that just proves who they are. What they can actually *do* is checked live, on every page load, against `GET /users/@me/guilds`:
 
-- A server only shows up in their picker if the bot is installed there **and** they have "Manage Server" permission (or own it) in that server.
-- There's no separate allowlist or cached role, demote someone in Fluxer and they lose dashboard access on their next request.
-- The `/commands` reference page is public and needs no login, since it's just documentation.
+- A server only shows up in their picker if the bot is installed there **and** they have "Manage Server" permission (or own it).
+- No separate allowlist or cached role: demote someone in Fluxer and they lose dashboard access on their next request.
+- The `/commands` reference page is public, no login needed.
 
-If you want to restrict the dashboard further (e.g. only the bot owner, or an explicit allowlist of user IDs), that check lives in `_require_manage()` in `dashboard/app.py`, straightforward to tighten.
+To restrict the dashboard further (e.g. only the bot owner, or an explicit allowlist), that check lives in `_require_manage()` in `dashboard/app.py`.
 
 ## Commands
 
-Run `!help` in Fluxer once the bot is running for the live, per-server list (it shows your server's actual prefix and groups commands by category), or visit the dashboard's `/commands` page, same source, always in sync.
+Run `!help` in Fluxer for the live, per-server list, or visit the dashboard's `/commands` page, same source, always in sync.
 
-Kick/ban/timeout/warn (chat commands and the dashboard's Members tab alike, both go through the same shared logic) refuse to act on yourself, the server owner, or anyone whose highest role outranks or ties yours, regardless of whether you technically hold the raw permission bit. Having Kick Members doesn't mean you should be able to kick an admin.
+Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone whose highest role outranks or ties yours, regardless of your raw permission bit.
 
 | Command | Permission | Description |
 |---|---|---|
@@ -305,7 +269,7 @@ Kick/ban/timeout/warn (chat commands and the dashboard's Members tab alike, both
 | `!purge <count>` | Manage Messages | Bulk delete recent messages |
 | `!warn @user [reason]` | Kick Members | Warn (auto-escalates per guild settings) |
 | `!warnings @user` | none | List a member's warnings |
-| `!note add/list/remove @user <text>` | Kick Members | Private staff notes on a member, no escalation, just visibility |
+| `!note add/list/remove @user <text>` | Kick Members | Private staff notes, no escalation |
 | `!clearwarnings @user` | Kick Members | Clear active warnings |
 | `!modlog #channel` | Manage Guild | Set the mod-log channel |
 | `!autorole add/remove/list @role` | Manage Guild | Roles auto-given on join |
@@ -316,152 +280,88 @@ Kick/ban/timeout/warn (chat commands and the dashboard's Members tab alike, both
 | `!info` | Owner only | Bot-level stats (uptime, latency, server count) |
 | `!poll "Q" "A" "B" ... [duration]` | none | Reaction poll, up to 10 options, optional auto-close with tallied results |
 | `!tag add/remove/list <name> <content>` | Manage Guild (add/remove) | Custom `!name` shortcuts |
-| `!remind <duration> <text>` | none | Set a reminder, e.g. `!remind 2h take out trash` (capped at 10 pending per person) |
+| `!remind <duration> <text>` | none | e.g. `!remind 2h take out trash` (10 pending max per person) |
 | `!reminders` | none | List your pending reminders |
 | `!delreminder <id>` | none | Cancel a reminder |
-| `!rank [@user]` | none | Visual rank card (avatar, level, XP bar, stats), falls back to a text embed if image rendering ever fails |
+| `!rank [@user]` | none | Visual rank card (avatar, level, XP bar, stats) |
 | `!leaderboard` | none | Server XP leaderboard |
-| `!wrapped` | none | All-time server recap image: messages, voice hours, top chatter, top voice member, achievements unlocked |
-| `!achievements [@user]` | none | Milestone badges earned (messages, level, voice time) |
-| `!mydata` | none | Everything the bot has stored about you in this server (DMs it, staff notes never included) |
+| `!wrapped` | none | All-time server recap image |
+| `!achievements [@user]` | none | Milestone badges earned |
+| `!mydata` | none | Everything the bot has stored about you (DMs it) |
 | `!ping` | none | Gateway/API/DB latency, uptime, server count |
-| `!afk [reason]` | none | Mark yourself away; auto-clears on your next message, notes it if someone mentions you |
+| `!afk [reason]` | none | Mark yourself away; auto-clears on your next message |
 | `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | none | Fun stuff |
-| `!trivia` | none | Multiple-choice trivia (pulled live from Open Trivia DB, falls back to a small local bank if that's unreachable), closes in 30s, correct answers earn XP |
-| `!link` | none | Start linking your Discord and Fluxer accounts (DMs you a code), see "Discord Relay" below |
+| `!trivia` | none | Multiple-choice trivia, closes in 30s, correct answers earn XP |
+| `!link` | none | Start linking your Discord and Fluxer accounts (DMs you a code) |
 | `!unlink` | none | Remove your account link |
 | `!linkstatus` | none | Show whether you're currently linked |
-| `!reportchannel #channel` | Manage Guild | Set the channel reports are captured from, see "Reports" below |
+| `!reportchannel #channel` | Manage Guild | Set the channel reports are captured from |
 | `!reporttracker #channel` | Manage Guild | Set the channel reports are tracked in |
 | `!report status <id> <open\|duplicate\|resolved\|wontfix> [note]` | Kick Members | Update a report's status |
 | `!report reply <id> <message>` | Kick Members | DM the reporter and record it as part of the report's thread |
 | `!report list [status]` | Kick Members | List reports, optionally filtered |
 | `!report info <id>` | Kick Members | Full detail on one report, including its most recent replies |
 
-`!info` is gated by `BOT_OWNER_ID` in `.env` (your own Fluxer user ID), not by any per-server permission, it's meant for you, not server admins.
+`!info` is gated by `BOT_OWNER_ID` in `.env`, not a per-server permission, it's meant for you, not server admins.
 
-Tags can also be managed from the dashboard's Tags tab. Once added, invoking `!<tagname>` posts its content, checked as a fallback whenever a message doesn't match a built-in command. Tag names can't collide with a real command name.
+Tags can also be managed from the dashboard's Tags tab. Invoking `!<tagname>` posts its content as a fallback whenever a message doesn't match a built-in command; tag names can't collide with a real command name.
 
-## What's editable from the dashboard vs. chat-only
-
-Most day-to-day admin work can be done entirely from the dashboard, no need to touch Fluxer directly:
-
-- **Settings tab**: mod-log channel, command prefix, mute role, welcome/goodbye channel and message (toggle switches), leveling on/off + level-up channel/message, warning-escalation thresholds, all with searchable role/channel pickers instead of raw IDs.
-- **Members tab**: search members, sort by username/join date/messages sent, kick/ban/timeout/warn with a reason, goes through the same shared logic as chat commands, so it's logged and escalates identically either way.
-- **Autoroles / Reaction Roles tabs**: add/remove autoroles, and build reaction-role embeds (the dashboard posts the message, reacts to it, and stores the mapping for you). Reaction-role messages are managed as a unit: delete removes the whole message and every mapping on it, not one emoji at a time. Neither feature will target a role that itself carries moderation/admin permissions (Administrator, Manage Guild, Kick/Ban/Moderate Members, Manage Messages), that's a privilege-escalation path (self-promotion via autorole-on-join or reacting), not a config choice, so it's blocked outright rather than just warned about.
-- **Levels tab**: view the XP leaderboard and configure level-role rewards (level N grants role X). Also configure channels excluded from earning XP (a bot-commands or spam channel, say) and role-based XP multipliers (a supporter role earning faster, for instance, highest applicable multiplier wins if a member has more than one, they don't stack).
-- **Tags tab**: add/remove custom `!tagname` shortcuts.
-- **Announce tab**: compose and send a custom embed (title, description, color, image, footer) to any channel.
-- **Warnings / Mod Log tabs**: view and clear warnings, browse full history.
-- **Activity Log tab**: broader server activity logging, separate from Mod Log (which only covers actions this bot itself took): message edits/deletes, member joins/leaves, channel and role changes, voice join/leave/switch, and privileged role grants/revokes on members, each independently togglable to one configured channel, plus a per-user ignore list. Everything defaults off until you turn it on. Each log entry is a full embed: author with avatar, a footer with the relevant raw ID(s), a native timestamp, and for message edits/deletes, a jump link straight to the message. Message edit/delete logging depends on a runtime cache of recent message content (not persisted, resets on restart, a message from before the bot's current session shows as "content not available" rather than the actual text), since Fluxer's gateway doesn't include the original text in either event. A message sent through a webhook (this bot's own Discord relay, or any other integration like a CI/GitHub bot) is cached the same as any other message, only a genuine other bot account posting directly is excluded, since a webhook can just as easily represent a real person's message bridged in as autonomous bot noise. Role creates/updates show the actual permission set (and, on updates, exactly what was added or removed), and channel/role creates/deletes get a "Performed By" field filled in a moment after the initial entry, pulled from the server's audit log rather than the gateway event itself (which doesn't carry an acting user), added via a background lookup so it never blocks other bot activity while waiting on it. A member gaining or losing a role that carries kick/ban/manage-roles/administrator-level permissions gets its own dedicated, more prominent log entry, independent of the general role-changes toggle.
-- **Discord Relay tab**: map specific Discord channels to Fluxer channels, one way (Discord → Fluxer, or Fluxer → Discord) or both, forwarding message text, embeds, and attachments in either direction. One Discord channel can feed several Fluxer channels across different servers, and vice versa. Edits and deletes sync too for anything the relay itself sent, including a bulk delete/purge on either platform, not just one message at a time, and two-way mappings have loop protection built in: each side skips anything the relay itself posted, whether sent directly or through a webhook, so a relayed message can't bounce back and forth. Replying to a message translates too: neither platform's webhook API can create a genuine threaded reply (that's only possible for a regular bot- or user-sent message, not one sent through a webhook, the primary relay path whenever attribution is on), so this prepends a short "↩️ replying to [name](link): quoted snippet" line instead, with a real working link to the corresponding message when the original was itself relayed, or just the name and a short quote when it wasn't. `@user`, `#channel`, and `@role` mentions get translated into plain, readable text rather than passed through as raw platform-specific mention syntax, Discord and Fluxer are separate id spaces, so a raw mention token relayed as-is would either show up dead and unparsed on the other side, or, in an unlucky id collision, silently point at the wrong person entirely. `#channel`/`@role` always resolve to plain text this way (there's no cross-platform mapping for those at all), falling back to `unknown-channel`/`unknown-role` for anything not found in the destination guild's cached list. `@user` does too, **unless** the mentioned person has linked their Discord and Fluxer accounts (`!link` on Fluxer DMs you a code, then DM the relay bot `f!link <code>` on Discord to finish it, see "Commands" above; you can also start from the Discord side, bare `f!link` in any bridged server's channel or straight in a DM to the relay bot both DM you the same instructions — either way, redeeming the code only ever happens in a DM, never posted where others can see it. The Discord side uses `f!` rather than a bare `!` specifically so it doesn't collide with every other Discord bot in the server that also happens to use `!` as its own prefix) **and** is actually a member of the destination server for that specific relayed copy, in which case it becomes a real, clickable, notifying mention on the other platform instead, exactly as if they'd been mentioned natively there. A fan-out to several destinations resolves this independently per destination, so the same mention can be live in one and plain text in another depending on where that person actually is. Falls back to `unknown-user` for an unresolvable id the same as before. Each mapping can be paused without losing its configuration (a toggle switch, not delete-and-recreate), and has a "send test message" button that posts directly to whichever channel(s) it targets, confirming the bot actually has permission and the channel id is right on each end (not a full round-trip through the live relay logic, just the most common failure mode). With attribution on (the default, per-mapping), relayed messages post through a webhook showing the original author's real username and avatar, the same mechanism every real Discord/Fluxer bridge uses, one webhook per destination channel, created automatically the first time it's needed and recreated on its own if it's ever removed from the channel's integrations directly. Each relayed message remembers the exact webhook that sent it, not just "whichever webhook is currently on file for that channel," so editing or deleting it later still works correctly even if that webhook has since been recreated in the meantime. Falls back to a plain message with a `**[Discord] username:**`-style text prefix if the webhook path isn't available for any reason (missing permission, etc), so relaying itself never breaks just because the richer display isn't. With attribution off, messages relay with no attribution at all. An **invite this bot to a Discord server** link on the same tab, built from the relay bot's own Discord identity once it's connected, is how anyone else managing a server through this same hosted FluxBot adds the shared relay bot to their own Discord server, since the relay is one bot shared across every guild, not one per guild. Requires its own Discord Bot application (a real one, never a self-bot/user-token, that's against Discord's Terms of Service), set up once bot-wide from the owner-only **Discord Relay Setup** page (linked in the top bar), which walks through creating it, holds the token (dashboard-configurable, falls back to `DISCORD_BOT_TOKEN` in `.env` if left blank there, never returned by any API response once set), and shows live connection status. A token entered later, or fixed after an invalid one, gets picked up automatically within about 30 seconds, no bot restart needed. If the Discord side goes down (network blip, invalid token, Discord itself having issues) and comes back, both directions catch up automatically rather than silently losing whatever happened in between: a Fluxer message that couldn't be delivered while Discord was down is queued (already fully prepared, mentions translated, attribution ready) and delivered in order the moment the connection is back, and a Discord message sent while disconnected (which the bot never even sees in the moment, there's no event to catch) gets picked up via a short history backfill of each bridged channel right after reconnecting. Both are bounded to the outage's actual length, capped at 24 hours either way, past that point a message is given up on rather than kept indefinitely.
-
-  **A real trust boundary worth understanding before enabling this for communities you don't already trust with each other**: this is one shared Discord bot across every Fluxer guild the bot manages, and nothing verifies that a Fluxer guild manager configuring a `fluxer_to_discord` (or `both`) mapping actually has any real claim to the Discord channel ID they enter, only that they manage the Fluxer guild the mapping is filed under. If this bot is ever hosted for multiple unrelated Fluxer communities, any of their managers could in principle direct the shared bot to post into any Discord channel it happens to have access to. Each mapping records who created it (for after-the-fact accountability, not prevention), but if you're hosting this for people who don't already trust each other, that's worth knowing going in.
-- **Reports tab**: member-submitted bug/issue reports, captured from a dedicated channel with no command needed. Set both channels right from this tab (a small "Channels" card at the top, same two pickers as Settings, calling a narrower endpoint so saving them can't accidentally reset anything else in Settings), or with `!reportchannel`/`!reporttracker`. Setting (or changing) the report channel posts a one-time explainer embed into it so nobody has to already know "just post here" is the convention, including a copy-pasteable template (`Title:` / `Description:` / `Steps to reproduce:` / `Private:`), though plain free text works exactly the same if you'd rather skip it. The original message is always removed from the report channel once it's logged, public or private alike (best-effort, needs Manage Messages), a report only actually lives on in the tracker channel from then on, so the report channel itself never ends up holding a mix of raw submissions and bot clutter. `Private: yes` in the report itself is what controls attribution there: set it and the tracker entry never shows the reporter's identity at all, their confirmation (and a note if the duplicate check below flagged something similar) arrives by DM instead, since there's no public message left to reply under either way. Reports are tracked in that second status-tagged channel so people can see what's already been reported before filing another one, with a basic text-similarity check flagging likely duplicates for staff automatically. From the Reports tab you can search/filter the list, resolve/won't-fix/reopen a report, or mark one a confirmed duplicate of another (also doable with `!report status`, same shared logic either way so the tracker entry and the reporter's DM never drift between the two), with labeled (not just icon) buttons and a confirmed-vs-auto-flagged-duplicate distinction in the table so it's clear at a glance what each one means and does. Like every other tab, it picks up new/changed reports from the same quiet 8-second background poll the rest of the dashboard already uses, with a toast flashed specifically when a new report comes in while you're looking at the tab, so that's actually noticeable rather than a silent re-render.
-
-  Each report also has its own page (click its `#id` or the **Reply** button, same GitHub-issue-style detail view for a growing conversation rather than cramming it into the table) for a real two-way thread with the reporter: staff reply from there (or with `!report reply <id> <message>`), it DMs the reporter, and they reply the same way anyone replies to a DM, no command needed on their end, matched back to the right report by which of the bot's messages they quoted so it still works correctly even if they've got more than one open report going. Every reply either side sends is also mirrored into the tracker channel as its own message, so staff watching there see the conversation live without needing the dashboard open at all. The report list badges which ones are actually waiting on staff (the reporter replied last) and shows a running reply count, and the thread page itself polls and toasts new replies the same way the list does new reports.
-- **Danger Zone** (bottom of Settings): bulk, irreversible actions (clear all warnings, reset all XP, wipe all reaction roles), each gated behind typing "CONFIRM" before it runs, and logged to Mod Log.
-- **Per-user XP management** (Levels tab): add or remove a specific amount of XP for one member, or reset just their level/XP back to zero, distinct from the Danger Zone's server-wide reset. Both are logged to Mod Log.
-- **Onboarding checklist**: closeable with the X for the current visit, or permanently with "Don't remind me again" (persisted per-server in your browser), if you'd rather not see it again even before finishing setup.
-- **Staff notes**: view, add, and remove private notes on any member directly from the Members tab.
-
-A few things are chat-only for now (no dashboard equivalent yet): `!purge`, `!roll`/`!coinflip`/`!wheel`, `!avatar`/`!serverinfo`/`!userinfo`/`!info`, reminders (`!remind`/`!reminders`/`!delreminder`, inherently personal/ephemeral rather than server config), and account linking (`!link`/`!unlink`/`!linkstatus`, also personal rather than server config, bot-wide rather than per-server). Starting a poll (`!poll`) is chat-only too, though its auto-close and results tally happen automatically via the background scheduler regardless of how it was started.
 ## Project layout
 
 ```
 common/                config + the shared Postgres data layer (used by both processes)
   config.py            env-driven settings
-  db.py                asyncpg pool + all queries (guilds, warnings, mod_actions,
-                        reaction_roles, autoroles, tags, reminders, polls,
-                        levels, level_roles, activity stats)
+  db.py                asyncpg pool + all queries
   discovery.py         instance discovery + CDN URL helpers (guild icons, avatars)
 bot/
   rest.py              REST client (self-host aware, base URL from config)
   client.py            gateway (WebSocket) client, handshake, heartbeats, reconnect
-  commands.py          tiny prefix-command framework + dispatcher (also falls back
-                        to custom tags when a message doesn't match a built-in command)
+  commands.py          tiny prefix-command framework + dispatcher (falls back to
+                        custom tags when a message doesn't match a built-in command)
   permissions.py       role/permission bit checks
-  timeutil.py          snowflake to date, duration + shared duration-string parsing
-  moderation_actions.py  shared kick/ban/timeout/warn logic, used by both chat
-                        commands and the dashboard's Members tab
-  report_actions.py     shared report status/tracker-embed/reply logic, used by
-                        both the !report chat command and the dashboard's
-                        Reports tab
-  scheduler.py          background loop: delivers due reminders, closes and
-                        tallies due polls, flushes in-progress voice sessions,
-                        independent of the gateway connection
-  voice_tracker.py       voice channel presence tracking for activity stats
-                        and voice XP (join/leave/mute events only, no audio)
+  timeutil.py          snowflake to date, duration string parsing
+  moderation_actions.py  shared kick/ban/timeout/warn logic (chat + dashboard)
+  report_actions.py    shared report status/tracker-embed/reply logic (chat + dashboard)
+  scheduler.py          background loop: reminders, polls, voice session flushing
+  voice_tracker.py       voice presence tracking for activity stats and voice XP
+  discord_relay.py      the Discord-side bridge (gateway client, webhook relay)
   modules/
-    moderation.py       kick/ban/unban/timeout/purge/warn/warnings/modlog (thin
-                        wrappers around moderation_actions.py)
+    moderation.py       kick/ban/unban/timeout/purge/warn/warnings/modlog
     roles.py            autorole + reaction roles + welcome/goodbye messages
-    fun.py              roll/coinflip/wheel/poll (with optional auto-close)
+    fun.py              roll/coinflip/wheel/poll
     info.py             avatar/serverinfo/userinfo/info (owner-only)
     tags.py             !tag add/remove/list
     reminders.py         !remind/!reminders/!delreminder
-    leveling.py          XP gain on message, level-up + role rewards, !rank/!leaderboard
+    leveling.py          XP gain, level-up + role rewards, !rank/!leaderboard
     activity.py          per-day/per-member message counters for dashboard stats
     utility.py          help/ping
     logging_mod.py       writes mod_actions rows + posts to the log channel
-    account_links.py     !link/!unlink/!linkstatus, self-service Discord <-> Fluxer
-                        account linking so mentions can translate live across
-                        the relay (see bot/discord_relay.py's live-mention
-                        resolution)
-    reports.py            captures member bug/issue reports from a dedicated
-                        channel (no command needed), posts/updates a
-                        status-tagged tracker embed, basic text-similarity
-                        duplicate detection, two-way reply thread with the
-                        reporter over DM, !reportchannel/!reporttracker/
-                        !report status/reply/list/info
+    account_links.py     !link/!unlink/!linkstatus, Discord <-> Fluxer linking
+    reports.py            captures bug/issue reports, tracker embed, duplicate
+                        detection, two-way reply thread over DM,
+                        !reportchannel/!reporttracker/!report
   main.py                entrypoint, also starts the scheduler task
 dashboard/
   app.py                FastAPI app, JSON API (/api/*) + serves the built SPA
   oauth.py              OAuth2 "Login with Fluxer" flow
-dashboard-frontend/      React SPA (Vite)
+dashboard-frontend/      React SPA (Vite), see its own README for the full API reference
   src/
     api.js               fetch wrapper for the backend's /api/* routes
     App.jsx               routing + auth-gate
     context/              GuildsContext (shared guild-list fetch for the picker
                           and the top-bar switcher)
-    pages/                Login, GuildPicker, GuildDetail, ReportDetail, Commands
-    components/           TopBar, GuildSwitcher, Flash (toasts), Spinner, Switch,
-                          Combobox (role/channel picker), EmojiPicker, BarChart,
-                          ReactionRoleBuilder, AnnouncementBuilder, MembersTab,
-                          TagsTab, LevelsTab, ReportsTab
-    hooks/                useRolesChannels (fetch once per guild), usePolling
-                          (visibility-aware interval)
-  dist/                  production build, FastAPI serves this (git-ignored,
-                          build it yourself)
-schema.sql              Postgres schema (idempotent, CREATE TABLE IF NOT EXISTS,
-                        plus ALTER TABLE ADD COLUMN IF NOT EXISTS migrations)
+    pages/                Login, GuildPicker, GuildDetail, ReportDetail,
+                          BotProfile, DiscordRelaySetup, Commands, Status
+    components/           one per dashboard tab/widget (MembersTab, LevelsTab,
+                          ReportsTab, DiscordRelayTab, ActivityLogTab, TagsTab,
+                          ReactionRoleBuilder, AnnouncementBuilder, DangerZone, …)
+    hooks/                useRolesChannels, usePolling
+  dist/                  production build, FastAPI serves this (git-ignored)
+schema.sql              Postgres schema (idempotent, safe to re-run)
 run_bot.py / run_dashboard.py
-deploy/                systemd unit files + nginx reverse proxy config for running
-                        both processes at boot on Ubuntu
-Dockerfile              multi-stage build (Node stage for the frontend, Python
-                        stage for bot + dashboard), see "Docker" above
+deploy/                systemd unit files + nginx reverse proxy config
+Dockerfile              multi-stage build (Node for the frontend, Python for bot + dashboard)
 docker-compose.yml      bot + dashboard + Postgres, alternative to deploy/
-.dockerignore
 ```
 
-## On API completeness
-
-Fluxer's public API reference is still being filled in (as of mid-2026), and some routes here, particularly the exact moderation endpoints (`ban`/`timeout`/`purge`), member-list pagination, and the OAuth2 guild-list response shape, are implemented following the Discord-like conventions Fluxer is modeled on, since that's the best information available. Everything funnels through a small number of methods:
-
-- REST calls (including member list/kick/ban/timeout): `bot/rest.py`
-- Permission bit values: `bot/permissions.py`
-- OAuth2 guild permission check: `dashboard/oauth.py::can_manage`
-- Media/CDN URL paths (guild icons, avatars) and snowflake to date epoch: `common/discovery.py`, `bot/timeutil.py`
-- The guild's AFK-channel field name (assumed `afk_channel_id`, Discord convention) used to exclude AFK-channel time from voice XP/stats: `bot/voice_tracker.py`
-- Mention suppression (`allowed_mentions` on outgoing messages, Discord convention): `bot/rest.py`
-- Updating the bot's own avatar (Bot Profile page): `dashboard/oauth.py::update_bot_avatar`. The endpoint and payload shape here were confirmed against Fluxer's own published API docs, not just assumed, `PATCH /oauth2/applications/{id}/bot` (not `PATCH /users/@me`, Discord's convention), authenticated as the *application owner's* OAuth2 Bearer token (the same one already sitting in the dashboard session from "Login with Fluxer"), avatar as raw base64, no `data:mimetype;base64,` prefix. Even with all of that right, at least one real instance has returned `403 ACCESS_DENIED` here. The most likely explanation found so far: Fluxer's docs note that the closely related token-reset endpoint under this same resource requires "sudo mode" (fresh password/MFA re-verification, not just a valid session), and this may too, something the dashboard's OAuth-based login can't currently satisfy (it's designed specifically to never touch your password). Could also be a missing OAuth scope beyond the `identify guilds` the dashboard currently requests, Fluxer's documented scopes also include `admin`, though that name suggests instance-wide admin access rather than "manage my own application," so it wasn't added speculatively. Because of this uncertainty, the dashboard's own favicon update is deliberately decoupled from this call now: the favicon always updates as soon as the image itself is valid, the Fluxer avatar update is attempted best-effort and reported back separately, and if it fails, set it manually from Fluxer's own Bot Application page (`User Settings → Applications`) instead.
-- Webhooks (`bot/rest.py`'s `create_channel_webhook`/`execute_webhook`/`edit_webhook_message`/`delete_webhook_message`, used by the Discord relay's per-message avatar/username display): also confirmed against Fluxer's published docs, `POST /channels/{id}/webhooks` to create, `POST /webhooks/{id}/{token}?wait=true` to execute with `username`/`avatar_url` overrides, matching Discord's convention closely. The one detail not directly confirmed the same way, `wait=true` being needed to get the created message back rather than a bare 204, is called out specifically in that method's own comment.
-
-If your instance's OpenAPI spec (usually at `<api_base>/openapi.json`, or your instance's own `/api-reference` page) disagrees with a path or bit value here, that's the source of truth, the fix is a one-line change in one of those files, not a rewrite.
-
-One concrete limit worth knowing: the dashboard's Members tab fetches up to 500 members per request (Fluxer's member-list endpoint is paginated like Discord's). Large servers won't show every member in search, searching by exact user ID still works around that.
-
-**On that `allowed_mentions` point specifically**: several messages the bot sends embed free text a member fully controls, `!remind`'s reminder text, a member's own username in welcome/goodbye/level-up messages, so every outgoing message defaults to pinging nobody at all (`bot/rest.py`'s `FluxerREST.SAFE_ALLOWED_MENTIONS`) unless the calling code explicitly allow-lists the one specific user ID it intends to notify (`FluxerREST.mention_only(user_id)`). This closes off a real mass-ping griefing path: without it, any member (no special permission needed) could type `@everyone` or mention other members inside free-text fields and have the bot actually broadcast it, especially if the bot's invite permission includes mention-everyone, which Administrator (an option here, but not the recommended default) does. If you add new code that sends a message with plain `content`, don't forget to either accept the default (nobody gets pinged) or pass `allowed_mentions=bot.rest.mention_only(the_one_user_id)` if a ping is genuinely intended, don't rely on Fluxer's own default, since we don't know what that default is on any given instance.
-
-P.P.S. The [dashboard-frontend](https://github.com/BadlandsFlux/FluxBot/tree/main/dashboard-frontend) page has a readme with all the API endpoints I use. This frontend can be ripped out and used for other projects if you so wish.
-
+Fluxer's own API docs are at [fluxer.dev](https://fluxer.dev). [`dashboard-frontend/README.md`](dashboard-frontend/README.md) has the full HTTP API reference for this project's own dashboard backend, every endpoint the frontend calls, useful as a porting checklist for a backend rewrite, or if you want to reuse the frontend for something else.
