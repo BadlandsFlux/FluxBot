@@ -40,13 +40,13 @@ _SIMILARITY_THRESHOLD = 0.6
 
 def build_channel_intro_embed(tracker_channel_id: Optional[str] = None) -> dict:
     lines = [
-        "**Post anything here and it becomes a report** — no command needed.",
-        "I'll react ✅ once it's logged, plus 🔒 — react with that yourself within 10 minutes if you'd "
+        "**Post anything here and it becomes a report**, no command needed.",
+        "I'll react ✅ once it's logged, plus 🔒: react with that yourself within 10 minutes if you'd "
         "rather keep it private. I'll remove the original message and your name won't show up anywhere.",
     ]
     if tracker_channel_id:
         lines.append(f"Check <#{tracker_channel_id}> first to see if your issue is already being "
-                      f"tracked — that saves everyone from duplicate reports.")
+                      f"tracked, that saves everyone from duplicate reports.")
     return {
         "title": "📝 How to report a bug or issue",
         "description": "\n\n".join(lines),
@@ -85,7 +85,7 @@ async def find_possible_duplicate(guild_id: str, content: str) -> Optional[int]:
 
 def build_tracker_embed(report: asyncpg.Record) -> dict:
     status = report["status"]
-    title = f"{STATUS_EMOJI[status]} Report #{report['id']} — {STATUS_LABELS[status]}"
+    title = f"{STATUS_EMOJI[status]} Report #{report['id']}: {STATUS_LABELS[status]}"
     if status == "duplicate" and report["duplicate_of"]:
         title += f" of #{report['duplicate_of']}"
 
@@ -98,7 +98,7 @@ def build_tracker_embed(report: asyncpg.Record) -> dict:
     if status == "open" and report["possible_duplicate_of"]:
         fields.append({
             "name": "⚠️ Possible duplicate",
-            "value": f"Looks similar to #{report['possible_duplicate_of']} — check before filing another one.",
+            "value": f"Looks similar to #{report['possible_duplicate_of']}, check before filing another one.",
             "inline": False,
         })
 
@@ -167,8 +167,8 @@ async def privatize_report(rest, guild_id: str, report_id: int) -> Optional[asyn
 async def _notify_reporter(rest, report: asyncpg.Record) -> None:
     status = report["status"]
     if status == "duplicate":
-        text = (f"♻️ Your report #{report['id']} was marked as a duplicate of #{report['duplicate_of']} "
-                "— looks like someone already flagged this, thanks for reporting it anyway!")
+        text = (f"♻️ Your report #{report['id']} was marked as a duplicate of #{report['duplicate_of']}, "
+                "looks like someone already flagged this, thanks for reporting it anyway!")
     elif status == "resolved":
         text = f"✅ Your report #{report['id']} has been marked resolved. Thanks for reporting it!"
     else:  # wontfix

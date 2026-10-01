@@ -40,7 +40,7 @@ export default function ReportsTab({ guildId, reports, onChange }) {
     <div className="card">
       <h2>Bug/issue reports</h2>
       <p className="muted small">
-        Captured automatically from the report channel configured in Settings — no command needed. Set a tracker
+        Captured automatically from the report channel configured in Settings, no command needed. Set a tracker
         channel there too so people can see what's already been reported before filing another one.
       </p>
 

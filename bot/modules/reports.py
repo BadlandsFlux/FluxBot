@@ -134,7 +134,7 @@ def register(bot: Bot) -> None:
         try:
             dm = await bot.rest.create_dm(user_id)
             await bot.rest.send_message(dm["id"], content=(
-                f"🔒 Got it, report #{report['id']} is private now — your name won't be shown in the "
+                f"🔒 Got it, report #{report['id']} is private now: your name won't be shown in the "
                 f"tracker, and the original message has been removed from the report channel."
             ))
         except FluxerAPIError:
@@ -195,8 +195,8 @@ def register(bot: Bot) -> None:
             for r in rows:
                 snippet = (r["content"] or "")[:60].replace("\n", " ")
                 dup = f" (dup of #{r['duplicate_of']})" if r["duplicate_of"] else ""
-                lines.append(f"**#{r['id']}** [{r['status']}]{dup} — {snippet}")
-            await ctx.embed(f"Reports{' — ' + status if status else ''}", "\n".join(lines))
+                lines.append(f"**#{r['id']}** [{r['status']}]{dup}: {snippet}")
+            await ctx.embed(f"Reports{' (' + status + ')' if status else ''}", "\n".join(lines))
             return
 
         if sub == "info":

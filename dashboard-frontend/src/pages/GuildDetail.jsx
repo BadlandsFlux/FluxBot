@@ -501,16 +501,16 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
 
         <h2 className="section-divider">Bug/issue reports</h2>
         <Switch checked={reportsOn} onChange={toggleReports}
-                label="Capture reports from a dedicated channel — no command needed" />
+                label="Capture reports from a dedicated channel, no command needed" />
         {reportsOn && (
           <div className="switch-panel">
             <label>
-              Report channel — any message posted here becomes a report
+              Report channel: any message posted here becomes a report
               <Combobox options={channels} value={form.report_channel_id || ""}
                         onChange={(v) => set("report_channel_id", v)} placeholder="Pick a channel" />
             </label>
             <label>
-              Tracker channel — status-tagged log of every report, so people can check before filing another
+              Tracker channel: status-tagged log of every report, so people can check before filing another
               <Combobox options={channels} value={form.report_tracker_channel_id || ""}
                         onChange={(v) => set("report_tracker_channel_id", v)} placeholder="Optional, but recommended" />
             </label>
