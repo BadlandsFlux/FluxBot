@@ -55,10 +55,9 @@ def _with_gateway_params(url: str) -> str:
 
 
 class GatewayClient:
-    def __init__(self, rest: FluxerREST, token: str, intents: int):
+    def __init__(self, rest: FluxerREST, token: str):
         self.rest = rest
         self.token = token
-        self.intents = intents
         self._handlers: dict[str, list[EventHandler]] = {}
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._seq: Optional[int] = None
@@ -96,11 +95,16 @@ class GatewayClient:
             await asyncio.sleep(interval_ms / 1000)
 
     async def _identify(self) -> None:
+        # Fluxer's gateway has no Discord-style intents system: a bot
+        # session always gets the full event stream (it's "never passive",
+        # per Fluxer's event-filtering docs), there's no `intents` field in
+        # IDENTIFY to begin with, and the only opt-out is `ignored_events`,
+        # which we don't use since we want everything. An `intents` field
+        # here would just be silently ignored, not a real gate.
         await self._ws.send(json.dumps({
             "op": OP_IDENTIFY,
             "d": {
                 "token": self.token,
-                "intents": self.intents,
                 "properties": {
                     "os": "linux",
                     "browser": "FluxBot",
