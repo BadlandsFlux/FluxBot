@@ -10,11 +10,14 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from bot.commands import Bot, Context
 from bot.permissions import PERM_MANAGE_GUILD, role_is_privileged
 from common import db
+
+log = logging.getLogger("fluxbot.roles")
 
 ROLE_MENTION_RE = re.compile(r"^<@&(\d+)>$")
 
@@ -133,17 +136,20 @@ def register(bot: Bot) -> None:
     # ---------------------------------------------------------- listeners --
     @bot.on("GUILD_MEMBER_ADD")
     async def on_member_add(data: dict) -> None:
-        guild_id = str(data.get("guild_id"))
+        guild_id = data.get("guild_id")
         user = data.get("user", {})
         user_id = user.get("id")
-        if not user_id:
+        if not guild_id or not user_id:
+            log.warning("GUILD_MEMBER_ADD missing guild_id/user, can't apply autoroles: %r", data)
             return
+        guild_id = str(guild_id)
         role_ids = await db.list_autoroles(guild_id)
         for role_id in role_ids:
             try:
                 await bot.rest.add_member_role(guild_id, str(user_id), role_id)
             except Exception:
-                pass
+                log.warning("Couldn't add autorole %s to %s in guild %s",
+                            role_id, user_id, guild_id, exc_info=True)
 
         guild_cfg = await db.get_guild(guild_id)
         if guild_cfg and guild_cfg["welcome_channel_id"] and guild_cfg["welcome_message"]:

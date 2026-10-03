@@ -74,7 +74,7 @@ class Bot:
     def __init__(self, token: str):
         self.token = token
         self.rest = FluxerREST(token)
-        self.gateway = GatewayClient(self.rest, token, config.intents)
+        self.gateway = GatewayClient(self.rest, token)
         self.commands: dict[str, Command] = {}
         self.prefix = config.command_prefix
         self.started_at = time.monotonic()
