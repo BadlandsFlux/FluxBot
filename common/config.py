@@ -34,7 +34,7 @@ class Config:
     bot_name: str = os.getenv("BOT_NAME", "FluxBot")
     owner_id: str = os.getenv("BOT_OWNER_ID", "")
     command_prefix: str = os.getenv("COMMAND_PREFIX", "!")
-    intents: int = int(os.getenv("FLUXER_INTENTS", "3243773"))
+    intents: int = int(os.getenv("FLUXER_INTENTS", "3243775"))
     gateway_version: int = int(os.getenv("FLUXER_GATEWAY_VERSION", "1"))
     # The `websockets` library's own default frame-size cap (1 MiB) can be
     # too small for a single GUILD_CREATE payload on a very large server
