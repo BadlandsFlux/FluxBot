@@ -2,7 +2,7 @@
 
 Implements the handshake documented for Fluxer: connect -> receive
 HELLO (op 10) with a heartbeat_interval -> send IDENTIFY (op 2) with
-the bot token/intents -> receive DISPATCH (op 0) events, while a
+the bot token -> receive DISPATCH (op 0) events, while a
 background task sends HEARTBEAT (op 1) on schedule and reconnects on
 drop. This is intentionally dependency-light (raw `websockets`) so it
 works identically against the official instance or a self-hosted one —
