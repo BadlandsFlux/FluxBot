@@ -736,3 +736,16 @@ BEGIN
             UNIQUE (guild_id, message_id, emoji);
     END IF;
 END $$;
+
+-- Migration for databases created before the "react within 10 minutes to
+-- go private" report flow was replaced by the "Private: yes" line (see
+-- the reports table's own comment above). That redesign dropped
+-- privacy_deadline from the CREATE TABLE block above, but a column drop
+-- (unlike an added column) needs its own explicit step same as an add
+-- does: CREATE TABLE IF NOT EXISTS never touches a table that already
+-- exists in the old shape, so any database bootstrapped before this
+-- change still has the old NOT NULL privacy_deadline column sitting
+-- there with nothing left in the app that ever sets it, and every
+-- report submission fails with a not-null violation. Safe to always
+-- run: a no-op on any database that never had the column.
+ALTER TABLE reports DROP COLUMN IF EXISTS privacy_deadline;
