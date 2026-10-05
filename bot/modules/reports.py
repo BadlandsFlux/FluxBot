@@ -93,10 +93,9 @@ async def _remove_original_and_notify(bot: Bot, channel_id: str, message_id: str
                     "report channel?)", report["id"])
     if private:
         text = (f"🔒 Got it, report #{report['id']} is logged and private: your name won't be shown in "
-                f"the tracker, and the original message has been removed from the report channel.{extra}")
+                f"the tracker!{extra}")
     else:
-        text = (f"✅ Got it, report #{report['id']} is logged in the tracker, and the original message "
-                f"has been removed from the report channel.{extra}")
+        text = (f"✅ Got it, report #{report['id']} is logged in the tracker!{extra}")
     await report_actions.send_reporter_dm(bot.rest, report, "system", text)
 
 
