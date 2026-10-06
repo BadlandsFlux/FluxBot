@@ -19,7 +19,11 @@ function wrapSelection(textarea, value, onChange, before, after, placeholder) {
 // Prefixes every line touched by the current selection with `prefix`
 // (e.g. "# ", "- ", "> "), the way most markdown editors treat a
 // line-level action: it applies to whichever line(s) your cursor/selection
-// spans, not just the exact characters highlighted.
+// spans, not just the exact characters highlighted. Leaves the cursor
+// collapsed at the end of the prefixed block, not a selection covering it:
+// unlike wrapSelection's placeholder (meant to be typed over), there's
+// nothing here worth replacing, and selecting it just means the prefix
+// itself vanishes the moment you start typing.
 function prefixLines(textarea, value, onChange, prefix) {
   const start = textarea.selectionStart;
   const end = textarea.selectionEnd;
@@ -30,9 +34,10 @@ function prefixLines(textarea, value, onChange, prefix) {
   const prefixed = block.split("\n").map((l) => prefix + l).join("\n");
   const next = value.slice(0, lineStart) + prefixed + value.slice(lineEnd);
   onChange(next);
+  const cursorPos = lineStart + prefixed.length;
   requestAnimationFrame(() => {
     textarea.focus();
-    textarea.setSelectionRange(lineStart, lineStart + prefixed.length);
+    textarea.setSelectionRange(cursorPos, cursorPos);
   });
 }
 
