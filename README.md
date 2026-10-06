@@ -354,7 +354,7 @@ dashboard-frontend/      React SPA (Vite), see its own README for the full API r
                           BotProfile, DiscordRelaySetup, Commands, Status
     components/           one per dashboard tab/widget (MembersTab, LevelsTab,
                           ReportsTab, DiscordRelayTab, ActivityLogTab, TagsTab,
-                          ReactionRoleBuilder, AnnouncementBuilder, DangerZone, …)
+                          ReactionRoleBuilder, EmbedBuilder, DangerZone, …)
     hooks/                useRolesChannels, usePolling
   dist/                  production build, FastAPI serves this (git-ignored)
 schema.sql              Postgres schema (idempotent, safe to re-run)

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users,
-  Tag as TagIcon, TrendingUp, Megaphone, Search, FileClock, ArrowLeftRight, Flag,
+  Tag as TagIcon, TrendingUp, LayoutTemplate, Search, FileClock, ArrowLeftRight, Flag,
 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "../components/Flash";
@@ -18,7 +18,7 @@ import DiscordRelayTab from "../components/DiscordRelayTab";
 import ReportsTab from "../components/ReportsTab";
 import OnboardingChecklist from "../components/OnboardingChecklist";
 import DangerZone from "../components/DangerZone";
-import AnnouncementBuilder from "../components/AnnouncementBuilder";
+import EmbedBuilder from "../components/EmbedBuilder";
 import BarChart from "../components/BarChart";
 import HeatmapGrid from "../components/HeatmapGrid";
 import GuildSidebar from "../components/GuildSidebar";
@@ -38,7 +38,7 @@ const TABS = [
   { id: "discordrelay", label: "Discord Relay", icon: ArrowLeftRight, category: "Configuration" },
   { id: "levels", label: "Levels", icon: TrendingUp, category: "Engagement" },
   { id: "tags", label: "Tags", icon: TagIcon, category: "Engagement" },
-  { id: "announce", label: "Announce", icon: Megaphone, category: "Engagement" },
+  { id: "embed", label: "Embed", icon: LayoutTemplate, category: "Engagement" },
 ];
 
 const ACTION_TAG_CLASS = {
@@ -232,11 +232,11 @@ export default function GuildDetail() {
                      onChange={(t) => setData((d) => ({ ...d, tags: t }))} />
           )}
           {tab === "levels" && <LevelsTab guildId={id} roles={roles} channels={channels} />}
-          {tab === "announce" && (
+          {tab === "embed" && (
             <div className="card">
-              <h2>Send an announcement</h2>
-              <p className="muted small">Compose a rich embed and post it to any channel.</p>
-              <AnnouncementBuilder guildId={id} channels={channels} />
+              <h2>Send an embed</h2>
+              <p className="muted small">Compose a rich embed, with headers, fields, and formatting, and post it to any channel.</p>
+              <EmbedBuilder guildId={id} channels={channels} />
             </div>
           )}
         </div>

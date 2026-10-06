@@ -134,7 +134,7 @@ export const api = {
     request(`/api/guilds/${id}/discord-relay/${mappingId}/test`, { method: "POST" }),
   getDiscordRelayConfig: () => request("/api/discord-relay/config"),
   setDiscordRelayToken: (token) => request("/api/discord-relay/config", { method: "POST", body: { token } }),
-  announce: (id, payload) => request(`/api/guilds/${id}/announce`, { method: "POST", body: payload }),
+  sendEmbed: (id, payload) => request(`/api/guilds/${id}/embed`, { method: "POST", body: payload }),
   dangerClearAllWarnings: (id) => request(`/api/guilds/${id}/danger/clear-all-warnings`, { method: "POST" }),
   dangerResetAllXp: (id) => request(`/api/guilds/${id}/danger/reset-all-xp`, { method: "POST" }),
   dangerWipeReactionRoles: (id) => request(`/api/guilds/${id}/danger/wipe-reaction-roles`, { method: "POST" }),
