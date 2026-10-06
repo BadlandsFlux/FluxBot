@@ -2,22 +2,7 @@ function fmtTimestamp() {
   return new Date().toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-// Staff-entered text ending up as a literal href/src is exactly the shape
-// CodeQL's "DOM text reinterpreted as HTML" check looks for: a javascript:
-// URL here would run in this authenticated dashboard session the moment
-// another staff member views the preview or clicks the linked title, no
-// server round-trip needed. Only ever hand the DOM a value we've confirmed
-// is an actual http(s) URL, never the raw field.
-function safeUrl(raw) {
-  const trimmed = (raw || "").trim();
-  if (!trimmed) return "";
-  try {
-    const parsed = new URL(trimmed);
-    return parsed.protocol === "http:" || parsed.protocol === "https:" ? trimmed : "";
-  } catch {
-    return "";
-  }
-}
+const HTTP_URL_RE = /^https?:\/\//i;
 
 export default function EmbedPreview({
   title, description, color, url, imageUrl, thumbnailUrl, footer,
@@ -37,12 +22,29 @@ export default function EmbedPreview({
 
   const footerLine = [footer?.trim(), timestamp ? fmtTimestamp() : ""].filter(Boolean).join(" • ");
 
+  // Staff-entered text ending up as a literal href/src is exactly the shape
+  // CodeQL's "DOM text reinterpreted as HTML" check looks for: a javascript:
+  // URL here would run in this authenticated dashboard session the moment
+  // another staff member views the preview or clicks the linked title, no
+  // server round-trip needed. Each guard below tests the exact value it
+  // then hands to the sink, in this same scope, rather than through a
+  // helper function, so it's actually recognized as a sanitizing check
+  // rather than dead weight the taint tracker sees straight through.
+  const trimmedImageUrl = (imageUrl || "").trim();
+  const safeImageUrl = HTTP_URL_RE.test(trimmedImageUrl) ? trimmedImageUrl : "";
+  const trimmedThumbnailUrl = (thumbnailUrl || "").trim();
+  const safeThumbnailUrl = HTTP_URL_RE.test(trimmedThumbnailUrl) ? trimmedThumbnailUrl : "";
+  const trimmedAuthorIconUrl = (authorIconUrl || "").trim();
+  const safeAuthorIconUrl = HTTP_URL_RE.test(trimmedAuthorIconUrl) ? trimmedAuthorIconUrl : "";
+  const trimmedTitleUrl = (url || "").trim();
+  const safeTitleUrl = HTTP_URL_RE.test(trimmedTitleUrl) ? trimmedTitleUrl : "";
+
   return (
     <div className="embed-preview">
       <div className="embed-preview-card" style={{ borderLeftColor: color || "#5865f2" }}>
-        {safeUrl(thumbnailUrl) && (
+        {safeThumbnailUrl && (
           <img
-            src={safeUrl(thumbnailUrl)}
+            src={safeThumbnailUrl}
             alt=""
             className="embed-preview-thumbnail"
             onError={(e) => { e.target.style.display = "none"; }}
@@ -50,9 +52,9 @@ export default function EmbedPreview({
         )}
         {authorName?.trim() && (
           <div className="embed-preview-author">
-            {safeUrl(authorIconUrl) && (
+            {safeAuthorIconUrl && (
               <img
-                src={safeUrl(authorIconUrl)}
+                src={safeAuthorIconUrl}
                 alt=""
                 className="embed-preview-author-icon"
                 onError={(e) => { e.target.style.display = "none"; }}
@@ -63,7 +65,7 @@ export default function EmbedPreview({
         )}
         {title?.trim() && (
           <div className="embed-preview-title">
-            {safeUrl(url) ? <a href={safeUrl(url)} target="_blank" rel="noreferrer">{title}</a> : title}
+            {safeTitleUrl ? <a href={safeTitleUrl} target="_blank" rel="noreferrer">{title}</a> : title}
           </div>
         )}
         {description?.trim() && <div className="embed-preview-description">{description}</div>}
@@ -77,9 +79,9 @@ export default function EmbedPreview({
             ))}
           </div>
         )}
-        {safeUrl(imageUrl) && (
+        {safeImageUrl && (
           <img
-            src={safeUrl(imageUrl)}
+            src={safeImageUrl}
             alt=""
             className="embed-preview-image"
             onError={(e) => { e.target.style.display = "none"; }}
