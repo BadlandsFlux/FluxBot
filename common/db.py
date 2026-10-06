@@ -531,10 +531,17 @@ async def record_message(guild_id: str, user_id: str) -> None:
         """,
         guild_id, user_id,
     )
+    # `now() AT TIME ZONE 'UTC'` pins this to UTC regardless of the
+    # connection's session `TimeZone` setting, bare `EXTRACT(... FROM now())`
+    # would silently extract in whatever timezone Postgres happens to be
+    # configured with, which the dashboard's heatmap display isn't in a
+    # position to know or correct for after the fact (see HeatmapGrid.jsx,
+    # which re-buckets these UTC values into the viewer's own local time).
     await pool().execute(
         """
         INSERT INTO activity_heatmap (guild_id, day_of_week, hour, message_count)
-        VALUES ($1, EXTRACT(DOW FROM now())::smallint, EXTRACT(HOUR FROM now())::smallint, 1)
+        VALUES ($1, EXTRACT(DOW FROM now() AT TIME ZONE 'UTC')::smallint,
+                    EXTRACT(HOUR FROM now() AT TIME ZONE 'UTC')::smallint, 1)
         ON CONFLICT (guild_id, day_of_week, hour) DO UPDATE SET message_count = activity_heatmap.message_count + 1
         """,
         guild_id,
