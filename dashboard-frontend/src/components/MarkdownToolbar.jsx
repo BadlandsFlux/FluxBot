@@ -11,7 +11,7 @@ function wrapSelection(textarea, value, onChange, before, after, placeholder) {
   onChange(next);
   const selStart = start + before.length;
   requestAnimationFrame(() => {
-    textarea.focus();
+    textarea.focus({ preventScroll: true });
     textarea.setSelectionRange(selStart, selStart + selected.length);
   });
 }
@@ -36,7 +36,7 @@ function prefixLines(textarea, value, onChange, prefix) {
   onChange(next);
   const cursorPos = lineStart + prefixed.length;
   requestAnimationFrame(() => {
-    textarea.focus();
+    textarea.focus({ preventScroll: true });
     textarea.setSelectionRange(cursorPos, cursorPos);
   });
 }
@@ -91,7 +91,7 @@ export function handleListContinue(e, value, onChange) {
     const next = value.slice(0, lineStart) + value.slice(pos);
     onChange(next);
     requestAnimationFrame(() => {
-      textarea.focus();
+      textarea.focus({ preventScroll: true });
       textarea.setSelectionRange(lineStart, lineStart);
     });
     return;
@@ -101,7 +101,7 @@ export function handleListContinue(e, value, onChange) {
   onChange(next);
   const newPos = pos + insertion.length;
   requestAnimationFrame(() => {
-    textarea.focus();
+    textarea.focus({ preventScroll: true });
     textarea.setSelectionRange(newPos, newPos);
   });
 }

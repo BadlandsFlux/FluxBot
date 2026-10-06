@@ -41,7 +41,7 @@ function FieldRow({ field, onChange, onRemove }) {
         onChange={(e) => onChange({ ...field, value: e.target.value })}
         onKeyDown={(e) => handleListContinue(e, field.value, (v) => onChange({ ...field, value: v }))}
         placeholder="Field value"
-        rows={2}
+        rows={4}
         maxLength={1024}
       />
     </div>
@@ -167,7 +167,7 @@ export default function EmbedBuilder({ guildId, channels }) {
           onChange={(e) => setDescription(e.target.value)}
           onKeyDown={(e) => handleListContinue(e, description, setDescription)}
           placeholder="Write the embed here..."
-          rows={4}
+          rows={8}
           maxLength={4096}
         />
       </label>
