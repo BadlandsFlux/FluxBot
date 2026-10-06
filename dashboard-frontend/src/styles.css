@@ -386,12 +386,15 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
   padding: 14px 16px;
   background: var(--bg-elevated);
 }
+.rr-message-card-editing { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .rr-message-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .rr-message-channel { font-weight: 700; font-size: 14px; }
+.rr-message-actions { display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
 .rr-message-entries { display: flex; flex-direction: column; gap: 6px; }
 .rr-message-entry { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .rr-entry-emoji { font-size: 16px; }
 .rr-entry-label { font-weight: 600; }
+.rr-submit-row { display: flex; align-items: center; gap: 10px; }
 
 /* ------------------------------------------------------------- search box */
 .search-box {

@@ -68,6 +68,10 @@ export const api = {
   addAutorole: (id, role_id) => request(`/api/guilds/${id}/autoroles`, { method: "POST", body: { role_id } }),
   removeAutorole: (id, roleId) => request(`/api/guilds/${id}/autoroles/${roleId}`, { method: "DELETE" }),
   createReactionRole: (id, payload) => request(`/api/guilds/${id}/reactionroles`, { method: "POST", body: payload }),
+  editReactionRoleMessage: (id, messageId, payload) =>
+    request(`/api/guilds/${id}/reactionroles/message/${messageId}`, { method: "PATCH", body: payload }),
+  resendReactionRoleMessage: (id, messageId) =>
+    request(`/api/guilds/${id}/reactionroles/message/${messageId}/resend`, { method: "POST" }),
   removeReactionRole: (id, mappingId) =>
     request(`/api/guilds/${id}/reactionroles/${mappingId}`, { method: "DELETE" }),
   removeReactionRoleMessage: (id, messageId) =>

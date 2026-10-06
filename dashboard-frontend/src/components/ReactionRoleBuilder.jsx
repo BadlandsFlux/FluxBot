@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "./Flash";
@@ -7,53 +7,77 @@ import Combobox from "./Combobox";
 import EmojiPicker from "./EmojiPicker";
 import EmbedPreview from "./EmbedPreview";
 
-export default function ReactionRoleBuilder({ guildId, roles, channels, onCreated }) {
+const BLANK_ROW = { emoji: "", label: "", role_id: "" };
+
+function emptyState() {
+  return { channelId: "", title: "Pick your roles", description: "", color: "#5865f2", rows: [{ ...BLANK_ROW }] };
+}
+
+// `editing` (null in create mode) is the message group being edited, as
+// ReactionRolesTab builds it: { message_id, channel_id, title,
+// description, color, entries: [{emoji, label, role_id}] }.
+export default function ReactionRoleBuilder({ guildId, roles, channels, onCreated, editing, onCancelEdit }) {
   const flash = useFlash();
   const [channelId, setChannelId] = useState("");
   const [title, setTitle] = useState("Pick your roles");
   const [description, setDescription] = useState("");
   const [color, setColor] = useState("#5865f2");
-  const [rows, setRows] = useState([{ emoji: "", label: "", role_id: "" }]);
+  const [rows, setRows] = useState([{ ...BLANK_ROW }]);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (editing) {
+      setChannelId(editing.channel_id);
+      setTitle(editing.title || "Pick your roles");
+      setDescription(editing.description || "");
+      setColor(editing.color ? `#${editing.color.toString(16).padStart(6, "0")}` : "#5865f2");
+      setRows(
+        editing.entries.length
+          ? editing.entries.map((e) => ({ emoji: e.emoji, label: e.label, role_id: e.role_id }))
+          : [{ ...BLANK_ROW }]
+      );
+    } else {
+      const blank = emptyState();
+      setChannelId(blank.channelId);
+      setTitle(blank.title);
+      setDescription(blank.description);
+      setColor(blank.color);
+      setRows(blank.rows);
+    }
+  }, [editing]);
 
   function updateRow(index, field, value) {
     setRows((prev) => prev.map((r, i) => (i === index ? { ...r, [field]: value } : r)));
   }
 
   function addRow() {
-    setRows((prev) => [...prev, { emoji: "", label: "", role_id: "" }]);
+    setRows((prev) => [...prev, { ...BLANK_ROW }]);
   }
 
   function removeRow(index) {
     setRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
   }
 
-  const roleNameById = Object.fromEntries(roles.map((r) => [r.id, r.name]));
+  const channelNameById = Object.fromEntries(channels.map((c) => [c.id, c.name]));
   const previewLines = rows
     .filter((r) => r.emoji && r.role_id)
-    .map((r) => {
-      const roleName = roleNameById[r.role_id] || r.role_id;
-      return r.label ? `${r.emoji} **${r.label}**, @${roleName}` : `${r.emoji}, @${roleName}`;
-    });
+    .map((r) => (r.label ? `${r.emoji} **${r.label}**` : r.emoji));
   const previewDescription = [description, previewLines.join("\n")].filter(Boolean).join("\n\n");
 
   async function handleSubmit(e) {
     e.preventDefault();
     const pairs = rows.filter((r) => r.emoji && r.role_id);
-    if (!channelId || pairs.length === 0) {
+    if ((!editing && !channelId) || pairs.length === 0) {
       flash("Pick a channel and at least one emoji + role pair.", "error");
       return;
     }
     setSubmitting(true);
     try {
-      const result = await api.createReactionRole(guildId, {
-        channel_id: channelId,
-        title,
-        description,
-        color: color.replace("#", ""),
-        pairs,
-      });
-      flash(`Sent the reaction-role embed with ${pairs.length} role(s).`);
+      const payload = { channel_id: channelId, title, description, color: color.replace("#", ""), pairs };
+      const result = editing
+        ? await api.editReactionRoleMessage(guildId, editing.message_id, payload)
+        : await api.createReactionRole(guildId, payload);
+      flash(editing ? "Updated the reaction-role embed." : `Sent the reaction-role embed with ${pairs.length} role(s).`);
       if (result.failed_reactions?.length) {
         flash(
           `Heads up: couldn't auto-react with ${result.failed_reactions.join(" ")}. The mapping is saved, ` +
@@ -61,12 +85,17 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
           "error"
         );
       }
-      setChannelId("");
-      setTitle("Pick your roles");
-      setDescription("");
-      setColor("#5865f2");
-      setRows([{ emoji: "", label: "", role_id: "" }]);
       onCreated(result.reaction_roles);
+      if (editing) {
+        onCancelEdit();
+      } else {
+        const blank = emptyState();
+        setChannelId(blank.channelId);
+        setTitle(blank.title);
+        setDescription(blank.description);
+        setColor(blank.color);
+        setRows(blank.rows);
+      }
     } catch (err) {
       flash(err.message, "error");
     } finally {
@@ -78,7 +107,14 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
     <form onSubmit={handleSubmit} className="settings-form">
       <label>
         Channel
-        <Combobox options={channels} value={channelId} onChange={setChannelId} placeholder="Pick a channel" />
+        {editing ? (
+          <p className="muted small" style={{ marginTop: 6 }}>
+            #{channelNameById[editing.channel_id] || editing.channel_id} (editing can't move channels, use Resend
+            for that)
+          </p>
+        ) : (
+          <Combobox options={channels} value={channelId} onChange={setChannelId} placeholder="Pick a channel" />
+        )}
       </label>
       <div className="form-row form-row-title-color">
         <label>
@@ -134,10 +170,17 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
       </button>
       <EmbedPreview title={title} description={previewDescription} color={color} />
       <div className="form-spacer" />
-      <button className="btn btn-primary" type="submit" disabled={submitting}>
-        {submitting ? <Spinner size={14} /> : null}
-        {submitting ? "Sending…" : "Send embed & start listening"}
-      </button>
+      <div className="rr-submit-row">
+        <button className="btn btn-primary" type="submit" disabled={submitting}>
+          {submitting ? <Spinner size={14} /> : null}
+          {submitting ? "Saving…" : editing ? "Save changes" : "Send embed & start listening"}
+        </button>
+        {editing && (
+          <button type="button" className="btn btn-ghost" onClick={onCancelEdit} disabled={submitting}>
+            Cancel
+          </button>
+        )}
+      </div>
     </form>
   );
 }

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users,
-  Tag as TagIcon, TrendingUp, LayoutTemplate, Search, FileClock, ArrowLeftRight, Flag,
+  Tag as TagIcon, TrendingUp, LayoutTemplate, Search, FileClock, ArrowLeftRight, Flag, Pencil, RefreshCw,
 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "../components/Flash";
@@ -843,6 +843,9 @@ function AutorolesTab({ guildId, autoroles, roles, onChange }) {
 function ReactionRolesTab({ guildId, reactionRoles, roles, channels, onChange }) {
   const flash = useFlash();
   const [deletingId, setDeletingId] = useState(null);
+  const [resendingId, setResendingId] = useState(null);
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const builderRef = useRef(null);
   const roleNameById = Object.fromEntries(roles.map((r) => [r.id, r.name]));
   const channelNameById = Object.fromEntries(channels.map((c) => [c.id, c.name]));
 
@@ -850,11 +853,27 @@ function ReactionRolesTab({ guildId, reactionRoles, roles, channels, onChange })
   const byMessage = new Map();
   for (const rr of reactionRoles) {
     if (!byMessage.has(rr.message_id)) {
-      const group = { message_id: rr.message_id, channel_id: rr.channel_id, entries: [] };
+      const group = {
+        message_id: rr.message_id, channel_id: rr.channel_id,
+        title: rr.title, description: rr.description, color: rr.color, entries: [],
+      };
       byMessage.set(rr.message_id, group);
       messages.push(group);
     }
     byMessage.get(rr.message_id).entries.push(rr);
+  }
+  const editing = editingMessageId ? messages.find((m) => m.message_id === editingMessageId) || null : null;
+
+  useEffect(() => {
+    // Lost the message we were editing (e.g. a resend from elsewhere, or
+    // it got deleted out from under us): drop back to create mode instead
+    // of leaving a stale edit open on data that no longer exists.
+    if (editingMessageId && !editing) setEditingMessageId(null);
+  }, [editingMessageId, editing]);
+
+  function startEdit(messageId) {
+    setEditingMessageId(messageId);
+    builderRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function handleDeleteMessage(messageId) {
@@ -862,6 +881,7 @@ function ReactionRolesTab({ guildId, reactionRoles, roles, channels, onChange })
     try {
       const result = await api.removeReactionRoleMessage(guildId, messageId);
       onChange(result.reaction_roles);
+      if (editingMessageId === messageId) setEditingMessageId(null);
       flash("Deleted that reaction-role message and all its mappings.");
     } catch (err) {
       flash(err.message, "error");
@@ -870,22 +890,45 @@ function ReactionRolesTab({ guildId, reactionRoles, roles, channels, onChange })
     }
   }
 
+  async function handleResend(messageId) {
+    setResendingId(messageId);
+    try {
+      const result = await api.resendReactionRoleMessage(guildId, messageId);
+      onChange(result.reaction_roles);
+      if (editingMessageId === messageId) setEditingMessageId(null);
+      flash("Resent as a new message, the old one (if it still existed) was cleaned up.");
+      if (result.failed_reactions?.length) {
+        flash(
+          `Heads up: couldn't auto-react with ${result.failed_reactions.join(" ")} on the resend. The mapping ` +
+            "is saved, you may need to react manually with those.",
+          "error"
+        );
+      }
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setResendingId(null);
+    }
+  }
+
   return (
     <>
-      <div className="card">
-        <h2>Send a reaction-role embed</h2>
+      <div className="card" ref={builderRef}>
+        <h2>{editing ? "Edit reaction-role embed" : "Send a reaction-role embed"}</h2>
         <p className="muted small">
           Posts an embed in the channel you choose. Members react with one of the emojis below to get
           the matching role (and lose it if they remove their reaction).
         </p>
-        <ReactionRoleBuilder guildId={guildId} roles={roles} channels={channels} onCreated={onChange} />
+        <ReactionRoleBuilder guildId={guildId} roles={roles} channels={channels} onCreated={onChange}
+                             editing={editing} onCancelEdit={() => setEditingMessageId(null)} />
       </div>
       <div className="card">
         <h2>Existing reaction-role messages</h2>
         {messages.length ? (
           <div className="rr-message-list">
             {messages.map((group) => (
-              <div className="rr-message-card" key={group.message_id}>
+              <div className={`rr-message-card ${group.message_id === editingMessageId ? "rr-message-card-editing" : ""}`}
+                   key={group.message_id}>
                 <div className="rr-message-head">
                   <div>
                     <div className="rr-message-channel">
@@ -895,14 +938,32 @@ function ReactionRolesTab({ guildId, reactionRoles, roles, channels, onChange })
                       Message <code>{group.message_id}</code>
                     </div>
                   </div>
-                  <button
-                    className="btn btn-ghost btn-small"
-                    onClick={() => handleDeleteMessage(group.message_id)}
-                    disabled={deletingId === group.message_id}
-                  >
-                    {deletingId === group.message_id ? <Spinner size={12} /> : <Trash2 size={13} />}
-                    Delete
-                  </button>
+                  <div className="rr-message-actions">
+                    <button
+                      className="btn btn-ghost btn-small"
+                      onClick={() => startEdit(group.message_id)}
+                      disabled={deletingId === group.message_id || resendingId === group.message_id}
+                    >
+                      <Pencil size={13} /> Edit
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      onClick={() => handleResend(group.message_id)}
+                      disabled={resendingId === group.message_id || deletingId === group.message_id}
+                      title="Post this as a new message (useful if the original was deleted)"
+                    >
+                      {resendingId === group.message_id ? <Spinner size={12} /> : <RefreshCw size={13} />}
+                      Resend
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      onClick={() => handleDeleteMessage(group.message_id)}
+                      disabled={deletingId === group.message_id || resendingId === group.message_id}
+                    >
+                      {deletingId === group.message_id ? <Spinner size={12} /> : <Trash2 size={13} />}
+                      Delete
+                    </button>
+                  </div>
                 </div>
                 <div className="rr-message-entries">
                   {group.entries.map((rr) => (
