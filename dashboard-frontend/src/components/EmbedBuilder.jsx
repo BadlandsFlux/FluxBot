@@ -4,7 +4,7 @@ import { api } from "../api";
 import { useFlash } from "./Flash";
 import Spinner from "./Spinner";
 import Combobox from "./Combobox";
-import MarkdownToolbar from "./MarkdownToolbar";
+import MarkdownToolbar, { handleListContinue } from "./MarkdownToolbar";
 import EmbedPreview from "./EmbedPreview";
 
 const MAX_FIELDS = 25;
@@ -39,6 +39,7 @@ function FieldRow({ field, onChange, onRemove }) {
         ref={valueRef}
         value={field.value}
         onChange={(e) => onChange({ ...field, value: e.target.value })}
+        onKeyDown={(e) => handleListContinue(e, field.value, (v) => onChange({ ...field, value: v }))}
         placeholder="Field value"
         rows={2}
         maxLength={1024}
@@ -164,6 +165,7 @@ export default function EmbedBuilder({ guildId, channels }) {
           ref={descRef}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
+          onKeyDown={(e) => handleListContinue(e, description, setDescription)}
           placeholder="Write the embed here..."
           rows={4}
           maxLength={4096}

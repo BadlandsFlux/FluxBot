@@ -959,6 +959,34 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
 .embed-preview-field-inline { flex: 1 1 30%; min-width: 120px; }
 .embed-preview-field-name { font-weight: 700; font-size: 12px; color: var(--text); margin-bottom: 2px; }
 .embed-preview-field-value { font-size: 12px; color: var(--text); white-space: pre-wrap; line-height: 1.4; }
+/* ---------------------------------------------------- embed preview markdown */
+.embed-md-h1 { font-size: 1.25em; font-weight: 700; margin: 6px 0 2px; }
+.embed-md-h2 { font-size: 1.1em; font-weight: 700; margin: 5px 0 2px; }
+.embed-md-h3 { font-size: 1em; font-weight: 700; margin: 4px 0 2px; }
+.embed-md-quote {
+  border-left: 3px solid var(--border);
+  padding-left: 8px;
+  margin: 2px 0;
+  color: var(--muted);
+}
+.embed-md-li { padding-left: 4px; }
+.embed-md-blank { height: 0.8em; }
+.embed-md-spoiler {
+  background: var(--text);
+  color: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.1s, background 0.1s;
+}
+.embed-md-spoiler:hover { background: var(--bg-elevated); color: inherit; }
+.embed-preview-description code,
+.embed-preview-field-value code {
+  background: var(--bg-elevated);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
 /* --------------------------------------------------------- markdown toolbar */
 .markdown-toolbar {
   display: flex;
