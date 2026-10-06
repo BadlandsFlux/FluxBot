@@ -371,6 +371,7 @@ def _reaction_role_to_json(row) -> dict:
     return {
         "id": row["id"], "channel_id": row["channel_id"], "message_id": row["message_id"],
         "emoji": row["emoji"], "role_id": row["role_id"], "label": row["label"],
+        "title": row["title"], "description": row["description"], "color": row["color"],
     }
 
 
@@ -892,17 +893,27 @@ def _parse_embed_color(color: str) -> int:
         return 0x5865F2
 
 
-@app.post("/api/guilds/{guild_id}/reactionroles")
-async def api_create_reaction_role(request: Request, guild_id: str, payload: ReactionRoleCreatePayload):
-    await _require_manage(request, guild_id)
-    channel_id = payload.channel_id.strip()
-    pairs = [
-        (p.emoji.strip(), p.label.strip(), p.role_id.strip())
-        for p in payload.pairs if p.emoji.strip() and p.role_id.strip()
-    ]
-    if not channel_id.isdigit() or not pairs:
-        raise _ApiError(400, "Give a channel ID and at least one emoji + role pair.")
+def _reaction_role_line(emoji: str, label: str) -> str:
+    # No role mention here on purpose: it used to be `f"{emoji}, <@&{role}>"`,
+    # spelling out exactly which role each reaction grants in a public
+    # channel. The label (when staff bother to set one) already says what a
+    # reaction is for in plainer, friendlier terms than the raw role name;
+    # the role itself is only ever meant to be visible as a mapping here on
+    # the dashboard, not advertised in the message members react to.
+    return f"{emoji} **{label}**" if label else emoji
 
+
+def _build_reaction_role_embed(title: str, description: str, color: int,
+                                pairs: list[tuple[str, str, str]]) -> dict:
+    lines = "\n".join(_reaction_role_line(emoji, label) for emoji, label, _ in pairs)
+    return {
+        "title": title or "Pick your roles",
+        "description": (description + "\n\n" if description else "") + lines,
+        "color": color,
+    }
+
+
+async def _check_no_privileged_roles(guild_id: str, pairs: list[tuple[str, str, str]]) -> None:
     try:
         guild = await bot_rest.get_guild(guild_id)
     except FluxerAPIError as e:
@@ -912,15 +923,26 @@ async def api_create_reaction_role(request: Request, guild_id: str, payload: Rea
         raise _ApiError(400, "One or more of those roles carry moderation/admin permissions, reaction roles "
                               "can't hand them out to anyone who clicks. Assign them manually instead.")
 
-    def _line(emoji: str, label: str, role: str) -> str:
-        return f"{emoji} **{label}**, <@&{role}>" if label else f"{emoji}, <@&{role}>"
 
-    lines = "\n".join(_line(emoji, label, role) for emoji, label, role in pairs)
-    embed = {
-        "title": payload.title or "Pick your roles",
-        "description": (payload.description + "\n\n" if payload.description else "") + lines,
-        "color": _parse_embed_color(payload.color),
-    }
+def _clean_pairs(raw_pairs: list[ReactionRolePair]) -> list[tuple[str, str, str]]:
+    return [
+        (p.emoji.strip(), p.label.strip(), p.role_id.strip())
+        for p in raw_pairs if p.emoji.strip() and p.role_id.strip()
+    ]
+
+
+@app.post("/api/guilds/{guild_id}/reactionroles")
+async def api_create_reaction_role(request: Request, guild_id: str, payload: ReactionRoleCreatePayload):
+    await _require_manage(request, guild_id)
+    channel_id = payload.channel_id.strip()
+    pairs = _clean_pairs(payload.pairs)
+    if not channel_id.isdigit() or not pairs:
+        raise _ApiError(400, "Give a channel ID and at least one emoji + role pair.")
+    await _check_no_privileged_roles(guild_id, pairs)
+
+    title = payload.title or "Pick your roles"
+    color_int = _parse_embed_color(payload.color)
+    embed = _build_reaction_role_embed(title, payload.description, color_int, pairs)
 
     failed_reactions: list[str] = []
     try:
@@ -935,10 +957,102 @@ async def api_create_reaction_role(request: Request, guild_id: str, payload: Rea
                 # reactions added manually will still grant the role. We
                 # surface this back to the dashboard instead of hiding it.
                 failed_reactions.append(emoji)
-            await db.add_reaction_role(guild_id, channel_id, message_id, emoji, role_id, label)
+            await db.add_reaction_role(guild_id, channel_id, message_id, emoji, role_id, label,
+                                        title=title, description=payload.description, color=color_int)
     except FluxerAPIError as e:
         log.warning("Failed to send reaction-role embed: %s", e)
         raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}), check the bot can post in that channel.")
+
+    return {
+        "reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)],
+        "failed_reactions": failed_reactions,
+    }
+
+
+@app.patch("/api/guilds/{guild_id}/reactionroles/message/{message_id}")
+async def api_edit_reaction_role_message(request: Request, guild_id: str, message_id: str,
+                                          payload: ReactionRoleCreatePayload):
+    """Edits an existing reaction-role message in place: the embed text
+    (title/description/color) and which emoji/role/label pairs it has.
+    The channel can't change here, that's what resend is for (posting a
+    fresh message, possibly worth picking a new channel for, rather than
+    editing one in place)."""
+    await _require_manage(request, guild_id)
+    existing = await db.get_reaction_roles_by_message(guild_id, message_id)
+    if not existing:
+        raise _ApiError(404, "That reaction-role message doesn't exist (anymore). Try resending it instead.")
+    channel_id = existing[0]["channel_id"]
+    pairs = _clean_pairs(payload.pairs)
+    if not pairs:
+        raise _ApiError(400, "Give at least one emoji + role pair.")
+    await _check_no_privileged_roles(guild_id, pairs)
+
+    title = payload.title or "Pick your roles"
+    color_int = _parse_embed_color(payload.color)
+    embed = _build_reaction_role_embed(title, payload.description, color_int, pairs)
+    try:
+        await bot_rest.edit_message(channel_id, message_id, embeds=[embed])
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}), the message may have been deleted, "
+                              f"try resending instead.")
+
+    old_emojis = {row["emoji"] for row in existing}
+    new_emojis = {emoji for emoji, _, _ in pairs}
+    failed_reactions: list[str] = []
+    for emoji in new_emojis - old_emojis:
+        try:
+            await bot_rest.add_reaction(channel_id, message_id, emoji)
+        except FluxerAPIError:
+            failed_reactions.append(emoji)
+    for emoji in old_emojis - new_emojis:
+        try:
+            await bot_rest.remove_own_reaction(channel_id, message_id, emoji)
+        except FluxerAPIError:
+            pass  # best-effort tidy-up, removing the mapping below is what actually matters
+        await db.remove_reaction_role_by_emoji(guild_id, message_id, emoji)
+    for emoji, label, role_id in pairs:
+        await db.add_reaction_role(guild_id, channel_id, message_id, emoji, role_id, label,
+                                    title=title, description=payload.description, color=color_int)
+
+    return {
+        "reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)],
+        "failed_reactions": failed_reactions,
+    }
+
+
+@app.post("/api/guilds/{guild_id}/reactionroles/message/{message_id}/resend")
+async def api_resend_reaction_role_message(request: Request, guild_id: str, message_id: str):
+    """Posts a brand new message with the same embed and emoji/role/label
+    mappings as an existing one, then moves those mappings over to it.
+    Mainly for when the original message was deleted (accidentally, or a
+    channel purge) and reacting to it is no longer possible at all, but
+    works equally well as "I just want a clean repost"."""
+    await _require_manage(request, guild_id)
+    rows = await db.get_reaction_roles_by_message(guild_id, message_id)
+    if not rows:
+        raise _ApiError(404, "That reaction-role message doesn't exist (anymore).")
+    channel_id = rows[0]["channel_id"]
+    pairs = [(r["emoji"], r["label"], r["role_id"]) for r in rows]
+    embed = _build_reaction_role_embed(rows[0]["title"], rows[0]["description"], rows[0]["color"], pairs)
+
+    try:
+        sent = await bot_rest.send_message(channel_id, embeds=[embed])
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}), check the bot can post in that channel.")
+    new_message_id = str(sent["id"])
+
+    failed_reactions: list[str] = []
+    for r in rows:
+        try:
+            await bot_rest.add_reaction(channel_id, new_message_id, r["emoji"])
+        except FluxerAPIError:
+            failed_reactions.append(r["emoji"])
+
+    await db.repoint_reaction_role_message(guild_id, message_id, new_message_id, channel_id)
+    try:
+        await bot_rest.delete_message(channel_id, message_id, reason="Reaction-role setup resent via dashboard")
+    except FluxerAPIError:
+        pass  # old message is usually already gone, which is why this got resent in the first place
 
     return {
         "reaction_roles": [_reaction_role_to_json(r) for r in await db.list_reaction_roles(guild_id)],

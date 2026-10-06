@@ -170,12 +170,18 @@ Sends a real embed message to the target channel (as the bot), reacts to it with
   "pairs": [ { "emoji": "🎉", "label": "VIP", "role_id": "666" }, { "emoji": "🎮", "label": "Gamer", "role_id": "777" } ]
 }
 ```
-`color` is hex, `#` optional, defaults to `5865F2`. `pairs[].label` is optional. **Errors:** 400 if `channel_id` isn't numeric, no valid pairs given, or any paired role carries moderation/admin permissions; 502 if the bot couldn't send the message at all.
+`color` is hex, `#` optional, defaults to `5865F2`. `pairs[].label` is optional. The embed never includes the role itself (no `<@&role_id>` mention), only the emoji and, if given, the label, the role is purely an internal mapping. **Errors:** 400 if `channel_id` isn't numeric, no valid pairs given, or any paired role carries moderation/admin permissions; 502 if the bot couldn't send the message at all.
 
 ```json
 { "reaction_roles": [ "full updated array" ], "failed_reactions": ["🎮"] }
 ```
-`failed_reactions` lists any emoji that failed to auto-react (mapping is still saved; needs a manual reaction).
+`failed_reactions` lists any emoji that failed to auto-react (mapping is still saved; needs a manual reaction). Each entry in `reaction_roles` also carries that message's `title`/`description`/`color` (duplicated onto every row for the same `message_id`), not just the one emoji/role/label it represents.
+
+### `PATCH /api/guilds/{guild_id}/reactionroles/message/{message_id}`
+Edits an existing message in place: same body shape as create (`channel_id` is accepted but ignored, the channel can't change here). Edits the live embed via Fluxer's message-edit endpoint, reconciles reactions (adds new emoji, removes the bot's own reaction for any dropped), and updates the stored mappings and embed text to match. **Errors:** 404 if that message has no mappings (anymore); 400 same as create; 502 if Fluxer rejects the edit (the message may have been deleted, try resend instead). → same shape as create.
+
+### `POST /api/guilds/{guild_id}/reactionroles/message/{message_id}/resend`
+Posts a brand new message with the same embed and mappings an existing one has, re-reacts to it, then moves the mappings over to the new message id (and best-effort deletes the old message). No body. Mainly for when the original message was deleted and reacting to it is no longer possible at all. **Errors:** 404 if that message has no mappings (anymore); 502 if the bot couldn't post the new message. → same shape as create.
 
 ### `DELETE /api/guilds/{guild_id}/reactionroles/{mapping_id}`
 Removes one emoji/role mapping, not the message or its other mappings. Kept for API completeness; the UI uses the message-level delete below instead. → `{ "reaction_roles": [ "updated array" ] }`
@@ -520,6 +526,8 @@ If `dashboard-frontend/dist` doesn't exist (frontend never built), `GET /` retur
 | POST | `/api/guilds/{id}/autoroles` | manage |
 | DELETE | `/api/guilds/{id}/autoroles/{role_id}` | manage |
 | POST | `/api/guilds/{id}/reactionroles` | manage |
+| PATCH | `/api/guilds/{id}/reactionroles/message/{message_id}` | manage |
+| POST | `/api/guilds/{id}/reactionroles/message/{message_id}/resend` | manage |
 | DELETE | `/api/guilds/{id}/reactionroles/{mapping_id}` | manage |
 | DELETE | `/api/guilds/{id}/reactionroles/message/{message_id}` | manage |
 | POST | `/api/guilds/{id}/reports/channels` | manage |

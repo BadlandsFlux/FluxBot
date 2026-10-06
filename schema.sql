@@ -59,6 +59,18 @@ CREATE TABLE IF NOT EXISTS reaction_roles (
     emoji       TEXT NOT NULL,
     role_id     TEXT NOT NULL,
     label       TEXT NOT NULL DEFAULT '',
+    -- The embed's own title/description/color, at the time it was last
+    -- sent or edited. Duplicated onto every row for the same message_id
+    -- (same tradeoff as reports' tracker_channel_id/tracker_message_id, a
+    -- handful of rows per message makes a separate messages table more
+    -- machinery than the redundancy it'd save) rather than lost entirely:
+    -- without these, editing or resending a reaction-role message would
+    -- have nothing to reconstruct the embed from except the bare
+    -- emoji/role/label mappings, losing whatever title/description text
+    -- staff originally wrote.
+    title       TEXT NOT NULL DEFAULT 'Pick your roles',
+    description TEXT NOT NULL DEFAULT '',
+    color       INTEGER NOT NULL DEFAULT 5793266, -- 0x5865F2
     -- Scoped by guild_id, not just (message_id, emoji): a message id is
     -- unique per platform, not per guild the bot manages, so an
     -- unscoped constraint let a manager of ANY guild overwrite ANOTHER
@@ -169,6 +181,12 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS welcome_message TEXT NOT NULL DEFAUL
 
 -- Migration for databases created before reaction role labels existed.
 ALTER TABLE reaction_roles ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT '';
+
+-- Migration for databases created before a reaction-role message's own
+-- title/description/color were stored (needed to edit or resend one).
+ALTER TABLE reaction_roles ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT 'Pick your roles';
+ALTER TABLE reaction_roles ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+ALTER TABLE reaction_roles ADD COLUMN IF NOT EXISTS color INTEGER NOT NULL DEFAULT 5793266; -- 0x5865F2
 
 -- Migration for databases created before goodbye messages existed.
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS goodbye_channel_id TEXT;

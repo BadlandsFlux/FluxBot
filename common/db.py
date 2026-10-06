@@ -203,7 +203,8 @@ async def list_actions(guild_id: str, limit: int = 100, before_id: Optional[int]
 
 # -------------------------------------------------------- reaction roles --
 async def add_reaction_role(guild_id: str, channel_id: str, message_id: str, emoji: str, role_id: str,
-                             label: str = "") -> None:
+                             label: str = "", *, title: str = "Pick your roles", description: str = "",
+                             color: int = 0x5865F2) -> None:
     # Conflict target includes guild_id so this can only ever update a
     # mapping the caller's own guild already owns, never one belonging
     # to a different guild that happens to reuse the same message id +
@@ -211,11 +212,13 @@ async def add_reaction_role(guild_id: str, channel_id: str, message_id: str, emo
     # per-platform) — see the reaction_roles table comment in schema.sql.
     await pool().execute(
         """
-        INSERT INTO reaction_roles (guild_id, channel_id, message_id, emoji, role_id, label)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (guild_id, message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id, label = EXCLUDED.label
+        INSERT INTO reaction_roles (guild_id, channel_id, message_id, emoji, role_id, label, title, description, color)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (guild_id, message_id, emoji) DO UPDATE SET
+            role_id = EXCLUDED.role_id, label = EXCLUDED.label, title = EXCLUDED.title,
+            description = EXCLUDED.description, color = EXCLUDED.color
         """,
-        guild_id, channel_id, message_id, emoji, role_id, label,
+        guild_id, channel_id, message_id, emoji, role_id, label, title, description, color,
     )
 
 
@@ -241,11 +244,31 @@ async def remove_reaction_role(guild_id: str, row_id: int) -> None:
     await pool().execute("DELETE FROM reaction_roles WHERE guild_id=$1 AND id=$2", guild_id, row_id)
 
 
+async def remove_reaction_role_by_emoji(guild_id: str, message_id: str, emoji: str) -> None:
+    await pool().execute(
+        "DELETE FROM reaction_roles WHERE guild_id=$1 AND message_id=$2 AND emoji=$3",
+        guild_id, message_id, emoji,
+    )
+
+
 async def remove_reaction_roles_by_message(guild_id: str, message_id: str) -> int:
     result = await pool().execute(
         "DELETE FROM reaction_roles WHERE guild_id=$1 AND message_id=$2", guild_id, message_id,
     )
     return int(result.split()[-1])
+
+
+async def repoint_reaction_role_message(guild_id: str, old_message_id: str, new_message_id: str,
+                                         new_channel_id: str) -> None:
+    """After resending a reaction-role embed as a fresh message (the
+    original was deleted, or staff just wanted a clean repost), moves
+    every mapping for the old message over to the new one in place,
+    rather than deleting and recreating the rows, so each mapping's own
+    id (and anything that might reference it) stays stable."""
+    await pool().execute(
+        "UPDATE reaction_roles SET message_id=$3, channel_id=$4 WHERE guild_id=$1 AND message_id=$2",
+        guild_id, old_message_id, new_message_id, new_channel_id,
+    )
 
 
 async def wipe_all_reaction_roles(guild_id: str) -> int:
