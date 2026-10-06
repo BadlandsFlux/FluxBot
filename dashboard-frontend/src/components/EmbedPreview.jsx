@@ -4,6 +4,56 @@ function fmtTimestamp() {
 
 const HTTP_URL_RE = /^https?:\/\//i;
 
+// A small, good-enough approximation of the markdown subset the toolbar
+// writes (headers, bold/italic/underline/strike, spoiler, inline code,
+// bullet/numbered lists, quotes), so the preview actually looks like the
+// formatted embed Fluxer will render instead of showing raw "**text**".
+// Not a general-purpose markdown parser, just covers what this editor
+// produces, plus the handful of marks someone might type by hand.
+const INLINE_RE = /\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\|\|(.+?)\|\||\*(.+?)\*|_(.+?)_|`([^`]+?)`/;
+
+function parseInline(text) {
+  if (!text) return null;
+  const match = INLINE_RE.exec(text);
+  if (!match) return text;
+  const before = text.slice(0, match.index);
+  const after = text.slice(match.index + match[0].length);
+  let node;
+  if (match[1] !== undefined) node = <strong><em>{parseInline(match[1])}</em></strong>;
+  else if (match[2] !== undefined) node = <strong>{parseInline(match[2])}</strong>;
+  else if (match[3] !== undefined) node = <u>{parseInline(match[3])}</u>;
+  else if (match[4] !== undefined) node = <s>{parseInline(match[4])}</s>;
+  else if (match[5] !== undefined) node = <span className="embed-md-spoiler">{parseInline(match[5])}</span>;
+  else if (match[6] !== undefined) node = <em>{parseInline(match[6])}</em>;
+  else if (match[7] !== undefined) node = <em>{parseInline(match[7])}</em>;
+  else node = <code>{match[8]}</code>;
+  return (
+    <>
+      {before}
+      {node}
+      {parseInline(after)}
+    </>
+  );
+}
+
+function renderMarkdownLine(line, key) {
+  let m;
+  if ((m = /^### (.*)$/.exec(line))) return <div key={key} className="embed-md-h3">{parseInline(m[1])}</div>;
+  if ((m = /^## (.*)$/.exec(line))) return <div key={key} className="embed-md-h2">{parseInline(m[1])}</div>;
+  if ((m = /^# (.*)$/.exec(line))) return <div key={key} className="embed-md-h1">{parseInline(m[1])}</div>;
+  if ((m = /^>\s?(.*)$/.exec(line))) return <div key={key} className="embed-md-quote">{parseInline(m[1])}</div>;
+  if ((m = /^[-*]\s+(.*)$/.exec(line))) return <div key={key} className="embed-md-li">• {parseInline(m[1])}</div>;
+  if ((m = /^(\d+)\.\s+(.*)$/.exec(line))) {
+    return <div key={key} className="embed-md-li">{m[1]}. {parseInline(m[2])}</div>;
+  }
+  if (!line.trim()) return <div key={key} className="embed-md-blank">&nbsp;</div>;
+  return <div key={key}>{parseInline(line)}</div>;
+}
+
+function renderMarkdown(text) {
+  return (text || "").split("\n").map((line, i) => renderMarkdownLine(line, i));
+}
+
 export default function EmbedPreview({
   title, description, color, url, imageUrl, thumbnailUrl, footer,
   authorName, authorIconUrl, timestamp, fields = [],
@@ -68,13 +118,13 @@ export default function EmbedPreview({
             {safeTitleUrl ? <a href={safeTitleUrl} target="_blank" rel="noreferrer">{title}</a> : title}
           </div>
         )}
-        {description?.trim() && <div className="embed-preview-description">{description}</div>}
+        {description?.trim() && <div className="embed-preview-description">{renderMarkdown(description)}</div>}
         {fields.some((f) => f.name?.trim() || f.value?.trim()) && (
           <div className="embed-preview-fields">
             {fields.filter((f) => f.name?.trim() || f.value?.trim()).map((f, i) => (
               <div className={`embed-preview-field ${f.inline ? "embed-preview-field-inline" : ""}`} key={i}>
                 <div className="embed-preview-field-name">{f.name}</div>
-                <div className="embed-preview-field-value">{f.value}</div>
+                <div className="embed-preview-field-value">{renderMarkdown(f.value)}</div>
               </div>
             ))}
           </div>
