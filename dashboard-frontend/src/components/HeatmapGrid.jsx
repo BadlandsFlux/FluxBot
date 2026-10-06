@@ -1,7 +1,23 @@
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]; // index matches Postgres EXTRACT(DOW) and JS Date#getDay()
 
+// The backend always buckets in UTC (see common/db.py's record_message_activity),
+// so cells are re-keyed here to whichever (day, hour) bucket that UTC slot
+// falls into in the viewer's own local time, rather than labeling hours 0-23
+// as "UTC" and making everyone do the math themselves. Rounded to the
+// nearest whole hour: the data is only ever hour-granular to begin with, so
+// a half-hour-offset timezone (e.g. UTC+5:30) losing that last bit of
+// precision isn't a new limitation, just the existing one carried over.
+const LOCAL_OFFSET_HOURS = Math.round(-new Date().getTimezoneOffset() / 60);
+
+function toLocalBucket(day, hour) {
+  const total = day * 24 + hour + LOCAL_OFFSET_HOURS;
+  const localDay = (((Math.floor(total / 24)) % 7) + 7) % 7;
+  const localHour = ((total % 24) + 24) % 24;
+  return `${localDay}-${localHour}`;
+}
+
 export default function HeatmapGrid({ data }) {
-  const byKey = Object.fromEntries(data.map((d) => [`${d.day}-${d.hour}`, d.count]));
+  const byKey = Object.fromEntries(data.map((d) => [toLocalBucket(d.day, d.hour), d.count]));
   const max = Math.max(1, ...data.map((d) => d.count));
 
   return (

@@ -354,7 +354,7 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
       {stats && stats.heatmap.length > 0 && (
         <div className="card">
           <h2>When the server's actually busy</h2>
-          <p className="muted small">Message activity by hour and day, all-time, in UTC. Useful for picking event times.</p>
+          <p className="muted small">Message activity by hour and day, all-time, in your local time. Useful for picking event times.</p>
           <HeatmapGrid data={stats.heatmap} />
         </div>
       )}
