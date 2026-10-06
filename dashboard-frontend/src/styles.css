@@ -334,7 +334,19 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
   cursor: pointer;
 }
 
-.inline-form { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+/* align-items: center, not the flex default of stretch: a bare .inline-form
+   row can mix an <input>/Combobox with a native <select> (its height is
+   partly down to browser UA chrome, not just the padding/font-size CSS
+   matches here) and a <label> wrapping a checkbox (naturally shorter than
+   either). Stretch forces every item's box to match whichever one is
+   tallest, which for a <select> is often taller than its CSS alone implies,
+   so the select and the Add button next to it visibly grow past the input/
+   Combobox, while a shorter item like the attribution checkbox's label just
+   sits adrift in its own stretched, mostly-empty box. Centering each item at
+   its own natural height is a no-op when they already match (the common
+   case after the Combobox margin fix above) and the actual fix when they
+   don't, same reasoning as .rr-row's own align-items: center. */
+.inline-form { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .inline-form input,
 .inline-form select {
   flex: 1;
