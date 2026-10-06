@@ -438,13 +438,20 @@ Only includes the `fluxer`/`discord` key relevant to the mapping's direction. **
 
 ---
 
-## Announce
+## Embed
 
-### `POST /api/guilds/{guild_id}/announce`
+### `POST /api/guilds/{guild_id}/embed`
 ```json
-{ "channel_id": "888", "title": "Heads up", "description": "Server maintenance tonight.", "color": "5865F2", "image_url": "", "footer": "" }
+{
+  "channel_id": "888", "title": "Heads up", "url": "", "description": "Server maintenance tonight.",
+  "color": "5865F2", "image_url": "", "thumbnail_url": "", "footer": "",
+  "author_name": "", "author_icon_url": "", "author_url": "", "timestamp": false,
+  "fields": [{ "name": "Starts", "value": "10pm EST", "inline": true }]
+}
 ```
-**Errors:** 400 if `channel_id` isn't numeric or both `title`/`description` are empty; 502 if Fluxer rejects the message. Logs an `announce` mod action. → `{ "ok": true }`
+Every field beyond `channel_id` is optional. `fields` is capped at 25 entries (256 chars for `name`, 1024 for `value`), matching Discord/Fluxer's own embed limits. A field with only one of `name`/`value` filled in is a 400; one with both blank is silently dropped.
+
+**Errors:** 400 if `channel_id` isn't numeric, both `title`/`description` are empty, or a `fields` entry is invalid; 502 if Fluxer rejects the message. Logs a `send_embed` mod action. → `{ "ok": true }`
 
 ---
 
@@ -555,7 +562,7 @@ If `dashboard-frontend/dist` doesn't exist (frontend never built), `GET /` retur
 | GET | `/api/discord-relay/config` | owner |
 | POST | `/api/discord-relay/config` | owner |
 | GET | `/api/discord-relay/avatar-proxy` | none |
-| POST | `/api/guilds/{id}/announce` | manage |
+| POST | `/api/guilds/{id}/embed` | manage |
 | POST | `/api/guilds/{id}/danger/clear-all-warnings` | manage |
 | POST | `/api/guilds/{id}/danger/reset-all-xp` | manage |
 | POST | `/api/guilds/{id}/danger/wipe-reaction-roles` | manage |

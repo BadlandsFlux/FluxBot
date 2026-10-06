@@ -321,6 +321,7 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
 }
 .settings-form input:focus,
 .settings-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.settings-form input[type="checkbox"] { display: inline-block; width: auto; margin-top: 0; }
 .form-row { display: grid; gap: 12px; }
 .form-row-3 { grid-template-columns: 1fr 1fr 1fr; }
 .form-row-title-color { grid-template-columns: 1fr auto; align-items: end; }
@@ -929,6 +930,95 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
   object-fit: cover;
 }
 .embed-preview-footer { font-size: 11px; color: var(--muted); margin-top: 10px; }
+.embed-preview-thumbnail {
+  float: right;
+  width: 64px;
+  height: 64px;
+  border-radius: 4px;
+  object-fit: cover;
+  margin-left: 12px;
+}
+.embed-preview-author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.embed-preview-author-icon { width: 18px; height: 18px; border-radius: 50%; object-fit: cover; }
+.embed-preview-title a { color: var(--accent); text-decoration: underline; }
+.embed-preview-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.embed-preview-field { flex: 1 1 100%; }
+.embed-preview-field-inline { flex: 1 1 30%; min-width: 120px; }
+.embed-preview-field-name { font-weight: 700; font-size: 12px; color: var(--text); margin-bottom: 2px; }
+.embed-preview-field-value { font-size: 12px; color: var(--text); white-space: pre-wrap; line-height: 1.4; }
+/* --------------------------------------------------------- markdown toolbar */
+.markdown-toolbar {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.markdown-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--muted);
+  cursor: pointer;
+}
+.markdown-toolbar-btn:hover { background: var(--panel-hover); color: var(--text); }
+/* ---------------------------------------------------------- embed fields */
+.embed-fields-section { margin-bottom: 14px; }
+.embed-fields-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.embed-field-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  margin-bottom: 8px;
+}
+.embed-field-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.embed-field-row-head input[type="text"] { flex: 1; }
+.embed-field-inline-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.embed-timestamp-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
 /* ------------------------------------------------------- bulk member actions */
 .select-all-row {
   display: flex;

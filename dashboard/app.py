@@ -1542,41 +1542,91 @@ async def api_adjust_user_xp(request: Request, guild_id: str, user_id: str, payl
     return await _leaderboard_response(guild_id)
 
 
-# ------------------------------------------------------------------ announce --
-class AnnouncePayload(BaseModel):
+# --------------------------------------------------------------------- embed --
+# Discord's own embed limits, enforced here too so a bad submission gets a
+# clear 400 from us instead of an opaque 502 from Fluxer rejecting the whole
+# message.
+_EMBED_MAX_FIELDS = 25
+_EMBED_FIELD_NAME_MAX = 256
+_EMBED_FIELD_VALUE_MAX = 1024
+
+
+class EmbedFieldPayload(BaseModel):
+    name: str = ""
+    value: str = ""
+    inline: bool = False
+
+
+class EmbedPayload(BaseModel):
     channel_id: str
     title: str = ""
     description: str = ""
+    url: str = ""
     color: str = "5865F2"
     image_url: str = ""
+    thumbnail_url: str = ""
     footer: str = ""
+    author_name: str = ""
+    author_icon_url: str = ""
+    author_url: str = ""
+    timestamp: bool = False
+    fields: list[EmbedFieldPayload] = []
 
 
-@app.post("/api/guilds/{guild_id}/announce")
-async def api_announce(request: Request, guild_id: str, payload: AnnouncePayload):
+@app.post("/api/guilds/{guild_id}/embed")
+async def api_send_embed(request: Request, guild_id: str, payload: EmbedPayload):
     await _require_manage(request, guild_id)
     user = require_login(request)
     channel_id = payload.channel_id.strip()
     if not channel_id.isdigit() or not (payload.title.strip() or payload.description.strip()):
         raise _ApiError(400, "Give a channel and at least a title or description.")
+    if len(payload.fields) > _EMBED_MAX_FIELDS:
+        raise _ApiError(400, f"An embed can only have up to {_EMBED_MAX_FIELDS} fields.")
 
     embed: dict = {"color": _parse_embed_color(payload.color)}
     if payload.title.strip():
         embed["title"] = payload.title.strip()
     if payload.description.strip():
         embed["description"] = payload.description.strip()
+    if payload.url.strip():
+        embed["url"] = payload.url.strip()
     if payload.image_url.strip():
         embed["image"] = {"url": payload.image_url.strip()}
+    if payload.thumbnail_url.strip():
+        embed["thumbnail"] = {"url": payload.thumbnail_url.strip()}
     if payload.footer.strip():
         embed["footer"] = {"text": payload.footer.strip()}
+    if payload.author_name.strip():
+        author: dict = {"name": payload.author_name.strip()}
+        if payload.author_icon_url.strip():
+            author["icon_url"] = payload.author_icon_url.strip()
+        if payload.author_url.strip():
+            author["url"] = payload.author_url.strip()
+        embed["author"] = author
+    if payload.timestamp:
+        embed["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+    fields = []
+    for i, f in enumerate(payload.fields):
+        name, value = f.name.strip(), f.value.strip()
+        if not name and not value:
+            continue  # a field row left blank, not an error, just skip it
+        if not name or not value:
+            raise _ApiError(400, f"Field {i + 1} needs both a name and a value.")
+        if len(name) > _EMBED_FIELD_NAME_MAX or len(value) > _EMBED_FIELD_VALUE_MAX:
+            raise _ApiError(400, f"Field {i + 1}'s name/value is too long "
+                                  f"(max {_EMBED_FIELD_NAME_MAX}/{_EMBED_FIELD_VALUE_MAX} characters).")
+        fields.append({"name": name, "value": value, "inline": f.inline})
+    if fields:
+        embed["fields"] = fields
 
     try:
         await bot_rest.send_message(channel_id, embeds=[embed])
     except FluxerAPIError as e:
         raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}), check the bot can post in that channel.")
 
-    await db.log_action(guild_id, "announce", moderator_id=str(user.get("id")),
-                         reason=f"Sent an announcement to <#{channel_id}>")
+    await db.log_action(guild_id, "send_embed", moderator_id=str(user.get("id")),
+                         reason=f"Sent an embed to <#{channel_id}>")
     return {"ok": True}
 
 
