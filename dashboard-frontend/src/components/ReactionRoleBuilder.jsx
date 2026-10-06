@@ -44,7 +44,8 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
       setColor(blank.color);
       setRows(blank.rows);
     }
-  }, [editing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: see below
+  }, [editing?.message_id]);
 
   function updateRow(index, field, value) {
     setRows((prev) => prev.map((r, i) => (i === index ? { ...r, [field]: value } : r)));
