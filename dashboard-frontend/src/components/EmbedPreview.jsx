@@ -2,6 +2,23 @@ function fmtTimestamp() {
   return new Date().toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+// Staff-entered text ending up as a literal href/src is exactly the shape
+// CodeQL's "DOM text reinterpreted as HTML" check looks for: a javascript:
+// URL here would run in this authenticated dashboard session the moment
+// another staff member views the preview or clicks the linked title, no
+// server round-trip needed. Only ever hand the DOM a value we've confirmed
+// is an actual http(s) URL, never the raw field.
+function safeUrl(raw) {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? trimmed : "";
+  } catch {
+    return "";
+  }
+}
+
 export default function EmbedPreview({
   title, description, color, url, imageUrl, thumbnailUrl, footer,
   authorName, authorIconUrl, timestamp, fields = [],
@@ -23,9 +40,9 @@ export default function EmbedPreview({
   return (
     <div className="embed-preview">
       <div className="embed-preview-card" style={{ borderLeftColor: color || "#5865f2" }}>
-        {thumbnailUrl?.trim() && (
+        {safeUrl(thumbnailUrl) && (
           <img
-            src={thumbnailUrl}
+            src={safeUrl(thumbnailUrl)}
             alt=""
             className="embed-preview-thumbnail"
             onError={(e) => { e.target.style.display = "none"; }}
@@ -33,9 +50,9 @@ export default function EmbedPreview({
         )}
         {authorName?.trim() && (
           <div className="embed-preview-author">
-            {authorIconUrl?.trim() && (
+            {safeUrl(authorIconUrl) && (
               <img
-                src={authorIconUrl}
+                src={safeUrl(authorIconUrl)}
                 alt=""
                 className="embed-preview-author-icon"
                 onError={(e) => { e.target.style.display = "none"; }}
@@ -46,7 +63,7 @@ export default function EmbedPreview({
         )}
         {title?.trim() && (
           <div className="embed-preview-title">
-            {url?.trim() ? <a href={url} target="_blank" rel="noreferrer">{title}</a> : title}
+            {safeUrl(url) ? <a href={safeUrl(url)} target="_blank" rel="noreferrer">{title}</a> : title}
           </div>
         )}
         {description?.trim() && <div className="embed-preview-description">{description}</div>}
@@ -60,9 +77,9 @@ export default function EmbedPreview({
             ))}
           </div>
         )}
-        {imageUrl?.trim() && (
+        {safeUrl(imageUrl) && (
           <img
-            src={imageUrl}
+            src={safeUrl(imageUrl)}
             alt=""
             className="embed-preview-image"
             onError={(e) => { e.target.style.display = "none"; }}
