@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users,
   Tag as TagIcon, TrendingUp, LayoutTemplate, Search, FileClock, ArrowLeftRight, Flag, Pencil, RefreshCw,
-  ToggleLeft,
+  ToggleLeft, ChevronUp, ChevronDown,
 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "../components/Flash";
@@ -176,6 +176,7 @@ export default function GuildDetail() {
   const {
     guild, actions, warnings, autoroles, reaction_roles: reactionRoles, tags, reports,
     active_warning_count: activeWarningCount, open_report_count: openReportCount,
+    member_count: memberCount, fluxer_status: fluxerStatus,
   } = data;
 
   const counts = {
@@ -197,17 +198,26 @@ export default function GuildDetail() {
           <div>
             <h1>{guild.name}</h1>
           </div>
-          {lastSynced && (
-            <div className="live-indicator" title={`Last updated ${lastSynced.toLocaleTimeString()}`}>
-              <span className="live-dot" /> Live
-            </div>
-          )}
+          <div className="page-head-indicators">
+            {fluxerStatus && (
+              <div className={`fluxer-status-pill fluxer-status-${fluxerStatus}`} title="Fluxer server status">
+                <span className="fluxer-status-dot" />
+                Fluxer: {fluxerStatus === "healthy" ? "Operational" : fluxerStatus === "degraded" ? "Degraded" : "Unknown"}
+              </div>
+            )}
+            {lastSynced && (
+              <div className="live-indicator" title={`Last updated ${lastSynced.toLocaleTimeString()}`}>
+                <span className="live-dot" /> Live
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="tab-content" key={tab}>
           {tab === "overview" && (
             <OverviewTab guildId={id} guild={guild} actions={actions} autoroles={autoroles} reactionRoles={reactionRoles}
-                         tags={tags} activeWarningCount={activeWarningCount} setTab={setTab} />
+                         tags={tags} roles={roles} channels={channels} activeWarningCount={activeWarningCount}
+                         openReportCount={openReportCount} memberCount={memberCount} setTab={setTab} />
           )}
           {tab === "settings" && (
             <SettingsTab guildId={id} guild={guild} roles={roles} channels={channels}
@@ -282,8 +292,55 @@ function StatCard({ value, label }) {
   );
 }
 
-function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, activeWarningCount, setTab }) {
+function AttentionRow({ activeWarningCount, openReportCount, setTab }) {
+  if (activeWarningCount === 0 && openReportCount === 0) {
+    return <p className="muted small attention-clear">Nothing needs attention right now.</p>;
+  }
+  return (
+    <div className="attention-row">
+      {activeWarningCount > 0 && (
+        <button type="button" className="attention-pill" onClick={() => setTab("warnings")}>
+          <ShieldAlert size={14} /> {activeWarningCount} active warning{activeWarningCount !== 1 ? "s" : ""}
+        </button>
+      )}
+      {openReportCount > 0 && (
+        <button type="button" className="attention-pill" onClick={() => setTab("reports")}>
+          <Flag size={14} /> {openReportCount} open report{openReportCount !== 1 ? "s" : ""}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Persistent, non-dismissible counterpart to OnboardingChecklist: that
+// one nudges toward finishing setup and then disappears forever once
+// everything's checked off (or dismissed), after which there was no
+// remaining at-a-glance view of what's actually configured. This stays
+// put so "is leveling on?" never requires a trip into Settings to answer.
+function FeatureStatusRow({ guild, setTab }) {
+  const items = [
+    { key: "modlog", label: "Mod-log", on: !!guild.log_channel_id },
+    { key: "welcome", label: "Welcome", on: !!guild.welcome_channel_id },
+    { key: "goodbye", label: "Goodbye", on: !!guild.goodbye_channel_id },
+    { key: "leveling", label: "Leveling", on: !!guild.leveling_enabled },
+    { key: "reports", label: "Reports", on: !!guild.report_channel_id },
+  ];
+  return (
+    <div className="feature-status-row">
+      {items.map((item) => (
+        <button type="button" key={item.key} onClick={() => setTab("settings")} title="Go to Settings"
+                className={`feature-status-pill ${item.on ? "feature-status-on" : "feature-status-off"}`}>
+          <span className="feature-status-dot" /> {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, roles, channels,
+                       activeWarningCount, openReportCount, memberCount, setTab }) {
   const [stats, setStats] = useState(null);
+  const [showHeatmap, setShowHeatmap] = useState(false);
 
   useEffect(() => {
     api.stats(guildId, 14).then(setStats).catch(() => {});
@@ -293,124 +350,149 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
     <>
       <OnboardingChecklist guild={guild} autoroles={autoroles} reactionRoles={reactionRoles} tags={tags} setTab={setTab} />
 
+      <AttentionRow activeWarningCount={activeWarningCount} openReportCount={openReportCount} setTab={setTab} />
+      <FeatureStatusRow guild={guild} setTab={setTab} />
+
       <div className="stat-grid">
+        <StatCard value={memberCount ?? "—"} label="Members" />
+        <StatCard value={channels.length} label="Channels" />
+        <StatCard value={roles.length} label="Roles" />
         <StatCard value={guild.command_prefix || "!"} label="Prefix" />
-        <StatCard value={activeWarningCount} label="Active warnings" />
-        <StatCard value={actions.length} label="Logged mod actions" />
         <StatCard value={autoroles.length} label="Autoroles" />
         <StatCard value={reactionRoles.length} label="Reaction role mappings" />
         <StatCard value={tags.length} label="Tags" />
+        <StatCard value={actions.length} label="Logged mod actions" />
       </div>
 
       {stats && (
-        <div className="card">
-          <h2>Message activity, last 14 days</h2>
-          <div className="stat-grid" style={{ marginBottom: 16 }}>
-            <StatCard value={stats.total_messages_30d} label="Messages (30d)" />
+        <div className="overview-two-col">
+          <div className="card">
+            <h2>Message activity, last 14 days</h2>
+            <div className="stat-grid" style={{ marginBottom: 16 }}>
+              <StatCard value={stats.total_messages_30d} label="Messages (30d)" />
+            </div>
+            {stats.daily.some((d) => d.count > 0) ? (
+              <BarChart
+                data={stats.daily.map((d) => ({ label: d.date, value: d.count }))}
+                formatLabel={(d) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              />
+            ) : (
+              <p className="muted small">No message activity recorded yet.</p>
+            )}
+            {stats.top_members.length > 0 && (
+              <>
+                <h2 className="section-divider">Most active in chat</h2>
+                <div className="top-members-list">
+                  {stats.top_members.map((m, i) => (
+                    <div className="top-member-row" key={m.user_id}>
+                      <span className="muted">#{i + 1}</span>
+                      <span className="top-member-name">{m.username}</span>
+                      <span className="muted small">{m.count} messages</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
-          {stats.daily.some((d) => d.count > 0) ? (
-            <BarChart
-              data={stats.daily.map((d) => ({ label: d.date, value: d.count }))}
-              formatLabel={(d) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-            />
-          ) : (
-            <p className="muted small">No message activity recorded yet.</p>
-          )}
-          {stats.top_members.length > 0 && (
-            <>
-              <h2 className="section-divider">Most active in chat</h2>
-              <div className="top-members-list">
-                {stats.top_members.map((m, i) => (
-                  <div className="top-member-row" key={m.user_id}>
-                    <span className="muted">#{i + 1}</span>
-                    <span className="top-member-name">{m.username}</span>
-                    <span className="muted small">{m.count} messages</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
+
+          <div className="card">
+            <h2>Voice activity, last 14 days</h2>
+            <p className="muted small">
+              Only counts time with 2+ people connected and not self-deafened, solo/AFK time doesn't count.
+            </p>
+            {stats.daily.some((d) => d.voice_minutes > 0) ? (
+              <BarChart
+                data={stats.daily.map((d) => ({ label: d.date, value: d.voice_minutes }))}
+                formatLabel={(d) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              />
+            ) : (
+              <p className="muted small">No qualifying voice activity recorded yet.</p>
+            )}
+            {stats.top_voice_members.length > 0 && (
+              <>
+                <h2 className="section-divider">Most active in voice</h2>
+                <div className="top-members-list">
+                  {stats.top_voice_members.map((m, i) => (
+                    <div className="top-member-row" key={m.user_id}>
+                      <span className="muted">#{i + 1}</span>
+                      <span className="top-member-name">{m.username}</span>
+                      <span className="muted small">{m.minutes} min</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
-      {stats && (
-        <div className="card">
-          <h2>Voice activity, last 14 days</h2>
-          <p className="muted small">
-            Only counts time with 2+ people connected and not self-deafened, solo/AFK time doesn't count.
-          </p>
-          {stats.daily.some((d) => d.voice_minutes > 0) ? (
-            <BarChart
-              data={stats.daily.map((d) => ({ label: d.date, value: d.voice_minutes }))}
-              formatLabel={(d) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-            />
-          ) : (
-            <p className="muted small">No qualifying voice activity recorded yet.</p>
-          )}
-          {stats.top_voice_members.length > 0 && (
-            <>
-              <h2 className="section-divider">Most active in voice</h2>
-              <div className="top-members-list">
-                {stats.top_voice_members.map((m, i) => (
-                  <div className="top-member-row" key={m.user_id}>
-                    <span className="muted">#{i + 1}</span>
-                    <span className="top-member-name">{m.username}</span>
-                    <span className="muted small">{m.minutes} min</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {stats && stats.top_commands.length > 0 && (
+      <div className="overview-two-col">
         <div className="card">
           <h2>Most-used commands</h2>
-          <div className="top-members-list">
-            {stats.top_commands.map((c, i) => (
-              <div className="top-member-row" key={c.name}>
-                <span className="muted">#{i + 1}</span>
-                <span className="top-member-name">!{c.name}</span>
-                <span className="muted small">{c.count} use{c.count !== 1 ? "s" : ""}</span>
-              </div>
-            ))}
-          </div>
+          {!stats ? (
+            <div className="loading-row"><Spinner size={16} /></div>
+          ) : stats.top_commands.length > 0 ? (
+            <div className="top-members-list">
+              {stats.top_commands.map((c, i) => (
+                <div className="top-member-row" key={c.name}>
+                  <span className="muted">#{i + 1}</span>
+                  <span className="top-member-name">!{c.name}</span>
+                  <span className="muted small">{c.count} use{c.count !== 1 ? "s" : ""}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted small">No commands used yet.</p>
+          )}
         </div>
-      )}
+
+        <div className="card">
+          <div className="overview-card-head">
+            <h2>Recent activity</h2>
+            <button type="button" className="btn btn-ghost btn-small" onClick={() => setTab("modlog")}>
+              View full mod log →
+            </button>
+          </div>
+          {actions.length ? (
+            <div className="table-scroll">
+              <table className="table">
+                <thead>
+                  <tr><th>Action</th><th>User</th><th>Moderator</th><th>When</th></tr>
+                </thead>
+                <tbody>
+                  {actions.slice(0, 5).map((a) => (
+                    <tr key={a.id}>
+                      <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
+                      <td><code>{a.user_id || "none"}</code></td>
+                      <td><code>{a.moderator_id || "system"}</code></td>
+                      <td>{fmt(a.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="muted">No mod actions logged yet.</p>
+          )}
+        </div>
+      </div>
 
       {stats && stats.heatmap.length > 0 && (
         <div className="card">
-          <h2>When the server's actually busy</h2>
-          <p className="muted small">Message activity by hour and day, all-time, in your local time. Useful for picking event times.</p>
-          <HeatmapGrid data={stats.heatmap} />
+          <div className="overview-card-head">
+            <div>
+              <h2>When the server's actually busy</h2>
+              <p className="muted small">
+                Message activity by hour and day, all-time, in your local time. Useful for picking event times.
+              </p>
+            </div>
+            <button type="button" className="btn btn-ghost btn-small" onClick={() => setShowHeatmap((s) => !s)}>
+              {showHeatmap ? <ChevronUp size={14} /> : <ChevronDown size={14} />} {showHeatmap ? "Hide" : "Show"}
+            </button>
+          </div>
+          {showHeatmap && <HeatmapGrid data={stats.heatmap} />}
         </div>
       )}
-
-      <div className="card">
-        <h2>Recent activity</h2>
-        {actions.length ? (
-          <div className="table-scroll">
-            <table className="table">
-              <thead>
-                <tr><th>Action</th><th>User</th><th>Moderator</th><th>When</th></tr>
-              </thead>
-              <tbody>
-                {actions.slice(0, 8).map((a) => (
-                  <tr key={a.id}>
-                    <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
-                    <td><code>{a.user_id || "none"}</code></td>
-                    <td><code>{a.moderator_id || "system"}</code></td>
-                    <td>{fmt(a.created_at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="muted">No mod actions logged yet.</p>
-        )}
-      </div>
     </>
   );
 }

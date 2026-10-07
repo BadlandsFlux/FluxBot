@@ -50,6 +50,11 @@ export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
               Discord Relay
             </Link>
           )}
+          {isOwner && (
+            <Link to="/fluxer-status" className="topbar-link">
+              Fluxer Status
+            </Link>
+          )}
         </nav>
       </div>
       <div className="topbar-right">

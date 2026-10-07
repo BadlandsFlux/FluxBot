@@ -29,7 +29,7 @@ from bot.modules import afk as afk_module
 from bot.permissions import permission_name, role_is_privileged
 from bot.rest import FluxerAPIError, FluxerREST
 from common.url_safety import is_safe_external_url
-from common import db
+from common import db, fluxer_admin
 from common.config import config
 from common.discovery import get_media_base, guild_icon_url, user_avatar_url
 from dashboard import oauth
@@ -506,6 +506,15 @@ async def api_guild_detail(request: Request, guild_id: str):
     # undercount this badge.
     open_report_count = await db.count_reports_by_status(guild_id, "open")
 
+    member_count = None
+    try:
+        live_guild = await bot_rest.get_guild(guild_id)
+        member_count = live_guild.get("member_count")
+    except FluxerAPIError:
+        pass  # Overview shows "-" rather than failing the whole page over it.
+
+    fluxer_stats = await fluxer_admin.get_gateway_stats()
+
     return {
         "guild": _guild_to_json(guild_cfg),
         "actions": [_action_to_json(a, names) for a in actions],
@@ -516,6 +525,8 @@ async def api_guild_detail(request: Request, guild_id: str):
         "active_warning_count": sum(1 for w in warnings if w["active"]),
         "reports": [_report_to_json(r, names, reply_summary) for r in reports_list],
         "open_report_count": open_report_count,
+        "member_count": member_count,
+        "fluxer_status": fluxer_stats["status"] if fluxer_stats else None,
     }
 
 
@@ -2034,6 +2045,22 @@ async def api_set_discord_relay_token(request: Request, payload: DiscordRelayTok
     token = payload.token.strip()
     await db.set_discord_relay_token(token or None)
     return {"ok": True}
+
+
+@app.get("/api/fluxer-stats")
+async def api_fluxer_stats(request: Request):
+    """Full Node Statistics Object for the owner-only Fluxer Status page.
+    Owner-gated (not just any guild manager) because this is real
+    platform infrastructure detail, memory/process/node breakdown, not
+    something any particular guild's moderators need or should see.
+    The small health pill on each guild's Overview tab gets only the
+    coarse "status" word, from api_guild_detail above, not this."""
+    _require_owner(request)
+    stats = await fluxer_admin.get_gateway_stats()
+    if stats is None:
+        raise _ApiError(400, "FLUXER_ADMIN_API_KEY isn't configured. Add it to your .env to see Fluxer server "
+                              "stats here (see .env.example for how to generate one).")
+    return stats
 
 
 # ------------------------------------------------------ serve the frontend --

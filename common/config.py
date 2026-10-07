@@ -51,6 +51,15 @@ class Config:
     # else about the bot runs the same either way.
     discord_bot_token: str = os.getenv("DISCORD_BOT_TOKEN", "")
 
+    # Fluxer Admin API (common/fluxer_admin.py): powers the owner-only
+    # Fluxer Status page and the small platform-health pill on each
+    # guild's Overview tab. Needs an Admin API key with the
+    # `admin:authenticate` and `gateway:memory_stats` ACLs from your
+    # Fluxer instance, which in turn needs instance-staff access to
+    # generate. Optional: leave blank and both features just don't show
+    # up, nothing else changes.
+    fluxer_admin_api_key: str = os.getenv("FLUXER_ADMIN_API_KEY", "")
+
     # OAuth2 (dashboard login)
     oauth_client_id: str = os.getenv("FLUXER_OAUTH_CLIENT_ID", "")
     oauth_client_secret: str = os.getenv("FLUXER_OAUTH_CLIENT_SECRET", "")
