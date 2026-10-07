@@ -266,12 +266,13 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!unban <id> [reason]` | Ban Members | Unban by ID |
 | `!timeout @user <dur> [reason]` | Moderate Members | e.g. `10m`, `2h`, `1d` |
 | `!untimeout @user [reason]` | Moderate Members | Remove a timeout |
-| `!purge <count>` | Manage Messages | Bulk delete recent messages |
+| `!purge <count> [@user]` | Manage Messages | Bulk delete recent messages, optionally from just one member. Skips (and reports) any older than 14 days, since Discord/Fluxer won't bulk-delete those |
 | `!warn @user [reason]` | Kick Members | Warn (auto-escalates per guild settings) |
 | `!warnings @user` | none | List a member's warnings |
 | `!note add/list/remove @user <text>` | Kick Members | Private staff notes, no escalation |
 | `!clearwarnings @user` | Kick Members | Clear active warnings |
 | `!modlog #channel` | Manage Guild | Set the mod-log channel |
+| `!settings` / `!settings prefix [<new>|reset]` | Manage Guild | View/change the command prefix from chat (everything else is dashboard-only) |
 | `!commands list/enable/disable <name>` | Manage Guild | Turn individual commands off for this server (also in the dashboard's Commands tab) |
 | `!autorole add/remove/list @role` | Manage Guild | Roles auto-given on join |
 | `!reactionrole add/remove/list ...` | Manage Guild | Reaction to role mapping |
@@ -281,17 +282,20 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!info` | Owner only | Bot-level stats (uptime, latency, server count) |
 | `!poll "Q" "A" "B" ... [duration]` | none | Reaction poll, up to 10 options, optional auto-close with tallied results |
 | `!tag add/remove/list <name> <content>` | Manage Guild (add/remove) | Custom `!name` shortcuts |
-| `!remind <duration> <text>` | none | e.g. `!remind 2h take out trash` (10 pending max per person) |
+| `!remind <when> <text>` | none | Natural language, e.g. `!remind in 2 hours take out trash` or `!remind tomorrow at 3pm check the oven` (10 pending max per person) |
 | `!reminders` | none | List your pending reminders |
 | `!delreminder <id>` | none | Cancel a reminder |
 | `!rank [@user]` | none | Visual rank card (avatar, level, XP bar, stats) |
 | `!leaderboard` | none | Server XP leaderboard |
+| `!levelnotify on/off` | none | Opt in/out of your own level-up announcements (level roles still apply either way) |
 | `!wrapped` | none | All-time server recap image |
 | `!achievements [@user]` | none | Milestone badges earned |
 | `!mydata` | none | Everything the bot has stored about you (DMs it) |
 | `!ping` | none | Gateway/API/DB latency, uptime, server count |
 | `!afk [reason]` | none | Mark yourself away; auto-clears on your next message |
 | `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | none | Fun stuff |
+| `!8ball <question>` | none | Ask the magic 8-ball a question |
+| `!neofetch` | none | Bot/system/community stats, neofetch-style |
 | `!trivia` | none | Multiple-choice trivia, closes in 30s, correct answers earn XP |
 | `!link` | none | Start linking your Discord and Fluxer accounts (DMs you a code) |
 | `!unlink` | none | Remove your account link |
@@ -333,7 +337,7 @@ bot/
     info.py             avatar/serverinfo/userinfo/info (owner-only)
     tags.py             !tag add/remove/list
     reminders.py         !remind/!reminders/!delreminder
-    leveling.py          XP gain, level-up + role rewards, !rank/!leaderboard
+    leveling.py          XP gain, level-up + role rewards, !rank/!leaderboard/!levelnotify
     activity.py          per-day/per-member message counters for dashboard stats
     utility.py          help/ping
     logging_mod.py       writes mod_actions rows + posts to the log channel

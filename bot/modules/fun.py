@@ -4,16 +4,36 @@
     !coinflip
     !wheel opt1, opt2, opt3, ...
     !poll "Question" "Option 1" "Option 2" ... [duration]
+    !8ball <question>
+    !neofetch       bot/system/community stats, neofetch-style
 """
 from __future__ import annotations
 
+import platform
 import random
 import re
 from datetime import datetime, timedelta, timezone
 
 from bot.commands import Bot, Context
-from bot.timeutil import parse_duration_seconds
+from bot.timeutil import format_duration, parse_duration_seconds
 from common import db
+from common.config import config
+
+EIGHT_BALL_RESPONSES = [
+    "It is certain.", "Without a doubt.", "Yes, definitely.", "You may rely on it.",
+    "As I see it, yes.", "Most likely.", "Outlook good.", "Yes.", "Signs point to yes.",
+    "Reply hazy, try again.", "Ask again later.", "Better not tell you now.",
+    "Cannot predict now.", "Concentrate and ask again.",
+    "Don't count on it.", "My reply is no.", "My sources say no.",
+    "Outlook not so good.", "Very doubtful.",
+]
+
+NEOFETCH_ART = [
+    "  /\\_/\\  ",
+    " ( o.o ) ",
+    "  > ^ <  ",
+    "         ",
+]
 
 DICE_RE = re.compile(r"^(\d*)d(\d+)$", re.IGNORECASE)
 NUMBER_EMOJI = [f"{i}\ufe0f\u20e3" for i in range(1, 10)] + ["\U0001F51F"]  # 1..9, then 🔟
@@ -102,3 +122,35 @@ def register(bot: Bot) -> None:
 
         close_at = (datetime.now(timezone.utc) + timedelta(seconds=close_seconds)) if close_seconds else None
         await db.add_poll(ctx.guild_id, ctx.channel_id, message_id, question, options, close_at)
+
+    @bot.command("8ball", category="Fun", aliases=["eightball"],
+                 help_text="Ask the magic 8-ball a question. Usage: !8ball <question>")
+    async def eight_ball(ctx: Context) -> None:
+        if not ctx.raw_args:
+            await ctx.reply("Ask a question, e.g. `!8ball will it rain tomorrow?`")
+            return
+        await ctx.reply(f"🎱 {random.choice(EIGHT_BALL_RESPONSES)}")
+
+    @bot.command("neofetch", category="Fun",
+                 help_text="Bot/system/community stats, neofetch-style. Usage: !neofetch")
+    async def neofetch(ctx: Context) -> None:
+        guild = ctx.guild or {}
+        prefix = await ctx.bot.get_prefix(ctx.guild_id)
+        stats = [
+            f"bot@{config.bot_name}",
+            "-" * (len(config.bot_name) + 4),
+            f"OS: {platform.system()} {platform.release()}",
+            f"Python: {platform.python_version()}",
+            f"Uptime: {format_duration(ctx.bot.uptime_seconds)}",
+            f"Servers: {await ctx.bot.guild_count()}",
+            f"Members here: {guild.get('member_count', 'Unknown')}",
+            f"Commands: {len(set(c.name for c in ctx.bot.commands.values()))}",
+            f"Prefix: {prefix}",
+        ]
+        lines = []
+        art_width = len(NEOFETCH_ART[0])
+        for i in range(max(len(NEOFETCH_ART), len(stats))):
+            art = NEOFETCH_ART[i] if i < len(NEOFETCH_ART) else " " * art_width
+            stat = stats[i] if i < len(stats) else ""
+            lines.append(f"{art} {stat}")
+        await ctx.reply("```\n" + "\n".join(lines) + "\n```")

@@ -130,6 +130,16 @@ CREATE TABLE IF NOT EXISTS levels (
     PRIMARY KEY (guild_id, user_id)
 );
 
+-- Presence of a row opts a member out of the level-up announcement (!levelnotify
+-- off), same "exclusion list" shape as xp_excluded_channels below. A member can
+-- opt out before ever earning XP, so this can't just be a column on `levels`,
+-- that row may not exist yet.
+CREATE TABLE IF NOT EXISTS level_notify_optouts (
+    guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS level_roles (
     id          BIGSERIAL PRIMARY KEY,
     guild_id    TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,

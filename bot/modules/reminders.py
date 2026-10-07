@@ -1,15 +1,17 @@
 """Reminders.
 
-    !remind <duration> <text>    e.g. !remind 2h take out the trash
-    !reminders                   list your pending reminders
-    !delreminder <id>            cancel one
+    !remind <when> <text>    e.g. !remind in 2 hours take out the trash,
+                                   !remind tomorrow at 3pm check the oven,
+                                   or the older !remind 2h take out the trash
+    !reminders                list your pending reminders
+    !delreminder <id>         cancel one
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from bot.commands import Bot, Context
-from bot.timeutil import parse_duration_seconds
+from bot.timeutil import parse_natural_time
 from common import db
 
 # No permission is required for !remind by design (it's a personal utility,
@@ -20,18 +22,29 @@ from common import db
 # every time a batch comes due at once.
 MAX_PENDING_REMINDERS_PER_USER = 10
 
+REMIND_USAGE = ("Usage: `!remind <when> <text>`, e.g. `!remind in 2 hours take out the trash` "
+                "or `!remind tomorrow at 3pm check the oven` (the older `!remind 2h take out the trash` "
+                "still works too).")
+
 
 def register(bot: Bot) -> None:
 
     @bot.command("remind", category="Utility", aliases=["reminder"],
-                 help_text="Set a reminder. Usage: !remind <duration> <text>, e.g. !remind 2h take out trash")
+                 help_text="Set a reminder using natural language. "
+                            "Usage: !remind <when> <text>, e.g. !remind in 2 hours take out the trash")
     async def remind(ctx: Context) -> None:
-        if len(ctx.args) < 2:
-            await ctx.reply("Usage: `!remind <duration> <text>`, e.g. `!remind 2h take out trash`")
+        if not ctx.raw_args:
+            await ctx.reply(REMIND_USAGE)
             return
-        seconds = parse_duration_seconds(ctx.args[0])
-        if seconds is None:
-            await ctx.reply(f"Couldn't parse duration `{ctx.args[0]}`. Use e.g. `10m`, `2h`, `1d`.")
+        parsed = parse_natural_time(ctx.raw_args)
+        if parsed is None:
+            await ctx.reply(f"Couldn't find both a time and a message in that. {REMIND_USAGE}")
+            return
+        remind_at, content = parsed
+        now = datetime.now(timezone.utc)
+        if remind_at <= now:
+            await ctx.reply(f"That works out to <t:{int(remind_at.timestamp())}>, which is in the past. "
+                             f"Give me a time in the future.")
             return
 
         user_id = str(ctx.author["id"])
@@ -41,10 +54,8 @@ def register(bot: Bot) -> None:
                              f"{MAX_PENDING_REMINDERS_PER_USER}). Cancel one with `!delreminder <id>` first.")
             return
 
-        content = " ".join(ctx.args[1:])
-        remind_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)
         reminder_id = await db.add_reminder(ctx.guild_id, ctx.channel_id, user_id, content, remind_at)
-        await ctx.reply(f"⏰ Got it, I'll remind you in {ctx.args[0]}. (`#{reminder_id}`)")
+        await ctx.reply(f"⏰ Got it, I'll remind you <t:{int(remind_at.timestamp())}:R>. (`#{reminder_id}`)")
 
     @bot.command("reminders", category="Utility", help_text="List your pending reminders. Usage: !reminders")
     async def reminders_cmd(ctx: Context) -> None:
