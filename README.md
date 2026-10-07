@@ -273,8 +273,8 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!clearwarnings @user` | Kick Members | Clear active warnings |
 | `!modlog #channel` | Manage Guild | Set the mod-log channel |
 | `!settings` / `!settings prefix [<new>|reset]` | Manage Guild | View/change the command prefix from chat (everything else is dashboard-only) |
-| `!autorole add/remove/list @role` | Manage Guild | Roles auto-given on join |
-| `!reactionrole add/remove/list ...` | Manage Guild | Reaction to role mapping |
+| `!autorole add/remove/list @role [page]` | Manage Guild | Roles auto-given on join, list is paginated (20/page) |
+| `!reactionrole add/remove/list ...` | Manage Guild | Reaction to role mapping, list is paginated (10/page) and filterable by `@role`/`#channel` |
 | `!avatar [@user]` | none | Show a member's avatar |
 | `!serverinfo` | none | Member count, owner, boost tier, and more |
 | `!userinfo [@user]` | none | Account age, join date, roles, staff rank |
