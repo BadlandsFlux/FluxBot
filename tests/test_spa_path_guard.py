@@ -12,21 +12,18 @@ to look absolute needs the same containment check to still catch it.
 from __future__ import annotations
 
 import dashboard.app as app_mod
-from dashboard.app import FRONTEND_DIST, resolve_frontend_path
-
-INDEX_HTML = FRONTEND_DIST / "index.html"
 
 
 def test_normal_relative_path_passes_through_when_the_file_exists(monkeypatch, tmp_path):
     real_file = tmp_path / "logo.svg"
     real_file.write_text("<svg></svg>")
     monkeypatch.setattr(app_mod, "FRONTEND_DIST", tmp_path)
-    assert resolve_frontend_path("logo.svg") == real_file
+    assert app_mod.resolve_frontend_path("logo.svg") == real_file
 
 
 def test_missing_file_falls_back_to_index_html(monkeypatch, tmp_path):
     monkeypatch.setattr(app_mod, "FRONTEND_DIST", tmp_path)
-    assert resolve_frontend_path("does-not-exist.js") == tmp_path / "index.html"
+    assert app_mod.resolve_frontend_path("does-not-exist.js") == tmp_path / "index.html"
 
 
 def test_dot_dot_traversal_is_rejected(monkeypatch, tmp_path):
@@ -34,8 +31,8 @@ def test_dot_dot_traversal_is_rejected(monkeypatch, tmp_path):
     outside_secret.write_text("shh")
     try:
         monkeypatch.setattr(app_mod, "FRONTEND_DIST", tmp_path)
-        assert resolve_frontend_path("../outside-secret.txt") == tmp_path / "index.html"
-        assert resolve_frontend_path("../../../../../../etc/passwd") == tmp_path / "index.html"
+        assert app_mod.resolve_frontend_path("../outside-secret.txt") == tmp_path / "index.html"
+        assert app_mod.resolve_frontend_path("../../../../../../etc/passwd") == tmp_path / "index.html"
     finally:
         outside_secret.unlink()
 
@@ -46,17 +43,17 @@ def test_absolute_looking_path_is_rejected_despite_the_pathlib_join_gotcha(monke
     # AFTER that join, on the resolved result, so it still has to catch
     # this rather than being bypassed by it.
     monkeypatch.setattr(app_mod, "FRONTEND_DIST", tmp_path)
-    assert resolve_frontend_path("/etc/passwd") == tmp_path / "index.html"
-    assert resolve_frontend_path("//etc/passwd") == tmp_path / "index.html"
+    assert app_mod.resolve_frontend_path("/etc/passwd") == tmp_path / "index.html"
+    assert app_mod.resolve_frontend_path("//etc/passwd") == tmp_path / "index.html"
 
 
 def test_empty_path_falls_back_to_index_html(monkeypatch, tmp_path):
     monkeypatch.setattr(app_mod, "FRONTEND_DIST", tmp_path)
-    assert resolve_frontend_path("") == tmp_path / "index.html"
+    assert app_mod.resolve_frontend_path("") == tmp_path / "index.html"
 
 
 def test_a_file_that_is_itself_frontend_dist_index_is_not_specialcased_away(monkeypatch, tmp_path):
     (tmp_path / "index.html").write_text("<html></html>")
     monkeypatch.setattr(app_mod, "FRONTEND_DIST", tmp_path)
     # Asking for index.html directly still resolves to it normally.
-    assert resolve_frontend_path("index.html") == tmp_path / "index.html"
+    assert app_mod.resolve_frontend_path("index.html") == tmp_path / "index.html"
