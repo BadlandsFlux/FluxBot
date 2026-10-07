@@ -14,3 +14,9 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Without this, `bot`/`common` (plain top-level packages, not installed)
+# are only importable when something external puts the repo root on
+# sys.path first (PYTHONPATH=., or running `python -m pytest` instead of
+# the bare `pytest` entry point). CI invokes plain `pytest`, so this is
+# load-bearing, not a convenience.
+pythonpath = ["."]
