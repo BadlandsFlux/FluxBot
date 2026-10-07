@@ -291,6 +291,8 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!ping` | none | Gateway/API/DB latency, uptime, server count |
 | `!afk [reason]` | none | Mark yourself away; auto-clears on your next message |
 | `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | none | Fun stuff |
+| `!8ball <question>` | none | Ask the magic 8-ball a question |
+| `!neofetch` | none | Bot/system/community stats, neofetch-style |
 | `!trivia` | none | Multiple-choice trivia, closes in 30s, correct answers earn XP |
 | `!link` | none | Start linking your Discord and Fluxer accounts (DMs you a code) |
 | `!unlink` | none | Remove your account link |
