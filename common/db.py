@@ -1598,9 +1598,15 @@ async def set_report_status(guild_id: str, report_id: int, status: str, *, dupli
                              resolved_by: Optional[str] = None) -> Optional[asyncpg.Record]:
     if status not in REPORT_STATUSES:
         raise ValueError(f"Unknown report status: {status!r}")
+    # resolution_note uses COALESCE: a status change made with no note
+    # text (the common case, e.g. `!report status 12 open` or the
+    # dashboard's note field left blank) passes resolution_note=None,
+    # which must leave whatever note is already on record untouched
+    # rather than silently erasing it.
     return await pool().fetchrow(
         """
-        UPDATE reports SET status=$3, duplicate_of=$4, resolution_note=$5, resolved_by=$6, updated_at=now()
+        UPDATE reports SET status=$3, duplicate_of=$4, resolution_note=COALESCE($5, resolution_note),
+                            resolved_by=$6, updated_at=now()
         WHERE guild_id=$1 AND id=$2
         RETURNING *
         """,

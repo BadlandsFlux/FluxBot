@@ -140,12 +140,20 @@ async def warn_member(rest, guild_id: str, user: dict, moderator: dict, reason: 
     if not guild_cfg:
         return result
 
-    if active_count >= guild_cfg["warn_kick_at"]:
+    # Escalate only on the call that actually CROSSES a threshold, not on
+    # every call whose count happens to be >= it: add_warning_and_count's
+    # advisory lock guarantees each concurrent !warn gets its own unique,
+    # strictly sequential count, but without this check two warnings
+    # landing close together (counts 3 and 4 against a threshold of 3)
+    # would otherwise both see "count >= threshold" and both try to kick
+    # the same already-kicked member.
+    previous_count = active_count - 1
+    if previous_count < guild_cfg["warn_kick_at"] <= active_count:
         await rest.kick_member(guild_id, user_id, "Automatic: warning threshold reached")
         await log_and_notify(rest, guild_id, "kick", user=user, moderator=AUTOMOD,
                               reason=f"Reached {active_count} active warnings")
         result["escalated"] = "kick"
-    elif active_count >= guild_cfg["warn_timeout_at"]:
+    elif previous_count < guild_cfg["warn_timeout_at"] <= active_count:
         minutes = guild_cfg["warn_timeout_minutes"]
         until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
         await rest.timeout_member(guild_id, user_id, until.isoformat(), "Automatic: warning threshold reached")
