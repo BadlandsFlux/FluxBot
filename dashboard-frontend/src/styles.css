@@ -682,6 +682,17 @@ label > .combobox { margin-top: 6px; }
 .report-status-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .report-status-cell .tag { text-transform: none; }
 .report-dup-group { display: inline-flex; align-items: center; gap: 4px; }
+.report-dup-group input {
+  width: 90px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+.report-dup-group input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .report-id-link { color: var(--text); font-weight: 600; text-decoration: none; }
 .report-id-link:hover { color: var(--accent); }
 
