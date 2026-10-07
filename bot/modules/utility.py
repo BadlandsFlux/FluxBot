@@ -174,7 +174,7 @@ def register(bot: Bot) -> None:
                 await ctx.bot.rest.add_reaction(ctx.channel_id, message_id, HELP_PREV_EMOJI)
                 await ctx.bot.rest.add_reaction(ctx.channel_id, message_id, HELP_NEXT_EMOJI)
             except Exception:
-                pass
+                pass  # the help text itself already sent fine; paging just won't be clickable
 
     @bot.on("MESSAGE_REACTION_ADD")
     async def on_help_page_reaction(data: dict) -> None:
