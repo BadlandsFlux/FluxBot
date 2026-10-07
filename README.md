@@ -17,8 +17,28 @@ A self-hosted moderation and community bot for [Fluxer](https://fluxer.app), pai
 - **A real dashboard**: a full React app with live search, near-real-time updates from chat, a Members tab you can moderate straight from, a leaderboard/level-role editor, a custom embed builder, a public status page, and more.
 - **Self-hostable end to end**: the bot and dashboard both talk to the Fluxer REST API directly (no third-party wrapper's undocumented internals), Postgres for storage, and every Fluxer-specific URL is a config value.
 
+## Screenshots
+
+**Overview tab**, member/channel/role counts, what's configured, activity charts, and recent mod actions at a glance. Dark and light themes both supported, toggle in the top bar.
+
+![Overview tab, dark theme](docs/screenshots/overview-dark.png)
+![Overview tab, light theme](docs/screenshots/overview-light.png)
+
+**Members tab**, search/sort the member list and moderate straight from it.
+
+![Members tab](docs/screenshots/members.png)
+
+**Mod Log**, every warn/timeout/kick/ban/purge, searchable by username, ID, or reason.
+
+![Mod Log tab](docs/screenshots/modlog.png)
+
+**Reports tab**, community bug/issue reports captured automatically from a dedicated channel, no command needed.
+
+![Reports tab](docs/screenshots/reports.png)
+
 ## Table of contents
 
+- [Screenshots](#screenshots)
 - [Setup](#setup)
 - [Updating](#updating)
 - [Running at startup on Ubuntu (systemd)](#running-at-startup-on-ubuntu-systemd)

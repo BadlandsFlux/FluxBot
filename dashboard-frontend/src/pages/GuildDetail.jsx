@@ -463,8 +463,26 @@ function OverviewTab({ guildId, guild, actions, autoroles, reactionRoles, tags, 
                   {actions.slice(0, 5).map((a) => (
                     <tr key={a.id}>
                       <td><span className={`tag ${ACTION_TAG_CLASS[a.action] || ""}`}>{a.action}</span></td>
-                      <td><code>{a.user_id || "none"}</code></td>
-                      <td><code>{a.moderator_id || "system"}</code></td>
+                      <td>
+                        {a.user_id ? (
+                          <>
+                            <div>{a.username}</div>
+                            <div className="muted small"><code>{a.user_id}</code></div>
+                          </>
+                        ) : (
+                          <span className="muted">none</span>
+                        )}
+                      </td>
+                      <td>
+                        {a.moderator_id ? (
+                          <>
+                            <div>{a.moderator_username}</div>
+                            <div className="muted small"><code>{a.moderator_id}</code></div>
+                          </>
+                        ) : (
+                          <span className="muted">system</span>
+                        )}
+                      </td>
                       <td>{fmt(a.created_at)}</td>
                     </tr>
                   ))}
