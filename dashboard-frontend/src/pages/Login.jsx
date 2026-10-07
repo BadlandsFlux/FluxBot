@@ -4,6 +4,7 @@ import { Zap } from "lucide-react";
 const ERROR_MESSAGES = {
   state_mismatch: "Login failed (state mismatch). Try again.",
   oauth_failed: "Fluxer rejected that login. Try again.",
+  provider_error: "Fluxer couldn't complete the login. Try again.",
 };
 
 export default function Login({ botName }) {
