@@ -31,10 +31,17 @@ export default function ReportsTab({ guildId, guild, channels, reports, hasMore,
   // Surfaces the background 8s poll (see GuildDetail.jsx's usePolling) as
   // something a moderator actually notices: flashes once per batch of
   // report ids that weren't here last render. Skipped on first mount (no
-  // baseline to diff against yet) and never false-fires off a report's own
-  // status-change response, since that's still the same set of ids.
+  // baseline to diff against yet), never false-fires off a report's own
+  // status-change response (that's still the same set of ids), and is
+  // skipped while a "Load more" is in flight, otherwise paging in 50
+  // older reports that were simply never seen before looks exactly like
+  // 50 new reports arriving at once.
   useEffect(() => {
     const currentIds = new Set(reports.map((r) => r.id));
+    if (loadingMore) {
+      seenIds.current = currentIds;
+      return;
+    }
     if (seenIds.current) {
       const newCount = [...currentIds].filter((id) => !seenIds.current.has(id)).length;
       if (newCount > 0) {
@@ -42,7 +49,7 @@ export default function ReportsTab({ guildId, guild, channels, reports, hasMore,
       }
     }
     seenIds.current = currentIds;
-  }, [reports, flash]);
+  }, [reports, flash, loadingMore]);
 
   const visible = reports
     .filter((r) => filter === "all" || r.status === filter)
@@ -52,7 +59,7 @@ export default function ReportsTab({ guildId, guild, channels, reports, hasMore,
     setBusyId(reportId);
     try {
       const result = await api.setReportStatus(guildId, reportId, { status, ...extra });
-      onChange(result.reports);
+      onChange(result);
       flash(`Report #${reportId} marked ${STATUS_LABEL[status].toLowerCase()}.`);
     } catch (err) {
       flash(err.message, "error");

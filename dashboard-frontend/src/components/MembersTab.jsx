@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Ban, Clock, LogOut, ShieldAlert, Search, Users, StickyNote, Plus, Trash2, ScrollText } from "lucide-react";
 import { api } from "../api";
@@ -53,21 +53,33 @@ export default function MembersTab({ guildId, roles }) {
 
   const roleNameById = Object.fromEntries(roles.map((r) => [r.id, r.name]));
 
+  // Guards against a slow "Load more" landing after a newer search has
+  // already replaced the list: without this, loadMore's own response
+  // (for whatever query was active when it started) could resolve after
+  // load's and get appended on top of a now-unrelated result set.
+  const loadGeneration = useRef(0);
+
   function load(q) {
+    const generation = ++loadGeneration.current;
     api
       .members(guildId, q)
       .then((d) => {
+        if (generation !== loadGeneration.current) return;
         setMembers(d.members);
         setHasMore(d.has_more);
         setSelected(new Set());
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => {
+        if (generation === loadGeneration.current) setError(e.message);
+      });
   }
 
   async function loadMore() {
+    const generation = loadGeneration.current;
     setLoadingMore(true);
     try {
       const d = await api.members(guildId, query, members.length);
+      if (generation !== loadGeneration.current) return;
       setMembers((prev) => [...prev, ...d.members]);
       setHasMore(d.has_more);
     } catch (err) {

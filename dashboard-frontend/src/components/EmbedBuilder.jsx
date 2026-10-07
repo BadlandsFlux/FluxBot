@@ -65,18 +65,25 @@ export default function EmbedBuilder({ guildId, channels }) {
   const [timestamp, setTimestamp] = useState(false);
   const [fields, setFields] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  // A stable id per field row, independent of its position in the array:
+  // keying FieldRow by array index instead would make React reassign an
+  // existing <textarea> (and whatever the user was mid-typing in it, and
+  // its focus) to a different field's data whenever a field before it is
+  // removed.
+  const nextFieldId = useRef(0);
 
   function addField() {
     if (fields.length >= MAX_FIELDS) return;
-    setFields((f) => [...f, { name: "", value: "", inline: false }]);
+    nextFieldId.current += 1;
+    setFields((f) => [...f, { id: nextFieldId.current, name: "", value: "", inline: false }]);
   }
 
-  function updateField(i, next) {
-    setFields((f) => f.map((field, idx) => (idx === i ? next : field)));
+  function updateField(id, next) {
+    setFields((f) => f.map((field) => (field.id === id ? next : field)));
   }
 
-  function removeField(i) {
-    setFields((f) => f.filter((_, idx) => idx !== i));
+  function removeField(id) {
+    setFields((f) => f.filter((field) => field.id !== id));
   }
 
   async function handleSubmit(e) {
@@ -179,8 +186,8 @@ export default function EmbedBuilder({ guildId, channels }) {
             <Plus size={14} /> Add field
           </button>
         </div>
-        {fields.map((f, i) => (
-          <FieldRow key={i} field={f} onChange={(next) => updateField(i, next)} onRemove={() => removeField(i)} />
+        {fields.map((f) => (
+          <FieldRow key={f.id} field={f} onChange={(next) => updateField(f.id, next)} onRemove={() => removeField(f.id)} />
         ))}
       </div>
 
