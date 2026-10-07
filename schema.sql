@@ -300,6 +300,17 @@ CREATE TABLE IF NOT EXISTS command_usage (
     PRIMARY KEY (guild_id, command_name)
 );
 
+-- Presence of a row disables that command (by its canonical name, not an
+-- alias) in that guild, same "exclusion list" shape as xp_excluded_channels.
+-- A couple of commands (see NEVER_DISABLED_COMMANDS in bot/commands.py)
+-- are never allowed to end up disabled, so a server can't lock itself out
+-- of managing or discovering commands from chat.
+CREATE TABLE IF NOT EXISTS disabled_commands (
+    guild_id      TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    command_name  TEXT NOT NULL,
+    PRIMARY KEY (guild_id, command_name)
+);
+
 -- Singleton row: the bot and dashboard run as separate processes (see
 -- deploy/*.service), so the dashboard's public status page can't read the
 -- bot's in-memory gateway state directly. The bot writes its own liveness

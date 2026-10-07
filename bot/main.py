@@ -5,7 +5,7 @@ import logging
 
 from bot.commands import Bot
 from bot import discord_relay
-from bot.modules import account_links, achievements, activity, activity_log, afk, fun, info, leveling, moderation, mydata, reminders, reports, roles, settings, staffnotes, tags, trivia, utility
+from bot.modules import account_links, achievements, activity, activity_log, afk, command_toggles, fun, info, leveling, moderation, mydata, reminders, reports, roles, settings, staffnotes, tags, trivia, utility
 from bot.scheduler import run_scheduler
 from bot import voice_tracker
 from common import db
@@ -45,6 +45,7 @@ async def main() -> None:
     account_links.register(bot)
     reports.register(bot)
     settings.register(bot)
+    command_toggles.register(bot)
 
     @bot.on("GUILD_CREATE")
     async def on_guild_create(data: dict) -> None:

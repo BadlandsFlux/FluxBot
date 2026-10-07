@@ -903,6 +903,32 @@ async def get_top_commands(guild_id: str, limit: int = 10) -> list[asyncpg.Recor
     )
 
 
+# ----------------------------------------------------------- disabled commands --
+async def disable_command(guild_id: str, command_name: str) -> None:
+    await pool().execute(
+        "INSERT INTO disabled_commands (guild_id, command_name) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        guild_id, command_name,
+    )
+
+
+async def enable_command(guild_id: str, command_name: str) -> None:
+    await pool().execute(
+        "DELETE FROM disabled_commands WHERE guild_id=$1 AND command_name=$2", guild_id, command_name,
+    )
+
+
+async def list_disabled_commands(guild_id: str) -> list[str]:
+    rows = await pool().fetch("SELECT command_name FROM disabled_commands WHERE guild_id=$1", guild_id)
+    return [r["command_name"] for r in rows]
+
+
+async def is_command_disabled(guild_id: str, command_name: str) -> bool:
+    row = await pool().fetchrow(
+        "SELECT 1 FROM disabled_commands WHERE guild_id=$1 AND command_name=$2", guild_id, command_name,
+    )
+    return row is not None
+
+
 # --------------------------------------------------------------- bot status --
 async def update_bot_status(started_at, gateway_latency_ms: Optional[float], guild_count: int) -> None:
     await pool().execute(

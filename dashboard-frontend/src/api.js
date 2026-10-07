@@ -150,4 +150,7 @@ export const api = {
     request(`/api/guilds/${id}/reports/${reportId}/replies`, { method: "POST", body: { content } }),
   loadMoreActions: (id, beforeId) => request(`/api/guilds/${id}/actions?before_id=${beforeId}`),
   loadMoreReports: (id, beforeId) => request(`/api/guilds/${id}/reports/list?before_id=${beforeId}`),
+  guildCommands: (id) => request(`/api/guilds/${id}/commands`),
+  disableCommand: (id, name) => request(`/api/guilds/${id}/commands/${name}/disable`, { method: "POST" }),
+  enableCommand: (id, name) => request(`/api/guilds/${id}/commands/${name}/enable`, { method: "POST" }),
 };

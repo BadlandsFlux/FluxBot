@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   LayoutGrid, Settings, ShieldAlert, ScrollText, UserPlus, Smile, ArrowLeft, Trash2, Plus, Users,
   Tag as TagIcon, TrendingUp, LayoutTemplate, Search, FileClock, ArrowLeftRight, Flag, Pencil, RefreshCw,
+  ToggleLeft,
 } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "../components/Flash";
@@ -15,6 +16,7 @@ import TagsTab from "../components/TagsTab";
 import LevelsTab from "../components/LevelsTab";
 import ActivityLogTab from "../components/ActivityLogTab";
 import DiscordRelayTab from "../components/DiscordRelayTab";
+import CommandsTab from "../components/CommandsTab";
 import ReportsTab from "../components/ReportsTab";
 import OnboardingChecklist from "../components/OnboardingChecklist";
 import DangerZone from "../components/DangerZone";
@@ -36,6 +38,7 @@ const TABS = [
   { id: "reactionroles", label: "Reaction Roles", icon: Smile, category: "Configuration" },
   { id: "activitylog", label: "Activity Log", icon: FileClock, category: "Configuration" },
   { id: "discordrelay", label: "Discord Relay", icon: ArrowLeftRight, category: "Configuration" },
+  { id: "commands", label: "Commands", icon: ToggleLeft, category: "Configuration" },
   { id: "levels", label: "Levels", icon: TrendingUp, category: "Engagement" },
   { id: "tags", label: "Tags", icon: TagIcon, category: "Engagement" },
   { id: "embed", label: "Embed", icon: LayoutTemplate, category: "Engagement" },
@@ -227,6 +230,7 @@ export default function GuildDetail() {
           )}
           {tab === "activitylog" && <ActivityLogTab guildId={id} channels={channels} />}
           {tab === "discordrelay" && <DiscordRelayTab guildId={id} channels={channels} />}
+          {tab === "commands" && <CommandsTab guildId={id} />}
           {tab === "tags" && (
             <TagsTab guildId={id} tags={tags} prefix={guild.command_prefix || "!"}
                      onChange={(t) => setData((d) => ({ ...d, tags: t }))} />
