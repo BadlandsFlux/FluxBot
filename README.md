@@ -53,8 +53,9 @@ A self-hosted moderation and community bot for [Fluxer](https://fluxer.app), pai
    ```
    Fill in:
    - `FLUXER_BOT_TOKEN`, your bot's token (see [Creating the bot application on Fluxer](#creating-the-bot-application-on-fluxer) if you don't have one yet).
-   - `BOT_OWNER_ID`, your own Fluxer user ID, gates the owner-only `!info` command and the dashboard's Bot Profile and Discord Relay Setup pages.
+   - `BOT_OWNER_ID`, your own Fluxer user ID, gates the owner-only `!info` command and the dashboard's Bot Profile, Discord Relay Setup, and Fluxer Status pages.
    - `DISCORD_BOT_TOKEN` (optional), only needed for the Discord relay feature, and can be set from the dashboard instead once the bot's running, so it's fine to leave blank here.
+   - `FLUXER_ADMIN_API_KEY` (optional), only needed for the dashboard's Fluxer Status page (owner-only, live platform health). Generate one on your Fluxer instance with the `admin:authenticate` and `gateway:memory_stats` ACLs, which needs Fluxer instance-staff access. Leave blank to skip the feature entirely, nothing else is affected.
    - `FLUXER_API_BASE` / `FLUXER_WEB_BASE` / `FLUXER_GATEWAY_URL`, leave as the official instance, or point at your self-hosted domain (see [Self-hosting a Fluxer instance](#self-hosting-a-fluxer-instance)).
    - `DATABASE_URL`, your Postgres connection string.
    - `FLUXER_OAUTH_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI`, for the dashboard's "Login with Fluxer" button.
