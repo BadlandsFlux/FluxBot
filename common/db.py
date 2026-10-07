@@ -185,18 +185,22 @@ async def log_action(guild_id: str, action: str, user_id: str = "", moderator_id
 
 
 async def list_actions(guild_id: str, limit: int = 100, before_id: Optional[int] = None) -> list[asyncpg.Record]:
-    # before_id (not an OFFSET) for "load more": ids are assigned in the
-    # same order as created_at, so "id < before_id" continues exactly
-    # where a previous page left off even if new rows have landed at the
-    # top since, an OFFSET-based page would silently skip or repeat rows
-    # once that happens.
+    # before_id (not an OFFSET) for "load more": "id < before_id"
+    # continues exactly where a previous page left off even if new rows
+    # have landed at the top since, an OFFSET-based page would silently
+    # skip or repeat rows once that happens. Sorted by id alone (not
+    # created_at, id): id is already a strictly increasing BIGSERIAL, so
+    # this gives the same practical order while keeping the sort key and
+    # the cursor key the same column, so a page boundary can never skip a
+    # row the way it theoretically could if id and created_at order ever
+    # disagreed for two rows (e.g. under concurrent inserts).
     if before_id is not None:
         return await pool().fetch(
-            "SELECT * FROM mod_actions WHERE guild_id=$1 AND id<$3 ORDER BY created_at DESC, id DESC LIMIT $2",
+            "SELECT * FROM mod_actions WHERE guild_id=$1 AND id<$3 ORDER BY id DESC LIMIT $2",
             guild_id, limit, before_id,
         )
     return await pool().fetch(
-        "SELECT * FROM mod_actions WHERE guild_id=$1 ORDER BY created_at DESC, id DESC LIMIT $2",
+        "SELECT * FROM mod_actions WHERE guild_id=$1 ORDER BY id DESC LIMIT $2",
         guild_id, limit,
     )
 
@@ -1612,26 +1616,42 @@ async def list_reports(guild_id: str, status: Optional[str] = None, limit: int =
                         before_id: Optional[int] = None) -> list[asyncpg.Record]:
     # before_id works the same way as list_actions' own (see its comment):
     # a stable "load more" cursor that survives new reports landing at
-    # the top while an older page is still being paged through.
+    # the top while an older page is still being paged through. Sorted by
+    # id alone (not created_at, id), so the sort key and the cursor key
+    # are always exactly the same column, id is already a strictly
+    # increasing BIGSERIAL, so this produces the same practical order as
+    # created_at while also making it impossible for a page boundary to
+    # skip a row, which a separate created_at sort key could in
+    # principle do if two rows' id and created_at order ever disagreed
+    # (e.g. under concurrent inserts).
     if status and before_id is not None:
         return await pool().fetch(
-            "SELECT * FROM reports WHERE guild_id=$1 AND status=$2 AND id<$4 "
-            "ORDER BY created_at DESC, id DESC LIMIT $3",
+            "SELECT * FROM reports WHERE guild_id=$1 AND status=$2 AND id<$4 ORDER BY id DESC LIMIT $3",
             guild_id, status, limit, before_id,
         )
     if status:
         return await pool().fetch(
-            "SELECT * FROM reports WHERE guild_id=$1 AND status=$2 ORDER BY created_at DESC, id DESC LIMIT $3",
+            "SELECT * FROM reports WHERE guild_id=$1 AND status=$2 ORDER BY id DESC LIMIT $3",
             guild_id, status, limit,
         )
     if before_id is not None:
         return await pool().fetch(
-            "SELECT * FROM reports WHERE guild_id=$1 AND id<$3 ORDER BY created_at DESC, id DESC LIMIT $2",
+            "SELECT * FROM reports WHERE guild_id=$1 AND id<$3 ORDER BY id DESC LIMIT $2",
             guild_id, limit, before_id,
         )
     return await pool().fetch(
-        "SELECT * FROM reports WHERE guild_id=$1 ORDER BY created_at DESC, id DESC LIMIT $2", guild_id, limit,
+        "SELECT * FROM reports WHERE guild_id=$1 ORDER BY id DESC LIMIT $2", guild_id, limit,
     )
+
+
+async def count_reports_by_status(guild_id: str, status: str) -> int:
+    """A true count, unlike summing over a limited list_reports() page:
+    a guild with more open reports than that page size would otherwise
+    undercount how many are actually open."""
+    row = await pool().fetchrow(
+        "SELECT COUNT(*) AS n FROM reports WHERE guild_id=$1 AND status=$2", guild_id, status,
+    )
+    return row["n"]
 
 
 async def get_report_reply_counts(guild_id: str) -> dict[int, asyncpg.Record]:

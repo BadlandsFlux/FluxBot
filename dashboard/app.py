@@ -494,6 +494,10 @@ async def api_guild_detail(request: Request, guild_id: str):
     all_ids |= {r["reporter_id"] for r in reports_list if r["visibility"] == "public"}
     names = await _resolve_usernames(guild_id, list(all_ids))
     reply_summary = await db.get_report_reply_counts(guild_id)
+    # A true count, not a sum over reports_list: that's limited to 100
+    # rows, so a guild with a larger open-report backlog would otherwise
+    # undercount this badge.
+    open_report_count = await db.count_reports_by_status(guild_id, "open")
 
     return {
         "guild": _guild_to_json(guild_cfg),
@@ -504,7 +508,7 @@ async def api_guild_detail(request: Request, guild_id: str):
         "tags": [_tag_to_json(t) for t in guild_tags],
         "active_warning_count": sum(1 for w in warnings if w["active"]),
         "reports": [_report_to_json(r, names, reply_summary) for r in reports_list],
-        "open_report_count": sum(1 for r in reports_list if r["status"] == "open"),
+        "open_report_count": open_report_count,
     }
 
 
@@ -620,13 +624,21 @@ _REPORT_CHANNEL_FIELD_LABELS = {
 
 
 async def _maybe_post_report_intro(previous, guild_cfg) -> None:
-    """Shared by every path that can change report_channel_id (the full
-    settings form, and the Reports tab's own narrower channel picker):
-    posts the explainer embed only when that channel actually changed,
-    never on an unrelated save that happens to pass the same value
-    through again."""
+    """Shared by every path that can change report_channel_id or
+    report_tracker_channel_id (the full settings form, and the Reports
+    tab's own narrower channel picker): re-posts the explainer embed
+    whenever either actually changed, never on an unrelated save that
+    happens to pass the same values through again. Changing only the
+    tracker channel still needs a re-post, the embed itself names it
+    (see build_channel_intro_embed), so leaving the old one up would
+    point at a channel reports no longer actually go to."""
     new_report_channel = guild_cfg["report_channel_id"]
-    if new_report_channel and new_report_channel != (previous["report_channel_id"] if previous else None):
+    if not new_report_channel:
+        return
+    previous_report_channel = previous["report_channel_id"] if previous else None
+    previous_tracker_channel = previous["report_tracker_channel_id"] if previous else None
+    if (new_report_channel != previous_report_channel
+            or guild_cfg["report_tracker_channel_id"] != previous_tracker_channel):
         await report_actions.post_channel_intro(
             bot_rest, new_report_channel, guild_cfg["report_tracker_channel_id"],
         )
@@ -1182,7 +1194,11 @@ async def api_set_report_status(request: Request, guild_id: str, report_id: int,
     rows = await db.list_reports(guild_id, limit=100)
     names = await _resolve_usernames(guild_id, list({r["reporter_id"] for r in rows if r["visibility"] == "public"}))
     reply_summary = await db.get_report_reply_counts(guild_id)
-    return {"reports": [_report_to_json(r, names, reply_summary) for r in rows]}
+    open_report_count = await db.count_reports_by_status(guild_id, "open")
+    return {
+        "reports": [_report_to_json(r, names, reply_summary) for r in rows],
+        "open_report_count": open_report_count,
+    }
 
 
 async def _report_detail_response(guild_id: str, report_id: int) -> dict:
@@ -1712,6 +1728,10 @@ async def api_adjust_user_xp(request: Request, guild_id: str, user_id: str, payl
 _EMBED_MAX_FIELDS = 25
 _EMBED_FIELD_NAME_MAX = 256
 _EMBED_FIELD_VALUE_MAX = 1024
+_EMBED_TITLE_MAX = 256
+_EMBED_DESCRIPTION_MAX = 4096
+_EMBED_FOOTER_MAX = 2048
+_EMBED_AUTHOR_NAME_MAX = 256
 
 
 class EmbedFieldPayload(BaseModel):
@@ -1736,15 +1756,33 @@ class EmbedPayload(BaseModel):
     fields: list[EmbedFieldPayload] = []
 
 
-@app.post("/api/guilds/{guild_id}/embed")
-async def api_send_embed(request: Request, guild_id: str, payload: EmbedPayload):
-    await _require_manage(request, guild_id)
-    user = require_login(request)
+def _validate_embed_payload(payload: EmbedPayload) -> None:
+    """Pulled out of api_send_embed so it's callable (and testable)
+    without the request/session/auth machinery around the endpoint
+    itself. Discord's own embed limits, enforced here too so a bad
+    submission gets a clear 400 from us instead of an opaque 502 from
+    Fluxer rejecting the whole message."""
     channel_id = payload.channel_id.strip()
     if not channel_id.isdigit() or not (payload.title.strip() or payload.description.strip()):
         raise _ApiError(400, "Give a channel and at least a title or description.")
     if len(payload.fields) > _EMBED_MAX_FIELDS:
         raise _ApiError(400, f"An embed can only have up to {_EMBED_MAX_FIELDS} fields.")
+    if len(payload.title.strip()) > _EMBED_TITLE_MAX:
+        raise _ApiError(400, f"Title is too long (max {_EMBED_TITLE_MAX} characters).")
+    if len(payload.description.strip()) > _EMBED_DESCRIPTION_MAX:
+        raise _ApiError(400, f"Description is too long (max {_EMBED_DESCRIPTION_MAX} characters).")
+    if len(payload.footer.strip()) > _EMBED_FOOTER_MAX:
+        raise _ApiError(400, f"Footer is too long (max {_EMBED_FOOTER_MAX} characters).")
+    if len(payload.author_name.strip()) > _EMBED_AUTHOR_NAME_MAX:
+        raise _ApiError(400, f"Author name is too long (max {_EMBED_AUTHOR_NAME_MAX} characters).")
+
+
+@app.post("/api/guilds/{guild_id}/embed")
+async def api_send_embed(request: Request, guild_id: str, payload: EmbedPayload):
+    await _require_manage(request, guild_id)
+    user = require_login(request)
+    _validate_embed_payload(payload)
+    channel_id = payload.channel_id.strip()
 
     embed: dict = {"color": _parse_embed_color(payload.color)}
     if payload.title.strip():
