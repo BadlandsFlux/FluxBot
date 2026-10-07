@@ -377,6 +377,12 @@ class FluxerREST:
     async def remove_own_reaction(self, channel_id: str, message_id: str, emoji: str) -> None:
         await self.request("DELETE", f"/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/@me")
 
+    async def remove_user_reaction(self, channel_id: str, message_id: str, emoji: str, user_id: str) -> None:
+        """Strip one specific user's reaction (Discord convention, requires
+        Manage Messages). Used to let someone re-click a navigation emoji
+        (e.g. !help's pager) instead of having to manually unreact first."""
+        await self.request("DELETE", f"/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/{user_id}")
+
     async def get_reaction_users(self, channel_id: str, message_id: str, emoji: str) -> list[dict]:
         """List of user objects who reacted with this specific emoji (Discord
         convention). Used by trivia to figure out who answered correctly,
