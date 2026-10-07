@@ -224,7 +224,6 @@ export default function ReportsTab({ guildId, guild, channels, reports, hasMore,
                               placeholder="report #"
                               value={dupInputs[r.id] || ""}
                               onChange={(e) => setDupInputs((d) => ({ ...d, [r.id]: e.target.value }))}
-                              style={{ width: 90 }}
                             />
                             <button className="btn btn-ghost btn-small" disabled={busyId === r.id}
                                     onClick={() => handleMarkDuplicate(r.id)}>
