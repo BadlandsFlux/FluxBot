@@ -11,7 +11,7 @@ just calls `is_moderator()` / `has_permission()`.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 PERM_CREATE_INSTANT_INVITE = 1 << 0
 PERM_KICK_MEMBERS = 1 << 1

@@ -8,7 +8,6 @@ Every moderation action (kick/ban/timeout/warn/purge/etc) gets:
 """
 from __future__ import annotations
 
-import time
 from typing import Optional
 
 from common import db

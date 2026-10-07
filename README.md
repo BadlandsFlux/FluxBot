@@ -1,5 +1,7 @@
 # FluxBot
 
+![CI](https://github.com/BadlandsFlux/FluxBot/actions/workflows/ci.yml/badge.svg)
+
 A self-hosted moderation and community bot for [Fluxer](https://fluxer.app), paired with a full web dashboard so most day-to-day admin work never needs a chat command. Works against the official instance or a self-hosted one, just point `FLUXER_API_BASE` wherever you'd like.
 
 > **AI Disclosure:** This bot was written with help from AI. I don't have the time to really dig into the API structure and build a proper bot at this moment. This is just a stopgap until a properly featured bot comes out (if ever). Continued support is "best effort" and at will, I promise no commitment.
@@ -311,6 +313,30 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 
 Tags can also be managed from the dashboard's Tags tab. Invoking `!<tagname>` posts its content as a fallback whenever a message doesn't match a built-in command; tag names can't collide with a real command name.
 
+## Development
+
+CI (`.github/workflows/ci.yml`) runs on every push and pull request: the backend job lints with [ruff](https://docs.astral.sh/ruff/) and runs the `pytest` suite against a throwaway Postgres service container, the frontend job builds the dashboard and lints it with `oxlint`. A separate `dependency-review.yml` workflow flags newly introduced vulnerable or incompatibly-licensed dependencies on each PR's diff.
+
+To run the same checks locally:
+
+```bash
+pip install -r requirements-dev.txt
+ruff check .
+
+# Point DATABASE_URL at a scratch Postgres database, not your real one,
+# tests create and clean up their own rows but you still don't want
+# them anywhere near production data. db.init_pool() applies schema.sql
+# itself, so no separate migration step is needed first.
+export DATABASE_URL=postgresql://fluxbot:fluxbot@localhost:5432/fluxbot_test
+export FLUXER_BOT_TOKEN=test-token
+pytest
+
+cd dashboard-frontend
+npm ci
+npm run build
+npm run lint
+```
+
 ## Project layout
 
 ```
@@ -364,6 +390,8 @@ dashboard-frontend/      React SPA (Vite), see its own README for the full API r
   dist/                  production build, FastAPI serves this (git-ignored)
 schema.sql              Postgres schema (idempotent, safe to re-run)
 run_bot.py / run_dashboard.py
+tests/                 pytest suite (see "Development" above)
+.github/workflows/     CI + dependency-review GitHub Actions
 deploy/                systemd unit files + nginx reverse proxy config
 Dockerfile              multi-stage build (Node for the frontend, Python for bot + dashboard)
 docker-compose.yml      bot + dashboard + Postgres, alternative to deploy/

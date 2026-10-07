@@ -12,7 +12,7 @@ import logging
 import shlex
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from bot.bounded_cache import BoundedDict
 from bot.client import GatewayClient

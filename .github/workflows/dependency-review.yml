@@ -1,0 +1,21 @@
+name: Dependency Review
+
+# Flags newly introduced vulnerable/incompatibly-licensed dependencies in
+# a PR's diff. This does NOT retroactively scan the existing dependency
+# tree (that's what the repo's Dependabot alerts are for), only what a
+# given PR would add or upgrade to, so it won't go red on pre-existing
+# findings, only on new ones a PR would introduce.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

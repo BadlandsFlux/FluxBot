@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from bot.modules.logging_mod import log_and_notify
 from bot.permissions import hierarchy_violation
