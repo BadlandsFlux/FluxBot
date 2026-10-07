@@ -828,6 +828,27 @@ async def is_xp_excluded_channel(guild_id: str, channel_id: str) -> bool:
     return row is not None
 
 
+# -------------------------------------------------- level-up notify opt-out --
+async def opt_out_of_level_notify(guild_id: str, user_id: str) -> None:
+    await pool().execute(
+        "INSERT INTO level_notify_optouts (guild_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        guild_id, user_id,
+    )
+
+
+async def opt_in_to_level_notify(guild_id: str, user_id: str) -> None:
+    await pool().execute(
+        "DELETE FROM level_notify_optouts WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
+    )
+
+
+async def is_opted_out_of_level_notify(guild_id: str, user_id: str) -> bool:
+    row = await pool().fetchrow(
+        "SELECT 1 FROM level_notify_optouts WHERE guild_id=$1 AND user_id=$2", guild_id, user_id,
+    )
+    return row is not None
+
+
 # -------------------------------------------------------- xp role multipliers --
 async def set_xp_role_multiplier(guild_id: str, role_id: str, multiplier: float) -> None:
     await pool().execute(

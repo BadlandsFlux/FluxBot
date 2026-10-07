@@ -7,6 +7,7 @@ tab, or !rank / !leaderboard to check progress).
 
     !rank [@user]
     !leaderboard
+    !levelnotify on|off   opt out of your own level-up announcements
 
 XP curve is the common "MEE6-style" formula: level N requires
 5*N^2 + 50*N + 100 XP to clear, cumulative.
@@ -70,7 +71,7 @@ async def grant_xp(bot: Bot, guild_id: str, user_id: str, username: str, amount:
         return
 
     channel_id = guild_cfg["level_up_channel_id"] or fallback_channel_id
-    if channel_id:
+    if channel_id and not await db.is_opted_out_of_level_notify(guild_id, user_id):
         text = (
             guild_cfg["level_up_message"]
             .replace("{user}", f"<@{user_id}>")
@@ -182,6 +183,25 @@ def register(bot: Bot) -> None:
             # issue, whatever) shouldn't break the command, fall back to
             # the plain-text version that's always worked.
             await ctx.bot.rest.send_message(ctx.channel_id, embeds=[embed])
+
+    @bot.command("levelnotify", category="Fun", aliases=["levelnotifications"],
+                 help_text="Opt in/out of being announced when you level up. Usage: !levelnotify on|off")
+    async def levelnotify(ctx: Context) -> None:
+        user_id = str(ctx.author["id"])
+        if not ctx.args:
+            opted_out = await db.is_opted_out_of_level_notify(ctx.guild_id, user_id)
+            await ctx.reply(f"Level-up notifications are currently **{'off' if opted_out else 'on'}** for you. "
+                             f"Use `!levelnotify on` or `!levelnotify off` to change that.")
+            return
+        choice = ctx.args[0].lower()
+        if choice in ("off", "disable", "stop"):
+            await db.opt_out_of_level_notify(ctx.guild_id, user_id)
+            await ctx.reply("🔕 You won't be announced when you level up anymore. Level roles still apply as normal.")
+        elif choice in ("on", "enable", "start"):
+            await db.opt_in_to_level_notify(ctx.guild_id, user_id)
+            await ctx.reply("🔔 You'll be announced again when you level up.")
+        else:
+            await ctx.reply("Usage: `!levelnotify on` or `!levelnotify off`")
 
     @bot.command("leaderboard", category="Fun", aliases=["lb", "top"],
                  help_text="Show the server's XP leaderboard. Usage: !leaderboard")

@@ -286,6 +286,7 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!delreminder <id>` | none | Cancel a reminder |
 | `!rank [@user]` | none | Visual rank card (avatar, level, XP bar, stats) |
 | `!leaderboard` | none | Server XP leaderboard |
+| `!levelnotify on/off` | none | Opt in/out of your own level-up announcements (level roles still apply either way) |
 | `!wrapped` | none | All-time server recap image |
 | `!achievements [@user]` | none | Milestone badges earned |
 | `!mydata` | none | Everything the bot has stored about you (DMs it) |
@@ -333,7 +334,7 @@ bot/
     info.py             avatar/serverinfo/userinfo/info (owner-only)
     tags.py             !tag add/remove/list
     reminders.py         !remind/!reminders/!delreminder
-    leveling.py          XP gain, level-up + role rewards, !rank/!leaderboard
+    leveling.py          XP gain, level-up + role rewards, !rank/!leaderboard/!levelnotify
     activity.py          per-day/per-member message counters for dashboard stats
     utility.py          help/ping
     logging_mod.py       writes mod_actions rows + posts to the log channel
