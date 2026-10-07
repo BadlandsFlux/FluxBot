@@ -1,0 +1,16 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = ["dashboard-frontend"]
+
+[tool.ruff.lint]
+# E501 (line length) is deliberately off: this codebase doesn't enforce a
+# wrap column, and retrofitting one onto every existing long line isn't
+# worth the unrelated diff noise it'd add to this change. The rest of E/F/W
+# catches real issues (unused imports, undefined names, etc) cheaply.
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

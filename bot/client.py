@@ -15,7 +15,7 @@ import json
 import logging
 import random
 import time
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 import websockets

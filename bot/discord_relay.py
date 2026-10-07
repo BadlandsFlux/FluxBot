@@ -842,12 +842,12 @@ class RelayClient(discord.Client):
         if in_guild:
             try:
                 await message.author.send(
-                    f"🔗 To link your Discord and Fluxer accounts: run `!link` on Fluxer (in any server "
-                    f"this bot manages) to get a short code, then send it back to me here **in this DM** "
-                    f"as `f!link <code>`."
-                    + (f" You just posted a code in a public channel — it's still valid, just send it "
-                       f"to me here instead of there, a code is meant to be a private, single-use "
-                       f"secret." if code else "")
+                    "🔗 To link your Discord and Fluxer accounts: run `!link` on Fluxer (in any server "
+                    "this bot manages) to get a short code, then send it back to me here **in this DM** "
+                    "as `f!link <code>`."
+                    + (" You just posted a code in a public channel — it's still valid, just send it "
+                       "to me here instead of there, a code is meant to be a private, single-use "
+                       "secret." if code else "")
                 )
             except discord.HTTPException:
                 try:

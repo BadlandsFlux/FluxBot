@@ -20,7 +20,6 @@ exactly.
 from __future__ import annotations
 
 import secrets
-from typing import Any, Optional
 from urllib.parse import urlencode
 
 import httpx
