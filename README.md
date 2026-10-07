@@ -19,9 +19,18 @@ A self-hosted moderation and community bot for [Fluxer](https://fluxer.app), pai
 
 ## Screenshots
 
-**Overview tab**, member/channel/role counts, what's configured, activity charts, and recent mod actions at a glance.
+**Overview tab**, member/channel/role counts, what's configured, activity charts, and recent mod actions at a glance. Dark and light themes both supported, toggle in the top bar.
 
-![Overview tab](docs/screenshots/overview.png)
+![Overview tab, dark theme](docs/screenshots/overview-dark.png)
+![Overview tab, light theme](docs/screenshots/overview-light.png)
+
+**Members tab**, search/sort the member list and moderate straight from it.
+
+![Members tab](docs/screenshots/members.png)
+
+**Mod Log**, every warn/timeout/kick/ban/purge, searchable by username, ID, or reason.
+
+![Mod Log tab](docs/screenshots/modlog.png)
 
 **Reports tab**, community bug/issue reports captured automatically from a dedicated channel, no command needed.
 
