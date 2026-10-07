@@ -5,7 +5,7 @@
     !unban <user_id> [reason]
     !timeout @user <duration> [reason]   e.g. 10m, 2h, 1d
     !untimeout @user [reason]
-    !purge <count>
+    !purge <count> [@user]
     !warn @user [reason]
     !warnings @user
     !clearwarnings @user
@@ -18,17 +18,25 @@ behavior can't drift between the two entry points.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 
 from bot import moderation_actions as actions
 from bot.commands import Bot, Context
 from bot.moderation_actions import ModerationBlocked
 from bot.modules.logging_mod import log_and_notify
 from bot.permissions import PERM_BAN_MEMBERS, PERM_KICK_MEMBERS, PERM_MANAGE_GUILD, PERM_MANAGE_MESSAGES, PERM_MODERATE_MEMBERS
-from bot.timeutil import parse_duration_seconds
+from bot.rest import FluxerAPIError
+from bot.timeutil import parse_duration_seconds, snowflake_to_datetime
 from common import db
 
 MENTION_RE = re.compile(r"^<@!?(\d+)>$")
 CHANNEL_MENTION_RE = re.compile(r"^<#(\d+)>$")
+
+# Discord/Fluxer's bulk-delete endpoint rejects the ENTIRE batch if any
+# single message in it is older than this, rather than skipping just that
+# one, so anything past this age has to be excluded from the bulk call up
+# front or the whole purge would silently fail with no messages deleted.
+BULK_DELETE_MAX_AGE = timedelta(days=14)
 
 
 def parse_id(token: str) -> str | None:
@@ -146,24 +154,70 @@ def register(bot: Bot) -> None:
         await ctx.reply(f"🔊 Removed timeout for **{user.get('username', user['id'])}**.")
 
     @bot.command("purge", category="Moderation", aliases=["clear"], required_permission=PERM_MANAGE_MESSAGES,
-                 help_text="Bulk delete recent messages. Usage: !purge <count 1-100>")
+                 help_text="Bulk delete recent messages, optionally from just one member. "
+                            "Usage: !purge <count 1-100> [@user]")
     async def purge(ctx: Context) -> None:
         if not ctx.args or not ctx.args[0].isdigit():
-            await ctx.reply("Give a number of messages to delete (1-100).")
+            await ctx.reply("Give a number of messages to delete (1-100), optionally followed by `@user` "
+                             "to only delete that member's messages.")
             return
         count = max(1, min(100, int(ctx.args[0])))
-        messages = await ctx.bot.rest.get_channel_messages(ctx.channel_id, limit=count)
-        message_ids = [str(m["id"]) for m in messages]
-        if not message_ids:
+
+        target_user_id = None
+        if len(ctx.args) >= 2:
+            target_user_id = parse_id(ctx.args[1])
+            if not target_user_id:
+                await ctx.reply(f"Couldn't parse `{ctx.args[1]}` as a user.")
+                return
+
+        # Filtering to one member means looking through more than `count`
+        # recent messages to find `count` matching ones, since there's no
+        # "filter by author" option on the underlying endpoint, which itself
+        # caps a single call at 100.
+        fetch_limit = min(count * 5, 100) if target_user_id else count
+        try:
+            messages = await ctx.bot.rest.get_channel_messages(ctx.channel_id, limit=fetch_limit)
+        except FluxerAPIError as e:
+            await ctx.reply(f"Couldn't fetch messages to delete: `{e.status}` (check the bot's permissions).")
+            return
+
+        if target_user_id:
+            messages = [m for m in messages if str(m.get("author", {}).get("id")) == target_user_id]
+        messages = messages[:count]
+
+        if not messages:
             await ctx.reply("Nothing to delete.")
             return
-        if len(message_ids) == 1:
-            await ctx.bot.rest.delete_message(ctx.channel_id, message_ids[0])
-        else:
-            await ctx.bot.rest.bulk_delete_messages(ctx.channel_id, message_ids)
+
+        cutoff = datetime.now(timezone.utc) - BULK_DELETE_MAX_AGE
+        deletable, skipped_old = [], 0
+        for m in messages:
+            created = snowflake_to_datetime(str(m["id"]))
+            if created is not None and created < cutoff:
+                skipped_old += 1
+            else:
+                deletable.append(str(m["id"]))
+
+        if not deletable:
+            await ctx.reply(f"All {skipped_old} matching message(s) are older than 14 days, Discord/Fluxer "
+                             f"won't let a bot bulk-delete those. Remove them manually instead.")
+            return
+
+        try:
+            if len(deletable) == 1:
+                await ctx.bot.rest.delete_message(ctx.channel_id, deletable[0])
+            else:
+                await ctx.bot.rest.bulk_delete_messages(ctx.channel_id, deletable)
+        except FluxerAPIError as e:
+            await ctx.reply(f"That didn't work, the Fluxer API said: `{e.status}` (check the bot's "
+                             f"permissions / role position).")
+            return
+
+        target_note = f" from <@{target_user_id}>" if target_user_id else ""
+        skipped_note = f" ({skipped_old} skipped, older than 14 days)" if skipped_old else ""
         await log_and_notify(ctx.bot.rest, ctx.guild_id, "purge", moderator=ctx.author,
-                              reason=f"{len(message_ids)} messages in <#{ctx.channel_id}>")
-        await ctx.reply(f"🧹 Deleted {len(message_ids)} messages.")
+                              reason=f"{len(deletable)} messages in <#{ctx.channel_id}>{target_note}")
+        await ctx.reply(f"🧹 Deleted {len(deletable)} message(s){target_note}.{skipped_note}")
 
     @bot.command("warn", category="Moderation", required_permission=PERM_KICK_MEMBERS,
                  help_text="Warn a member. Usage: !warn @user [reason]")
