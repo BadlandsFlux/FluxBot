@@ -30,7 +30,9 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
       setChannelId(editing.channel_id);
       setTitle(editing.title || "Pick your roles");
       setDescription(editing.description || "");
-      setColor(editing.color ? `#${editing.color.toString(16).padStart(6, "0")}` : "#5865f2");
+      // editing.color == null (not just falsy): 0 is a real, valid color
+      // (pure black) and must not fall through to the default blue.
+      setColor(editing.color != null ? `#${editing.color.toString(16).padStart(6, "0")}` : "#5865f2");
       setRows(
         editing.entries.length
           ? editing.entries.map((e) => ({ emoji: e.emoji, label: e.label, role_id: e.role_id }))

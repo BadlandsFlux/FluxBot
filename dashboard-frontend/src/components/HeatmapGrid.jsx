@@ -7,17 +7,20 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]; // index m
 // nearest whole hour: the data is only ever hour-granular to begin with, so
 // a half-hour-offset timezone (e.g. UTC+5:30) losing that last bit of
 // precision isn't a new limitation, just the existing one carried over.
-const LOCAL_OFFSET_HOURS = Math.round(-new Date().getTimezoneOffset() / 60);
-
-function toLocalBucket(day, hour) {
-  const total = day * 24 + hour + LOCAL_OFFSET_HOURS;
+function toLocalBucket(day, hour, localOffsetHours) {
+  const total = day * 24 + hour + localOffsetHours;
   const localDay = (((Math.floor(total / 24)) % 7) + 7) % 7;
   const localHour = ((total % 24) + 24) % 24;
   return `${localDay}-${localHour}`;
 }
 
 export default function HeatmapGrid({ data }) {
-  const byKey = Object.fromEntries(data.map((d) => [toLocalBucket(d.day, d.hour), d.count]));
+  // Computed fresh on every render rather than once at module load, so a
+  // DST transition (or the system timezone changing) while this page
+  // happens to stay open doesn't leave every cell mislabeled by an hour
+  // until the next full reload.
+  const localOffsetHours = Math.round(-new Date().getTimezoneOffset() / 60);
+  const byKey = Object.fromEntries(data.map((d) => [toLocalBucket(d.day, d.hour, localOffsetHours), d.count]));
   const max = Math.max(1, ...data.map((d) => d.count));
 
   return (

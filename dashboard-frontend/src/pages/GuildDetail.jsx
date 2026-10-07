@@ -116,6 +116,22 @@ export default function GuildDetail() {
     load();
   }, [id, load]);
 
+  // ModLogTab's search box seeds itself from this ?q= param once, via a
+  // lazy useState initializer, the first time it mounts (a deep link from
+  // Members' "View mod log history"). Clearing it right after means a
+  // LATER mount (switching tabs away and back, which unmounts/remounts
+  // ModLogTab) starts from a blank search instead of reseeding the same
+  // stale value and discarding whatever the user typed in between.
+  useEffect(() => {
+    if (tab === "modlog" && params.get("q")) {
+      setParams((p) => {
+        p.delete("q");
+        return p;
+      }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   async function loadMoreActions() {
     const last = data?.actions?.[data.actions.length - 1];
     if (!last) return;
@@ -215,9 +231,17 @@ export default function GuildDetail() {
           {tab === "reports" && (
             <ReportsTab guildId={id} guild={guild} channels={channels} reports={reports}
                         hasMore={reportsHasMore} onLoadMore={loadMoreReports}
-                        onChange={(r) => setData((d) => ({
-                          ...d, reports: r, open_report_count: r.filter((x) => x.status === "open").length,
-                        }))}
+                        onChange={(result) => setData((d) => {
+                          // Merged the same way the background poll already
+                          // is (see mergePolledPage above it): a status
+                          // update's response is just the first page of
+                          // reports, a wholesale replace would silently
+                          // drop anything revealed by "Load more" before it.
+                          const mergedReports = mergePolledPage(result.reports, d.reports);
+                          const openReportCount = result.open_report_count
+                            ?? mergedReports.filter((x) => x.status === "open").length;
+                          return { ...d, reports: mergedReports, open_report_count: openReportCount };
+                        })}
                         onGuildChange={(g) => setData((d) => ({ ...d, guild: g }))} />
           )}
           {tab === "autoroles" && (
