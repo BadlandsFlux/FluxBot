@@ -10,3 +10,4 @@ asyncpg==0.31.0
 Pillow==12.1.1
 python-multipart==0.0.32
 discord.py==2.7.1
+parsedatetime==2.6

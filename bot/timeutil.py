@@ -15,10 +15,14 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
+import parsedatetime
+
 FLUXER_EPOCH_MS = 1_420_070_400_000  # best-effort guess, see module docstring
 
 DURATION_RE = re.compile(r"^(\d+)([smhdw])$", re.IGNORECASE)
 DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+_NLP_CALENDAR = parsedatetime.Calendar()
 
 
 def parse_duration_seconds(token: str) -> Optional[int]:
@@ -29,6 +33,31 @@ def parse_duration_seconds(token: str) -> Optional[int]:
         return None
     value, unit = m.groups()
     return int(value) * DURATION_UNITS[unit]
+
+
+def parse_natural_time(text: str, now: Optional[datetime] = None) -> Optional[tuple[datetime, str]]:
+    """Pull a time expression out of free-form text (e.g. 'in 2 hours take
+    out the trash', 'tomorrow at 3pm check the oven', or the older rigid
+    '2h take out the trash') and return (remind_at_utc, remaining_text)
+    with the time expression removed. Returns None if no time expression
+    is found, or nothing is left over to use as the message.
+
+    `now` (and therefore the returned datetime) is treated as UTC:
+    parsedatetime resolves relative/absolute expressions like '3pm'
+    against whatever "now" it's given, so passing a UTC "now" keeps
+    everything in UTC rather than the server's local time, there's no
+    per-user timezone stored for reminders to resolve against instead.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    matches = _NLP_CALENDAR.nlp(text, sourceTime=now.replace(tzinfo=None))
+    if not matches:
+        return None
+    parsed_dt, _flags, start, end, _matched_text = matches[0]
+    remaining = re.sub(r"\s+", " ", text[:start] + " " + text[end:]).strip()
+    if not remaining:
+        return None
+    return parsed_dt.replace(tzinfo=timezone.utc), remaining
 
 
 def snowflake_to_datetime(snowflake_id: str) -> Optional[datetime]:

@@ -280,7 +280,7 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!info` | Owner only | Bot-level stats (uptime, latency, server count) |
 | `!poll "Q" "A" "B" ... [duration]` | none | Reaction poll, up to 10 options, optional auto-close with tallied results |
 | `!tag add/remove/list <name> <content>` | Manage Guild (add/remove) | Custom `!name` shortcuts |
-| `!remind <duration> <text>` | none | e.g. `!remind 2h take out trash` (10 pending max per person) |
+| `!remind <when> <text>` | none | Natural language, e.g. `!remind in 2 hours take out trash` or `!remind tomorrow at 3pm check the oven` (10 pending max per person) |
 | `!reminders` | none | List your pending reminders |
 | `!delreminder <id>` | none | Cancel a reminder |
 | `!rank [@user]` | none | Visual rank card (avatar, level, XP bar, stats) |
