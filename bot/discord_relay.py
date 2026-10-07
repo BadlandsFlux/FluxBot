@@ -423,6 +423,15 @@ def _reply_prefix(*, author_name: str, snippet: str, jump_link: Optional[str], s
     return f"↩️ *replying to {author_name} on {source_label}: {snippet}*"
 
 
+def _apply_reply_prefix(prefix: Optional[str], content: Optional[str]) -> Optional[str]:
+    """Cheap, no-DB-no-REST counterpart to _build_reply_prefix /
+    _build_fluxer_reply_prefix: safe to call once per destination mapping
+    in a fan-out even though the prefix itself was only computed once."""
+    if not prefix:
+        return content
+    return f"{prefix}\n{content}" if content else prefix
+
+
 def _discord_jump_url(guild_id, channel_id, message_id) -> str:
     return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
 
@@ -431,8 +440,8 @@ def _fluxer_jump_url(guild_id, channel_id, message_id) -> str:
     return f"{config.web_base}/channels/{guild_id}/{channel_id}/{message_id}"
 
 
-async def _prepend_fluxer_reply_prefix(bot: Bot, data: dict, content: Optional[str]) -> Optional[str]:
-    """Fluxer-side mirror of RelayClient._prepend_reply_prefix, a
+async def _build_fluxer_reply_prefix(bot: Bot, data: dict) -> Optional[str]:
+    """Fluxer-side mirror of RelayClient._build_reply_prefix, a
     module-level function rather than a method since the handlers in
     register_fluxer_side are nested functions, not part of a class.
     Same "Discord convention, assumed mirrored" caveat as the rest of
@@ -440,11 +449,14 @@ async def _prepend_fluxer_reply_prefix(bot: Bot, data: dict, content: Optional[s
     for the pointer, referenced_message for the already-resolved
     original (Discord's own raw gateway payload includes this inline
     on a reply, no separate fetch needed in the common case), falling
-    back to a REST fetch only if that's missing."""
+    back to a REST fetch only if that's missing. Returns just the prefix
+    (see _apply_reply_prefix), not the prefix combined with content, so a
+    fan-out to several mappings computes this once rather than once per
+    mapping."""
     ref = data.get("message_reference") or {}
     ref_message_id = ref.get("message_id")
     if not ref_message_id:
-        return content
+        return None
 
     referenced = data.get("referenced_message")
     if referenced is None:
@@ -464,8 +476,7 @@ async def _prepend_fluxer_reply_prefix(bot: Bot, data: dict, content: Optional[s
         jump_link = _discord_jump_url(data.get("guild_id"), link["target_channel_id"], link["target_message_id"])
         break
 
-    prefix = _reply_prefix(author_name=author_name, snippet=snippet, jump_link=jump_link, source_label="Fluxer")
-    return f"{prefix}\n{content}" if content else prefix
+    return _reply_prefix(author_name=author_name, snippet=snippet, jump_link=jump_link, source_label="Fluxer")
 
 
 def _is_safe_download_url(url: str) -> bool:
@@ -657,7 +668,13 @@ class RelayClient(discord.Client):
         own = await db.get_relay_webhook(platform, channel_id)
         return bool(own and str(webhook_id) == str(own["webhook_id"]))
 
-    async def _prepend_reply_prefix(self, message: discord.Message, content: Optional[str]) -> Optional[str]:
+    async def _build_reply_prefix(self, message: discord.Message) -> Optional[str]:
+        """Just the prefix text for a reply (author/snippet/jump-link), no
+        content attached. Split out from the old _prepend_reply_prefix so a
+        fan-out to several destination mappings can compute this (a REST
+        fetch plus a DB query) once per source message instead of once per
+        mapping, since the result never depends on which mapping is being
+        relayed to, only _apply_reply_prefix's cheap string concat does."""
         ref = message.reference
         referenced = ref.resolved if ref.resolved and not isinstance(ref.resolved, discord.DeletedReferencedMessage) else None
         if referenced is None and ref.message_id:
@@ -680,8 +697,7 @@ class RelayClient(discord.Client):
                 jump_link = _fluxer_jump_url(mapping["fluxer_guild_id"], link["target_channel_id"], link["target_message_id"])
                 break
 
-        prefix = _reply_prefix(author_name=author_name, snippet=snippet, jump_link=jump_link, source_label="Discord")
-        return f"{prefix}\n{content}" if content else prefix
+        return _reply_prefix(author_name=author_name, snippet=snippet, jump_link=jump_link, source_label="Discord")
 
     async def on_ready(self) -> None:
         log.info("Discord relay connected as %s", self.user)
@@ -938,6 +954,10 @@ class RelayClient(discord.Client):
         avatar_url = _proxied_discord_avatar_url(message.author.display_avatar.url if message.author.display_avatar else None)
         mentioned_discord_ids = list(users.keys())
         is_reply = bool(message.reference and message.reference.message_id)
+        # Computed once per source message, not once per destination
+        # mapping (see _build_reply_prefix's own docstring): the prefix
+        # text never depends on which mapping is being relayed to.
+        reply_prefix = await self._build_reply_prefix(message) if is_reply else None
 
         for mapping in mappings:
             # Atomic claim, not just a check: the reconnect backfill (a
@@ -950,67 +970,68 @@ class RelayClient(discord.Client):
             if not await db.claim_relay_send(mapping["id"], "discord", str(message.id)):
                 continue
 
-            target = mapping["fluxer_channel_id"]
+            try:
+                target = mapping["fluxer_channel_id"]
 
-            # Re-translate per mapping: a mentioned user's link only
-            # counts as "live" for THIS mapping's destination Fluxer
-            # guild if they're actually a member there, so a fan-out to
-            # several Fluxer guilds can (correctly) produce a live
-            # mention for one and inert text for another, for the same
-            # mentioned user in the same source message.
-            live_mentioned: set = set()
-            if mentioned_discord_ids:
-                live_users = await _live_discord_to_fluxer_mentions(self, mentioned_discord_ids, mapping["fluxer_guild_id"])
-            else:
-                live_users = {}
-            if live_users:
-                raw_content = _translate_mentions(raw_source_content, users=users, channels=channels, roles=roles,
-                                                   live_users=live_users, live_mentioned=live_mentioned)
-                embeds = _translate_embeds_mentions(source_embeds, users=users, channels=channels, roles=roles,
-                                                     live_users=live_users, live_mentioned=live_mentioned)
-            else:
-                raw_content, embeds = base_content, base_embeds
-            if is_reply:
-                raw_content = await self._prepend_reply_prefix(message, raw_content)
-            allowed_mentions = FluxerREST.mention_only(*live_mentioned) if live_mentioned else None
+                # Re-translate per mapping: a mentioned user's link only
+                # counts as "live" for THIS mapping's destination Fluxer
+                # guild if they're actually a member there, so a fan-out to
+                # several Fluxer guilds can (correctly) produce a live
+                # mention for one and inert text for another, for the same
+                # mentioned user in the same source message.
+                live_mentioned: set = set()
+                if mentioned_discord_ids:
+                    live_users = await _live_discord_to_fluxer_mentions(self, mentioned_discord_ids, mapping["fluxer_guild_id"])
+                else:
+                    live_users = {}
+                if live_users:
+                    raw_content = _translate_mentions(raw_source_content, users=users, channels=channels, roles=roles,
+                                                       live_users=live_users, live_mentioned=live_mentioned)
+                    embeds = _translate_embeds_mentions(source_embeds, users=users, channels=channels, roles=roles,
+                                                         live_users=live_users, live_mentioned=live_mentioned)
+                else:
+                    raw_content, embeds = base_content, base_embeds
+                raw_content = _apply_reply_prefix(reply_prefix, raw_content)
+                allowed_mentions = FluxerREST.mention_only(*live_mentioned) if live_mentioned else None
 
-            result, sent_via_webhook = None, False
-            used_webhook_id, used_webhook_token = None, None
+                result, sent_via_webhook = None, False
+                used_webhook_id, used_webhook_token = None, None
 
-            if mapping["show_attribution"]:
-                webhook_send = await _send_via_fluxer_webhook(
-                    self._fluxer_rest, target, content=raw_content, embeds=embeds, files=files,
-                    username=display_name, avatar_url=avatar_url, allowed_mentions=allowed_mentions,
-                )
-                if webhook_send is not None:
-                    result, used_webhook_id, used_webhook_token = webhook_send
-                    sent_via_webhook = True
+                if mapping["show_attribution"]:
+                    webhook_send = await _send_via_fluxer_webhook(
+                        self._fluxer_rest, target, content=raw_content, embeds=embeds, files=files,
+                        username=display_name, avatar_url=avatar_url, allowed_mentions=allowed_mentions,
+                    )
+                    if webhook_send is not None:
+                        result, used_webhook_id, used_webhook_token = webhook_send
+                        sent_via_webhook = True
 
-            if result is None:
-                prefix = f"**[Discord] {display_name}:**" if mapping["show_attribution"] else None
-                content = _with_attribution(raw_content, prefix)
-                try:
+                if result is None:
+                    prefix = f"**[Discord] {display_name}:**" if mapping["show_attribution"] else None
+                    content = _with_attribution(raw_content, prefix)
                     if files:
                         result = await self._fluxer_rest.send_message_with_files(target, files, content=content, embeds=embeds,
                                                                                     allowed_mentions=allowed_mentions)
                     else:
                         result = await self._fluxer_rest.send_message(target, content=content, embeds=embeds,
                                                                          allowed_mentions=allowed_mentions)
-                except FluxerAPIError:
-                    log.warning("Failed to relay Discord message %s to Fluxer channel %s",
-                                message.id, target, exc_info=True)
-                    # Nothing was actually sent, release the claim so a
-                    # later retry (the next backfill pass, say) isn't
-                    # permanently blocked from ever relaying this one.
-                    await db.release_relay_send_claim(mapping["id"], "discord", str(message.id))
-                    continue
 
-            if result and result.get("id"):
-                await db.add_relay_message_link(mapping["id"], "discord", str(message.id),
-                                                  "fluxer", str(result["id"]), target,
-                                                  sent_via_webhook=sent_via_webhook,
-                                                  webhook_id=used_webhook_id, webhook_token=used_webhook_token)
-            else:
+                if result and result.get("id"):
+                    await db.add_relay_message_link(mapping["id"], "discord", str(message.id),
+                                                      "fluxer", str(result["id"]), target,
+                                                      sent_via_webhook=sent_via_webhook,
+                                                      webhook_id=used_webhook_id, webhook_token=used_webhook_token)
+                else:
+                    await db.release_relay_send_claim(mapping["id"], "discord", str(message.id))
+            except Exception:
+                # Covers a failed send (most often FluxerAPIError) AND any
+                # error in the translation/prefix work above it: either
+                # way nothing was actually sent for this mapping, so the
+                # claim must be released or a later retry (the next
+                # backfill pass, say) would be permanently blocked from
+                # ever relaying this one, not just until the next prune.
+                log.warning("Failed to relay Discord message %s to Fluxer channel %s",
+                            message.id, mapping["fluxer_channel_id"], exc_info=True)
                 await db.release_relay_send_claim(mapping["id"], "discord", str(message.id))
 
     async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent) -> None:
@@ -1311,7 +1332,8 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
             # the same safe, inert-text translation as an unlinked
             # mention always has, nothing here downgrades on delivery,
             # it just never had a live mention to begin with.
-            queued_content = await _prepend_fluxer_reply_prefix(bot, data, base_content)
+            queued_prefix = await _build_fluxer_reply_prefix(bot, data)
+            queued_content = _apply_reply_prefix(queued_prefix, base_content)
             embeds_json = json.dumps(base_embeds) if base_embeds else None
             attachments_json = json.dumps(attachment_refs) if attachment_refs else None
             for mapping in mappings:
@@ -1333,6 +1355,11 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
                 files.append((ref["filename"], file_bytes))
             else:
                 log.warning("Couldn't download Fluxer attachment %s for relay to Discord", ref["filename"])
+
+        # Computed once per source message, not once per destination
+        # mapping, same reasoning as the Discord -> Fluxer direction's
+        # reply_prefix above.
+        live_reply_prefix = await _build_fluxer_reply_prefix(bot, data)
 
         for mapping in mappings:
             target = mapping["discord_channel_id"]
@@ -1358,7 +1385,7 @@ def register_fluxer_side(bot: Bot, relay_client: RelayClient) -> None:
                                                          live_users=live_users, live_mentioned=live_mentioned)
                 else:
                     raw_content, embeds = base_content, base_embeds
-                raw_content = await _prepend_fluxer_reply_prefix(bot, data, raw_content)
+                raw_content = _apply_reply_prefix(live_reply_prefix, raw_content)
                 allowed_mentions = _discord_allowed_mentions_for(live_mentioned)
 
                 if mapping["show_attribution"]:
