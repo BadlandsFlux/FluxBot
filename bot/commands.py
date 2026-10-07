@@ -135,6 +135,9 @@ class Bot:
     def invalidate_member(self, guild_id: str, user_id: str) -> None:
         self._member_cache.pop((guild_id, user_id), None)
 
+    def invalidate_prefix(self, guild_id: str) -> None:
+        self._prefix_cache.pop(guild_id, None)
+
     @property
     def uptime_seconds(self) -> float:
         return time.monotonic() - self.started_at
