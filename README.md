@@ -266,7 +266,7 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!unban <id> [reason]` | Ban Members | Unban by ID |
 | `!timeout @user <dur> [reason]` | Moderate Members | e.g. `10m`, `2h`, `1d` |
 | `!untimeout @user [reason]` | Moderate Members | Remove a timeout |
-| `!purge <count>` | Manage Messages | Bulk delete recent messages |
+| `!purge <count> [@user]` | Manage Messages | Bulk delete recent messages, optionally from just one member. Skips (and reports) any older than 14 days, since Discord/Fluxer won't bulk-delete those |
 | `!warn @user [reason]` | Kick Members | Warn (auto-escalates per guild settings) |
 | `!warnings @user` | none | List a member's warnings |
 | `!note add/list/remove @user <text>` | Kick Members | Private staff notes, no escalation |
