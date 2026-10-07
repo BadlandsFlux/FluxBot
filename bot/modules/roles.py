@@ -1,12 +1,12 @@
 """Autorole + reaction roles.
 
-    !autorole add @role       — role auto-assigned to every new member
+    !autorole add @role                 role auto-assigned to every new member
     !autorole remove @role
-    !autorole list
+    !autorole list [page]
 
     !reactionrole add <message_id> <emoji> @role
     !reactionrole remove <mapping_id>
-    !reactionrole list
+    !reactionrole list [page] [@role] [#channel]
 """
 from __future__ import annotations
 
@@ -14,12 +14,16 @@ import logging
 import re
 
 from bot.commands import Bot, Context
+from bot.modules.moderation import parse_channel_id
 from bot.permissions import PERM_MANAGE_GUILD, role_is_privileged
 from common import db
 
 log = logging.getLogger("fluxbot.roles")
 
 ROLE_MENTION_RE = re.compile(r"^<@&(\d+)>$")
+
+AUTOROLE_PAGE_SIZE = 20
+REACTION_ROLE_PAGE_SIZE = 10
 
 
 def parse_role_id(token: str) -> str | None:
@@ -35,11 +39,11 @@ def register(bot: Bot) -> None:
 
     # ------------------------------------------------------------ setup --
     @bot.command("autorole", category="Roles", help_text="Manage roles auto-assigned to new members. "
-                                        "Usage: !autorole add|remove|list [@role]",
+                                        "Usage: !autorole add|remove|list [@role] [page]",
                  required_permission=PERM_MANAGE_GUILD)
     async def autorole(ctx: Context) -> None:
         if not ctx.args:
-            await ctx.reply("Usage: `!autorole add @role` / `remove @role` / `list`")
+            await ctx.reply("Usage: `!autorole add @role` / `remove @role` / `list [page]`")
             return
         sub = ctx.args[0].lower()
         if sub == "list":
@@ -47,7 +51,18 @@ def register(bot: Bot) -> None:
             if not role_ids:
                 await ctx.reply("No autoroles configured.")
                 return
-            await ctx.reply("Autoroles: " + ", ".join(f"<@&{r}>" for r in role_ids))
+            page = 1
+            for tok in ctx.args[1:]:
+                if tok.isdigit():
+                    page = max(1, int(tok))
+            total_pages = max(1, (len(role_ids) + AUTOROLE_PAGE_SIZE - 1) // AUTOROLE_PAGE_SIZE)
+            page = min(page, total_pages)
+            start = (page - 1) * AUTOROLE_PAGE_SIZE
+            page_ids = role_ids[start:start + AUTOROLE_PAGE_SIZE]
+            footer = f"Page {page}/{total_pages}, {len(role_ids)} total."
+            if page < total_pages:
+                footer += f" See more with `!autorole list {page + 1}`."
+            await ctx.reply("Autoroles: " + ", ".join(f"<@&{r}>" for r in page_ids) + f"\n\n_{footer}_")
             return
         if len(ctx.args) < 2:
             await ctx.reply(f"Usage: `!autorole {sub} @role`")
@@ -80,7 +95,7 @@ def register(bot: Bot) -> None:
     async def reactionrole(ctx: Context) -> None:
         if not ctx.args:
             await ctx.reply("Usage: `!reactionrole add <message_id> <emoji> @role` / "
-                             "`remove <mapping_id>` / `list`")
+                             "`remove <mapping_id>` / `list [page] [@role] [#channel]`")
             return
         sub = ctx.args[0].lower()
         if sub == "list":
@@ -88,9 +103,36 @@ def register(bot: Bot) -> None:
             if not rows:
                 await ctx.reply("No reaction roles configured.")
                 return
-            lines = [f"`#{r['id']}` {r['emoji']} → <@&{r['role_id']}> "
-                     f"(message `{r['message_id']}` in <#{r['channel_id']}>)" for r in rows]
-            await ctx.embed("Reaction roles", "\n".join(lines))
+
+            page = 1
+            filter_role_id = None
+            filter_channel_id = None
+            for tok in ctx.args[1:]:
+                if tok.startswith("<@&"):
+                    filter_role_id = parse_role_id(tok) or filter_role_id
+                elif tok.startswith("<#"):
+                    filter_channel_id = parse_channel_id(tok) or filter_channel_id
+                elif tok.isdigit():
+                    page = max(1, int(tok))
+
+            if filter_role_id:
+                rows = [r for r in rows if r["role_id"] == filter_role_id]
+            if filter_channel_id:
+                rows = [r for r in rows if r["channel_id"] == filter_channel_id]
+            if not rows:
+                await ctx.reply("No reaction roles match that filter.")
+                return
+
+            total_pages = max(1, (len(rows) + REACTION_ROLE_PAGE_SIZE - 1) // REACTION_ROLE_PAGE_SIZE)
+            page = min(page, total_pages)
+            start = (page - 1) * REACTION_ROLE_PAGE_SIZE
+            page_rows = rows[start:start + REACTION_ROLE_PAGE_SIZE]
+            lines = [f"`#{r['id']}` {r['emoji']} to <@&{r['role_id']}> "
+                     f"(message `{r['message_id']}` in <#{r['channel_id']}>)" for r in page_rows]
+            footer = f"Page {page}/{total_pages}, {len(rows)} total."
+            if page < total_pages:
+                footer += f" See more with `!reactionrole list {page + 1}`."
+            await ctx.embed("Reaction roles", "\n".join(lines) + f"\n\n_{footer}_")
             return
         if sub == "remove":
             if len(ctx.args) < 2 or not ctx.args[1].isdigit():
