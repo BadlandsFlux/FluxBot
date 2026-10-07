@@ -35,6 +35,12 @@ _PREFIX_CACHE_TTL = 30  # seconds
 _GUILD_CACHE_TTL = 60  # seconds
 _MEMBER_CACHE_TTL = 60  # seconds
 
+# Commands that per-guild disabling (see bot/modules/command_toggles.py and
+# the dashboard's /api/guilds/{id}/commands endpoints, which both read this
+# same set) can never touch, so a server can't lock itself out of managing
+# or discovering commands from chat.
+NEVER_DISABLED_COMMANDS = {"commands", "help"}
+
 
 @dataclass
 class Context:
@@ -210,6 +216,12 @@ class Bot:
                 log.exception("Command %s raised an unexpected error", name)
                 await ctx.reply("Something went wrong running that command.")
             return
+
+        if command.name not in NEVER_DISABLED_COMMANDS:
+            from common import db as _db
+            if await _db.is_command_disabled(guild_id, command.name):
+                await ctx.reply(f"The `{command.name}` command is disabled in this server.")
+                return
 
         try:
             ctx.guild = await self.get_guild(guild_id)

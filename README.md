@@ -272,6 +272,7 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!note add/list/remove @user <text>` | Kick Members | Private staff notes, no escalation |
 | `!clearwarnings @user` | Kick Members | Clear active warnings |
 | `!modlog #channel` | Manage Guild | Set the mod-log channel |
+| `!commands list/enable/disable <name>` | Manage Guild | Turn individual commands off for this server (also in the dashboard's Commands tab) |
 | `!autorole add/remove/list @role` | Manage Guild | Roles auto-given on join |
 | `!reactionrole add/remove/list ...` | Manage Guild | Reaction to role mapping |
 | `!avatar [@user]` | none | Show a member's avatar |

@@ -22,9 +22,9 @@ from bot import report_actions
 from bot.bounded_cache import BoundedDict
 from bot.moderation_actions import ModerationBlocked
 from bot import voice_tracker
-from bot.commands import Bot as BotFramework
+from bot.commands import Bot as BotFramework, NEVER_DISABLED_COMMANDS
 from bot.discord_relay import INVITE_PERMISSIONS as DISCORD_RELAY_INVITE_PERMISSIONS
-from bot.modules import account_links, achievements, fun, info as info_module, leveling, moderation, mydata, reminders, reports, roles, staffnotes, tags, trivia, utility
+from bot.modules import account_links, achievements, command_toggles, fun, info as info_module, leveling, moderation, mydata, reminders, reports, roles, staffnotes, tags, trivia, utility
 from bot.modules import afk as afk_module
 from bot.permissions import permission_name, role_is_privileged
 from bot.rest import FluxerAPIError, FluxerREST
@@ -69,6 +69,7 @@ def _build_command_catalog() -> list:
     mydata.register(catalog_bot)
     account_links.register(catalog_bot)
     reports.register(catalog_bot)
+    command_toggles.register(catalog_bot)
     seen = set()
     commands = []
     for cmd in catalog_bot.commands.values():
@@ -80,6 +81,15 @@ def _build_command_catalog() -> list:
 
 
 COMMAND_CATALOG = _build_command_catalog()
+
+# Every registered name AND alias resolves to its Command, so looking up a
+# per-guild toggle by whichever name an admin typed or clicked always lands
+# on the same canonical cmd.name the bot's own dispatcher disables.
+_COMMANDS_BY_NAME = {}
+for _cmd in COMMAND_CATALOG:
+    _COMMANDS_BY_NAME[_cmd.name] = _cmd
+    for _alias in _cmd.aliases:
+        _COMMANDS_BY_NAME[_alias] = _cmd
 
 
 _KNOWN_PLACEHOLDER_SECRETS = {"dev-secret-change-me", "change_me_to_a_long_random_string"}
@@ -285,6 +295,45 @@ async def api_commands():
             "permission": "Owner only" if cmd.owner_only else permission_name(cmd.required_permission),
         })
     return {"default_prefix": config.command_prefix, "categories": by_category}
+
+
+@app.get("/api/guilds/{guild_id}/commands")
+async def api_guild_commands(request: Request, guild_id: str):
+    await _require_manage(request, guild_id)
+    disabled = set(await db.list_disabled_commands(guild_id))
+    by_category: dict[str, list] = {}
+    for cmd in COMMAND_CATALOG:
+        by_category.setdefault(cmd.category, []).append({
+            "name": cmd.name,
+            "aliases": cmd.aliases,
+            "help_text": cmd.help_text,
+            "permission": "Owner only" if cmd.owner_only else permission_name(cmd.required_permission),
+            "enabled": cmd.name not in disabled,
+            "locked": cmd.owner_only or cmd.name in NEVER_DISABLED_COMMANDS,
+        })
+    return {"categories": by_category}
+
+
+@app.post("/api/guilds/{guild_id}/commands/{command_name}/disable")
+async def api_disable_command(request: Request, guild_id: str, command_name: str):
+    await _require_manage(request, guild_id)
+    command = _COMMANDS_BY_NAME.get(command_name.lower())
+    if not command:
+        raise _ApiError(404, f"No command named '{command_name}'.")
+    if command.owner_only or command.name in NEVER_DISABLED_COMMANDS:
+        raise _ApiError(400, f"'{command.name}' can't be disabled.")
+    await db.disable_command(guild_id, command.name)
+    return {"disabled_commands": await db.list_disabled_commands(guild_id)}
+
+
+@app.post("/api/guilds/{guild_id}/commands/{command_name}/enable")
+async def api_enable_command(request: Request, guild_id: str, command_name: str):
+    await _require_manage(request, guild_id)
+    command = _COMMANDS_BY_NAME.get(command_name.lower())
+    if not command:
+        raise _ApiError(404, f"No command named '{command_name}'.")
+    await db.enable_command(guild_id, command.name)
+    return {"disabled_commands": await db.list_disabled_commands(guild_id)}
 
 
 # A stale heartbeat (no update in well over one scheduler tick) means the
