@@ -216,7 +216,14 @@ async def login(request: Request):
 async def auth_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None,
                          error: Optional[str] = None):
     if error:
-        return RedirectResponse(f"/?login_error={error}")
+        # error is whatever the OAuth provider (or anyone who crafts their
+        # own link to this endpoint) puts in the query string, reflecting
+        # it straight into the redirect is exactly the kind of "uncontrolled
+        # data" CodeQL's URL-redirection query flags, and is needless
+        # besides: the frontend only ever shows one of a few fixed messages
+        # anyway (see Login.jsx's ERROR_MESSAGES), never the raw value.
+        log.info("OAuth provider returned an error on callback: %s", error)
+        return RedirectResponse("/?login_error=provider_error")
     expected_state = request.session.pop("oauth_state", None)
     if not code or not state or state != expected_state:
         return RedirectResponse("/?login_error=state_mismatch")
@@ -1992,30 +1999,41 @@ async def api_set_discord_relay_token(request: Request, payload: DiscordRelayTok
 
 
 # ------------------------------------------------------ serve the frontend --
+def resolve_frontend_path(full_path: str) -> Path:
+    """Resolves full_path against FRONTEND_DIST for the SPA catch-all
+    below, returning FRONTEND_DIST's own index.html instead whenever the
+    result doesn't check out, so callers can always just FileResponse()
+    whatever this returns without a separate safety check of their own.
+
+    SECURITY: full_path is attacker-controlled. A naive
+    `FRONTEND_DIST / full_path` join is vulnerable to path traversal,
+    percent-encoded slashes (e.g. `..%2f..%2f.env`) bypass most
+    request-path normalization done earlier in the stack and reach this
+    function with literal `..` segments intact. Resolving the joined
+    path and explicitly verifying it's still inside FRONTEND_DIST,
+    rather than trusting the join result directly, defeats that
+    regardless of how the traversal sequence got here, pulled out into
+    its own function (importable and testable without a built frontend
+    needing to exist on disk) specifically so that claim has a test
+    behind it instead of just a comment.
+    """
+    base = FRONTEND_DIST.resolve()
+    candidate = (FRONTEND_DIST / full_path).resolve()
+    if full_path and candidate.is_relative_to(base) and candidate.is_file():
+        return candidate
+    return FRONTEND_DIST / "index.html"
+
+
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="frontend-assets")
-    _FRONTEND_DIST_RESOLVED = FRONTEND_DIST.resolve()
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
         """Catch-all so React Router's client-side routes (e.g. /guild/123)
         work on a hard refresh too, anything not matched above falls
-        through to index.html and the SPA takes over routing.
-
-        SECURITY: full_path is attacker-controlled. A naive
-        `FRONTEND_DIST / full_path` join is vulnerable to path traversal,
-        percent-encoded slashes (e.g. `..%2f..%2f.env`) bypass most
-        request-path normalization done earlier in the stack and reach
-        this handler with literal `..` segments intact. We resolve the
-        joined path and explicitly verify it's still inside FRONTEND_DIST
-        before ever touching the filesystem with it, rather than trusting
-        the join result directly.
-        """
-        candidate = (FRONTEND_DIST / full_path).resolve()
-        is_contained = candidate == _FRONTEND_DIST_RESOLVED or _FRONTEND_DIST_RESOLVED in candidate.parents
-        if full_path and is_contained and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        through to index.html and the SPA takes over routing. See
+        resolve_frontend_path() for the path-traversal guard."""
+        return FileResponse(resolve_frontend_path(full_path))
 else:
     @app.get("/")
     async def frontend_not_built():
