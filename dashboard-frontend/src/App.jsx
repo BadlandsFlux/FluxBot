@@ -12,6 +12,7 @@ import Commands from "./pages/Commands";
 import Status from "./pages/Status";
 import BotProfile from "./pages/BotProfile";
 import DiscordRelaySetup from "./pages/DiscordRelaySetup";
+import FluxerStatus from "./pages/FluxerStatus";
 import { api, setUnauthorizedHandler } from "./api";
 
 export default function App() {
@@ -62,6 +63,10 @@ export default function App() {
               <Route
                 path="/discord-relay-setup"
                 element={me.user && me.is_owner ? <DiscordRelaySetup /> : <Login botName={botName} />}
+              />
+              <Route
+                path="/fluxer-status"
+                element={me.user && me.is_owner ? <FluxerStatus /> : <Login botName={botName} />}
               />
             </Routes>
           </main>
