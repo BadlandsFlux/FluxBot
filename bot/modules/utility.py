@@ -14,6 +14,24 @@ CATEGORY_EMOJI = {
     "Moderation": "🛡️", "Roles": "🎭", "Info": "ℹ️",
     "Fun": "🎉", "Utility": "🔧", "General": "📎",
 }
+EMBED_FIELD_VALUE_LIMIT = 1024
+
+
+def _chunk_field_value(lines: list[str], limit: int = EMBED_FIELD_VALUE_LIMIT) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        added_len = len(line) + (1 if current else 0)
+        if current and current_len + added_len > limit:
+            chunks.append("\n".join(current))
+            current, current_len = [line], len(line)
+        else:
+            current.append(line)
+            current_len += added_len
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
 
 
 def register(bot: Bot) -> None:
@@ -82,7 +100,9 @@ def register(bot: Bot) -> None:
                     perm_note = "  ·  _Owner only_"
                 lines.append(f"**`{prefix}{cmd.name}`** — {cmd.help_text or 'No description.'}{perm_note}")
             emoji = CATEGORY_EMOJI.get(category, "•")
-            fields.append({"name": f"{emoji} {category}", "value": "\n".join(lines), "inline": False})
+            for i, chunk in enumerate(_chunk_field_value(lines)):
+                title = f"{emoji} {category}" if i == 0 else f"{emoji} {category} (cont.)"
+                fields.append({"name": title, "value": chunk, "inline": False})
 
         embed = {
             "title": f"{config.bot_name} commands",
