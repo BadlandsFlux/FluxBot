@@ -11,6 +11,7 @@ bot/commands.py's dispatcher when no built-in command matches.
 from __future__ import annotations
 
 from bot.commands import Bot, Context
+from bot.modules import achievements
 from bot.permissions import PERM_MANAGE_GUILD, is_moderator
 from common import db
 
@@ -52,6 +53,7 @@ def register(bot: Bot) -> None:
                 await ctx.reply("Give some content for the tag.")
                 return
             await db.add_tag(ctx.guild_id, name, content, str(ctx.author["id"]))
+            await achievements.check_tag_achievements(ctx.guild_id, str(ctx.author["id"]))
             await ctx.reply(f"✅ Saved tag `{name}`.")
             return
 

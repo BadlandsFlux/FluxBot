@@ -1597,6 +1597,13 @@ async def create_report(guild_id: str, reporter_id: str, content: str, submit_ch
     )
 
 
+async def get_report_count_by_reporter(guild_id: str, reporter_id: str) -> int:
+    row = await pool().fetchrow(
+        "SELECT COUNT(*) AS count FROM reports WHERE guild_id=$1 AND reporter_id=$2", guild_id, reporter_id,
+    )
+    return row["count"]
+
+
 async def get_open_reports_for_dedup(guild_id: str, limit: int = 200) -> list[asyncpg.Record]:
     """Candidate set for the basic text-similarity duplicate check run
     against a newly-submitted report (see bot/report_actions.py). Only
