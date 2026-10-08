@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Plus, Send, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, GripVertical, Plus, Send, Upload, X } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "./Flash";
 import Spinner from "./Spinner";
@@ -9,11 +9,54 @@ import EmbedPreview from "./EmbedPreview";
 
 const MAX_FIELDS = 25;
 
-function FieldRow({ field, onChange, onRemove }) {
+function FieldRow({ field, index, count, onChange, onRemove, onMove, dragState }) {
   const valueRef = useRef(null);
+  const { draggedId, setDraggedId, overId, setOverId } = dragState;
+  const isDragging = draggedId === field.id;
+  const isDropTarget = overId === field.id && draggedId !== null && draggedId !== field.id;
+
   return (
-    <div className="embed-field-row">
+    <div
+      className={`embed-field-row${isDragging ? " embed-field-row-dragging" : ""}${isDropTarget ? " embed-field-row-drop-target" : ""}`}
+      onDragOver={(e) => {
+        if (draggedId === null) return;
+        e.preventDefault();
+        setOverId(field.id);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        if (draggedId !== null) onMove(draggedId, field.id);
+        setDraggedId(null);
+        setOverId(null);
+      }}
+    >
       <div className="embed-field-row-head">
+        <div
+          className="embed-field-drag-handle"
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = "move";
+            setDraggedId(field.id);
+          }}
+          onDragEnd={() => {
+            setDraggedId(null);
+            setOverId(null);
+          }}
+          title="Drag to reorder"
+          aria-label="Drag to reorder this field"
+        >
+          <GripVertical size={14} />
+        </div>
+        <div className="embed-field-reorder-buttons">
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => onMove(field.id, "up")}
+                  disabled={index === 0} aria-label="Move field up" title="Move up">
+            <ChevronUp size={12} />
+          </button>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => onMove(field.id, "down")}
+                  disabled={index === count - 1} aria-label="Move field down" title="Move down">
+            <ChevronDown size={12} />
+          </button>
+        </div>
         <input
           type="text"
           value={field.name}
@@ -48,9 +91,28 @@ function FieldRow({ field, onChange, onRemove }) {
   );
 }
 
+// Everything but channelId: the channel is specific to the server you're
+// in, but the rest of an embed (what this export/import pair exists for)
+// is exactly the part worth reusing in a different one.
+function buildExport({ title, url, description, color, imageUrl, thumbnailUrl, footer,
+                        authorName, authorIconUrl, authorUrl, timestamp, fields }) {
+  return {
+    kind: "fluxbot-embed", version: 1,
+    title, url, description, color, imageUrl, thumbnailUrl, footer,
+    authorName, authorIconUrl, authorUrl, timestamp,
+    fields: fields.map((f) => ({ name: f.name, value: f.value, inline: !!f.inline })),
+  };
+}
+
+function slugForFilename(title) {
+  const slug = (title || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug ? `embed-${slug}` : "embed";
+}
+
 export default function EmbedBuilder({ guildId, channels }) {
   const flash = useFlash();
   const descRef = useRef(null);
+  const importInputRef = useRef(null);
   const [channelId, setChannelId] = useState("");
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
@@ -71,6 +133,9 @@ export default function EmbedBuilder({ guildId, channels }) {
   // its focus) to a different field's data whenever a field before it is
   // removed.
   const nextFieldId = useRef(0);
+  const [draggedId, setDraggedId] = useState(null);
+  const [overId, setOverId] = useState(null);
+  const dragState = { draggedId, setDraggedId, overId, setOverId };
 
   function addField() {
     if (fields.length >= MAX_FIELDS) return;
@@ -84,6 +149,83 @@ export default function EmbedBuilder({ guildId, channels }) {
 
   function removeField(id) {
     setFields((f) => f.filter((field) => field.id !== id));
+  }
+
+  // `target` is either another field's id (drag-and-drop landed on it) or
+  // the literal string "up"/"down" (the arrow buttons move by one slot).
+  function moveField(id, target) {
+    setFields((f) => {
+      const fromIndex = f.findIndex((field) => field.id === id);
+      if (fromIndex === -1) return f;
+      let toIndex;
+      if (target === "up") toIndex = fromIndex - 1;
+      else if (target === "down") toIndex = fromIndex + 1;
+      else toIndex = f.findIndex((field) => field.id === target);
+      if (toIndex === -1 || toIndex >= f.length || toIndex === fromIndex) return f;
+      const next = [...f];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }
+
+  function exportToFile() {
+    const data = buildExport({
+      title, url, description, color, imageUrl, thumbnailUrl, footer,
+      authorName, authorIconUrl, authorUrl, timestamp, fields,
+    });
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = `${slugForFilename(title)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(objectUrl);
+  }
+
+  function triggerImport() {
+    importInputRef.current?.click();
+  }
+
+  async function handleImportFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // so picking the same file again still fires onChange
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (typeof data !== "object" || data === null || Array.isArray(data)) {
+        throw new Error("not an embed file");
+      }
+      setTitle(typeof data.title === "string" ? data.title : "");
+      setUrl(typeof data.url === "string" ? data.url : "");
+      setDescription(typeof data.description === "string" ? data.description : "");
+      setColor(typeof data.color === "string" && /^#[0-9a-fA-F]{6}$/.test(data.color) ? data.color : "#5865f2");
+      setImageUrl(typeof data.imageUrl === "string" ? data.imageUrl : "");
+      setThumbnailUrl(typeof data.thumbnailUrl === "string" ? data.thumbnailUrl : "");
+      setFooter(typeof data.footer === "string" ? data.footer : "");
+      setAuthorName(typeof data.authorName === "string" ? data.authorName : "");
+      setAuthorIconUrl(typeof data.authorIconUrl === "string" ? data.authorIconUrl : "");
+      setAuthorUrl(typeof data.authorUrl === "string" ? data.authorUrl : "");
+      setTimestamp(!!data.timestamp);
+      const importedFields = Array.isArray(data.fields) ? data.fields : [];
+      setFields(
+        importedFields.slice(0, MAX_FIELDS).map((f) => {
+          nextFieldId.current += 1;
+          return {
+            id: nextFieldId.current,
+            name: typeof f?.name === "string" ? f.name : "",
+            value: typeof f?.value === "string" ? f.value : "",
+            inline: !!f?.inline,
+          };
+        }),
+      );
+      flash("Embed imported. Pick a channel and send whenever you're ready.");
+    } catch {
+      flash("Couldn't read that file as an embed export.", "error");
+    }
   }
 
   async function handleSubmit(e) {
@@ -130,6 +272,18 @@ export default function EmbedBuilder({ guildId, channels }) {
 
   return (
     <form onSubmit={handleSubmit} className="settings-form">
+      <div className="embed-builder-toolbar">
+        <button type="button" className="btn btn-ghost btn-small" onClick={exportToFile}>
+          <Download size={14} /> Export to file
+        </button>
+        <button type="button" className="btn btn-ghost btn-small" onClick={triggerImport}>
+          <Upload size={14} /> Import from file
+        </button>
+        <input ref={importInputRef} type="file" accept=".json,application/json" onChange={handleImportFile}
+               style={{ display: "none" }} aria-hidden="true" tabIndex={-1} />
+        <span className="muted small">Exports everything but the channel, so you can bring an embed into any server.</span>
+      </div>
+
       <label>
         Channel
         <Combobox options={channels} value={channelId} onChange={setChannelId} placeholder="Pick a channel" />
@@ -186,8 +340,9 @@ export default function EmbedBuilder({ guildId, channels }) {
             <Plus size={14} /> Add field
           </button>
         </div>
-        {fields.map((f) => (
-          <FieldRow key={f.id} field={f} onChange={(next) => updateField(f.id, next)} onRemove={() => removeField(f.id)} />
+        {fields.map((f, i) => (
+          <FieldRow key={f.id} field={f} index={i} count={fields.length} onChange={(next) => updateField(f.id, next)}
+                    onRemove={() => removeField(f.id)} onMove={moveField} dragState={dragState} />
         ))}
       </div>
 
