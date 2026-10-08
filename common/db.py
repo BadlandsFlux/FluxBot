@@ -83,6 +83,7 @@ _ALLOWED_SETTINGS = {
     "leveling_enabled", "level_up_channel_id", "level_up_message",
     "warn_timeout_at", "warn_kick_at", "warn_timeout_minutes",
     "report_channel_id", "report_tracker_channel_id",
+    "voice_xp_cap_enabled",
 }
 
 
@@ -649,6 +650,46 @@ async def record_voice_minutes(guild_id: str, user_id: str, minutes: float) -> N
         """,
         guild_id, user_id, minutes,
     )
+
+
+async def add_voice_xp_capped(guild_id: str, user_id: str, proposed_xp: int, daily_cap: int) -> int:
+    """Atomically adds up to `proposed_xp` toward today's per-member voice
+    XP cap and returns how much was actually granted (0 once already at
+    or over the cap). Locks today's row for the duration (same
+    read-compute-write-under-one-transaction shape as
+    add_xp_and_advance_level's own docstring explains) so two flushes
+    for the same member landing close together can't both read the same
+    stale "earned so far" and together grant more than the cap allows."""
+    if proposed_xp <= 0:
+        return 0
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO member_voice_xp_daily (guild_id, user_id, day, xp_earned)
+                VALUES ($1, $2, CURRENT_DATE, 0)
+                ON CONFLICT (guild_id, user_id, day) DO NOTHING
+                """,
+                guild_id, user_id,
+            )
+            row = await conn.fetchrow(
+                """
+                SELECT xp_earned FROM member_voice_xp_daily
+                WHERE guild_id=$1 AND user_id=$2 AND day=CURRENT_DATE
+                FOR UPDATE
+                """,
+                guild_id, user_id,
+            )
+            granted = max(0, min(proposed_xp, daily_cap - row["xp_earned"]))
+            if granted > 0:
+                await conn.execute(
+                    """
+                    UPDATE member_voice_xp_daily SET xp_earned = xp_earned + $3
+                    WHERE guild_id=$1 AND user_id=$2 AND day=CURRENT_DATE
+                    """,
+                    guild_id, user_id, granted,
+                )
+            return granted
 
 
 async def get_top_voice_members(guild_id: str, limit: int = 5) -> list[asyncpg.Record]:
