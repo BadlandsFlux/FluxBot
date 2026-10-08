@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS guilds (
     report_tracker_channel_id TEXT,
     voice_xp_cap_enabled  BOOLEAN NOT NULL DEFAULT TRUE,  -- see member_voice_xp_daily below
     voice_xp_cap_amount   INTEGER NOT NULL DEFAULT 750,
+    fluxer_patch_notes_channel_id TEXT,  -- see fluxer_patch_notes_log below; off until set
+    fluxer_patch_notes_trigger_hour   INTEGER NOT NULL DEFAULT 0,  -- 0-23, in this guild's own timezone column below
+    fluxer_patch_notes_trigger_minute INTEGER NOT NULL DEFAULT 5,  -- 0-59
+    timezone              TEXT NOT NULL DEFAULT 'America/Chicago',  -- IANA name; guild-local time for scheduled features (currently just Fluxer patch notes)
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -488,6 +492,22 @@ CREATE TABLE IF NOT EXISTS discord_relay_status (
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- One row per (guild, calendar day) the digest has actually been sent
+-- for, the day always in America/Chicago since that's the timezone the
+-- digest's "day" is computed in (see bot/fluxer_patch_notes.py)
+-- regardless of where the bot itself runs. This is the scheduler's
+-- per-guild dedupe guard: each guild picks its own send time
+-- (guilds.fluxer_patch_notes_trigger_hour/minute), so a restart mid-day
+-- must not re-send to any guild that's already gotten today's digest,
+-- independent of whether other guilds have or haven't yet.
+CREATE TABLE IF NOT EXISTS fluxer_patch_notes_log (
+    guild_id      TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    sent_date     DATE NOT NULL,
+    commit_count  INTEGER NOT NULL,
+    sent_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (guild_id, sent_date)
+);
+
 -- One row per Fluxer message that couldn't be delivered to Discord
 -- because the relay's Discord connection was down at the time, not
 -- some other, unrelated failure (a bad channel id, missing permission,
@@ -812,3 +832,11 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS voice_xp_cap_enabled BOOLEAN NOT NUL
 -- Migration for databases created before the cap amount was configurable
 -- (it used to be a hardcoded 750 in bot/voice_tracker.py).
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS voice_xp_cap_amount INTEGER NOT NULL DEFAULT 750;
+
+-- Migration for databases created before the Fluxer patch-notes digest existed.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS fluxer_patch_notes_channel_id TEXT;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS fluxer_patch_notes_trigger_hour INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS fluxer_patch_notes_trigger_minute INTEGER NOT NULL DEFAULT 5;
+
+-- Migration for databases created before the per-guild default timezone setting existed.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'America/Chicago';

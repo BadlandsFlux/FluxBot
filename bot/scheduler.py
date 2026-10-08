@@ -21,7 +21,7 @@ from typing import Optional
 from bot.commands import Bot
 from bot.modules.fun import NUMBER_EMOJI
 from bot.modules import leveling, trivia as trivia_module
-from bot import voice_tracker
+from bot import fluxer_patch_notes, voice_tracker
 from common import db
 
 log = logging.getLogger("fluxbot.scheduler")
@@ -204,6 +204,72 @@ async def _prune_link_codes() -> None:
     _last_link_code_prune = now
 
 
+_last_patch_notes_failure: Optional[datetime] = None
+_PATCH_NOTES_RETRY_INTERVAL = timedelta(minutes=5)
+
+
+async def _send_fluxer_patch_notes(bot: Bot) -> None:
+    """Each guild picks its own send time AND its own timezone
+    (fluxer_patch_notes_trigger_hour/minute and timezone on its own
+    Settings tab), so this checks every configured guild on its own
+    terms rather than firing once bot-wide. Always reports on the most
+    recently completed day in the guild's own timezone, not whatever's
+    still in progress -- see fluxer_patch_notes.yesterday_in's own
+    docstring for why a 00:05 trigger and an 11:55pm one both still
+    deliver one complete day each, never a partial one.
+
+    Dedupe is per (guild, date) in fluxer_patch_notes_log, so guilds
+    with different trigger times (or timezones) naturally get sent
+    independently as each one's own time arrives, surviving a restart.
+    GitHub is fetched at most once per distinct (date, timezone) pair
+    actually due this tick, not once per due guild: the common case
+    (most guilds left at the same default trigger time and timezone)
+    is a single shared fetch. Two guilds can land on the same calendar
+    date but still need separate fetches if they're in different
+    timezones, since that date's actual UTC window differs between
+    them.
+
+    A 5-minute retry floor, engaged only after an actual fetch
+    failure, keeps a GitHub outage from turning into hitting its API
+    every 15-second tick until it recovers -- it doesn't delay a
+    healthy send, since a guild is no longer "due" the moment it's
+    actually been sent."""
+    global _last_patch_notes_failure
+    now_utc = datetime.now(timezone.utc)
+    if _last_patch_notes_failure and now_utc - _last_patch_notes_failure < _PATCH_NOTES_RETRY_INTERVAL:
+        return
+
+    guild_channels = await db.list_guilds_with_fluxer_patch_notes_channel()
+    due_by_window = {}
+    for row in guild_channels:
+        tz = fluxer_patch_notes.resolve_timezone(row["timezone"])
+        guild_now = fluxer_patch_notes.now_in(tz)
+        trigger = (row["fluxer_patch_notes_trigger_hour"], row["fluxer_patch_notes_trigger_minute"])
+        if trigger > (guild_now.hour, guild_now.minute):
+            continue
+        report_date = fluxer_patch_notes.yesterday_in(tz, guild_now)
+        if await db.get_fluxer_patch_notes_log(row["guild_id"], report_date):
+            continue
+        due_by_window.setdefault((report_date, tz), []).append(row)
+    if not due_by_window:
+        return
+
+    for (report_date, tz), rows in due_by_window.items():
+        try:
+            embed, commit_count = await fluxer_patch_notes.generate_patch_notes(report_date, tz)
+        except Exception:
+            log.exception("Failed to generate Fluxer patch notes for %s (%s), will retry", report_date, tz)
+            _last_patch_notes_failure = now_utc
+            continue
+
+        for row in rows:
+            try:
+                await bot.rest.send_message(row["fluxer_patch_notes_channel_id"], embeds=[embed])
+            except Exception:
+                log.warning("Failed to post Fluxer patch notes to guild %s", row["guild_id"])
+            await db.record_fluxer_patch_notes_sent(row["guild_id"], report_date, commit_count)
+
+
 async def run_scheduler(bot: Bot) -> None:
     while True:
         try:
@@ -216,6 +282,7 @@ async def run_scheduler(bot: Bot) -> None:
             await _prune_relay_outbound_queue()
             await _prune_relay_send_claims()
             await _prune_link_codes()
+            await _send_fluxer_patch_notes(bot)
         except Exception:
             log.exception("Scheduler tick failed")
         await asyncio.sleep(CHECK_INTERVAL)

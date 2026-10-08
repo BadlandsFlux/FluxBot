@@ -84,6 +84,9 @@ _ALLOWED_SETTINGS = {
     "warn_timeout_at", "warn_kick_at", "warn_timeout_minutes",
     "report_channel_id", "report_tracker_channel_id",
     "voice_xp_cap_enabled", "voice_xp_cap_amount",
+    "fluxer_patch_notes_channel_id",
+    "fluxer_patch_notes_trigger_hour", "fluxer_patch_notes_trigger_minute",
+    "timezone",
 }
 
 
@@ -1785,6 +1788,39 @@ async def get_open_reports_by_reporter(reporter_id: str) -> list[asyncpg.Record]
     that's unambiguous enough to attribute the reply to without asking."""
     return await pool().fetch(
         "SELECT * FROM reports WHERE reporter_id=$1 AND status='open' ORDER BY created_at DESC", reporter_id,
+    )
+
+
+# ------------------------------------------------------ fluxer patch notes --
+async def get_fluxer_patch_notes_log(guild_id: str, sent_date) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow(
+        "SELECT * FROM fluxer_patch_notes_log WHERE guild_id=$1 AND sent_date=$2", guild_id, sent_date,
+    )
+
+
+async def record_fluxer_patch_notes_sent(guild_id: str, sent_date, commit_count: int) -> None:
+    # ON CONFLICT DO NOTHING, not a plain INSERT: the scheduler's own
+    # dedupe check (get_fluxer_patch_notes_log before fetching/sending)
+    # already guards the common case, but two ticks racing past that
+    # check for the same not-yet-logged (guild, date) must not both
+    # succeed in inserting, that would mean two sends to the same guild
+    # for the same day.
+    await pool().execute(
+        """
+        INSERT INTO fluxer_patch_notes_log (guild_id, sent_date, commit_count) VALUES ($1, $2, $3)
+        ON CONFLICT (guild_id, sent_date) DO NOTHING
+        """,
+        guild_id, sent_date, commit_count,
+    )
+
+
+async def list_guilds_with_fluxer_patch_notes_channel() -> list[asyncpg.Record]:
+    return await pool().fetch(
+        """
+        SELECT guild_id, fluxer_patch_notes_channel_id, fluxer_patch_notes_trigger_hour,
+               fluxer_patch_notes_trigger_minute, timezone
+        FROM guilds WHERE fluxer_patch_notes_channel_id IS NOT NULL
+        """,
     )
 
 

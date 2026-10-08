@@ -27,6 +27,22 @@ import GuildSidebar from "../components/GuildSidebar";
 import useRolesChannels from "../hooks/useRolesChannels";
 import usePolling from "../hooks/usePolling";
 
+// Intl.supportedValuesOf is available in every evergreen browser this
+// dashboard targets; the curated fallback only matters for something
+// genuinely ancient, and only needs to cover the common cases well
+// enough that nobody's stuck without an option.
+const TIMEZONE_OPTIONS = (() => {
+  try {
+    return Intl.supportedValuesOf("timeZone");
+  } catch {
+    return [
+      "UTC", "America/Chicago", "America/New_York", "America/Denver", "America/Los_Angeles",
+      "America/Sao_Paulo", "Europe/London", "Europe/Berlin", "Europe/Moscow", "Africa/Cairo",
+      "Asia/Dubai", "Asia/Kolkata", "Asia/Shanghai", "Asia/Tokyo", "Australia/Sydney", "Pacific/Auckland",
+    ];
+  }
+})();
+
 const TABS = [
   { id: "overview", label: "Overview", icon: LayoutGrid, category: null },
   { id: "members", label: "Members", icon: Users, category: "Moderation" },
@@ -327,6 +343,7 @@ function FeatureStatusRow({ guild, setTab }) {
     { key: "goodbye", label: "Goodbye", on: !!guild.goodbye_channel_id, tab: "settings" },
     { key: "leveling", label: "Leveling", on: !!guild.leveling_enabled, tab: "levels" },
     { key: "reports", label: "Reports", on: !!guild.report_channel_id, tab: "settings" },
+    { key: "patchnotes", label: "Patch notes", on: !!guild.fluxer_patch_notes_channel_id, tab: "settings" },
   ];
   return (
     <div className="feature-status-row">
@@ -524,6 +541,7 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
   const [welcomeOn, setWelcomeOn] = useState(!!guild.welcome_channel_id);
   const [goodbyeOn, setGoodbyeOn] = useState(!!guild.goodbye_channel_id);
   const [reportsOn, setReportsOn] = useState(!!guild.report_channel_id);
+  const [patchNotesOn, setPatchNotesOn] = useState(!!guild.fluxer_patch_notes_channel_id);
   const [saving, setSaving] = useState(false);
 
   function set(field, value) {
@@ -546,6 +564,23 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
       set("report_channel_id", "");
       set("report_tracker_channel_id", "");
     }
+  }
+
+  function togglePatchNotes(next) {
+    setPatchNotesOn(next);
+    if (!next) set("fluxer_patch_notes_channel_id", "");
+  }
+
+  function patchNotesTimeValue(f) {
+    const hour = f.fluxer_patch_notes_trigger_hour ?? 0;
+    const minute = f.fluxer_patch_notes_trigger_minute ?? 5;
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  }
+
+  function setPatchNotesTime(value) {
+    const [hour, minute] = value.split(":").map(Number);
+    if (Number.isNaN(hour) || Number.isNaN(minute)) return;
+    setForm((f) => ({ ...f, fluxer_patch_notes_trigger_hour: hour, fluxer_patch_notes_trigger_minute: minute }));
   }
 
   async function handleSubmit(e) {
@@ -573,11 +608,16 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
         warn_timeout_minutes: Number(form.warn_timeout_minutes),
         report_channel_id: reportsOn ? form.report_channel_id || "" : "",
         report_tracker_channel_id: reportsOn ? form.report_tracker_channel_id || "" : "",
+        fluxer_patch_notes_channel_id: patchNotesOn ? form.fluxer_patch_notes_channel_id || "" : "",
+        fluxer_patch_notes_trigger_hour: Number(form.fluxer_patch_notes_trigger_hour ?? 0),
+        fluxer_patch_notes_trigger_minute: Number(form.fluxer_patch_notes_trigger_minute ?? 5),
+        timezone: form.timezone || "America/Chicago",
       });
       onSaved(result.guild);
       setWelcomeOn(!!result.guild.welcome_channel_id);
       setGoodbyeOn(!!result.guild.goodbye_channel_id);
       setReportsOn(!!result.guild.report_channel_id);
+      setPatchNotesOn(!!result.guild.fluxer_patch_notes_channel_id);
       flash("Settings saved.");
     } catch (err) {
       flash(err.message, "error");
@@ -600,6 +640,20 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
           Command prefix
           <input type="text" value={form.command_prefix || "!"} maxLength={5}
                  onChange={(e) => set("command_prefix", e.target.value)} placeholder="!" />
+        </label>
+        <label>
+          Default timezone, used for anything scheduled at a time of day (currently just Fluxer patch notes below)
+          <select value={form.timezone || "America/Chicago"} onChange={(e) => set("timezone", e.target.value)}>
+            {/* Covers a stored value the browser's own timezone list doesn't recognize
+                (e.g. an ICU/tzdata version mismatch), so the picker never silently
+                swaps it out for something else just by rendering. */}
+            {form.timezone && !TIMEZONE_OPTIONS.includes(form.timezone) && (
+              <option value={form.timezone}>{form.timezone}</option>
+            )}
+            {TIMEZONE_OPTIONS.map((tz) => (
+              <option key={tz} value={tz}>{tz}</option>
+            ))}
+          </select>
         </label>
         <label>
           Mute role (fallback if timeout API is unavailable)
@@ -679,6 +733,27 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
                         onChange={(v) => set("report_tracker_channel_id", v)} placeholder="Optional, but recommended" />
             </label>
             {!form.report_channel_id && (
+              <p className="muted small">Pick a channel above to finish turning this on.</p>
+            )}
+          </div>
+        )}
+
+        <h2 className="section-divider">Fluxer patch notes</h2>
+        <Switch checked={patchNotesOn} onChange={togglePatchNotes}
+                label="Post a daily digest of fluxerapp/fluxer's commits here" />
+        {patchNotesOn && (
+          <div className="switch-panel">
+            <label>
+              Patch notes channel
+              <Combobox options={channels} value={form.fluxer_patch_notes_channel_id || ""}
+                        onChange={(v) => set("fluxer_patch_notes_channel_id", v)} placeholder="Pick a channel" />
+            </label>
+            <label>
+              Sent daily at, in the server's default timezone ({form.timezone || "America/Chicago"})
+              <input type="time" value={patchNotesTimeValue(form)}
+                     onChange={(e) => setPatchNotesTime(e.target.value)} />
+            </label>
+            {!form.fluxer_patch_notes_channel_id && (
               <p className="muted small">Pick a channel above to finish turning this on.</p>
             )}
           </div>

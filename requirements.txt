@@ -11,3 +11,4 @@ Pillow==12.3.0
 python-multipart==0.0.32
 discord.py==2.7.1
 parsedatetime==2.6
+tzdata==2025.2

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from fastapi import FastAPI, File, Request, UploadFile
@@ -21,7 +22,7 @@ from bot import moderation_actions
 from bot import report_actions
 from bot.bounded_cache import BoundedDict
 from bot.moderation_actions import ModerationBlocked
-from bot import voice_tracker
+from bot import fluxer_patch_notes, voice_tracker
 from bot.commands import Bot as BotFramework, NEVER_DISABLED_COMMANDS
 from bot.discord_relay import INVITE_PERMISSIONS as DISCORD_RELAY_INVITE_PERMISSIONS
 from bot.modules import account_links, achievements, command_toggles, fun, info as info_module, leveling, moderation, mydata, reminders, reports, roles, staffnotes, tags, trivia, utility
@@ -401,6 +402,10 @@ def _guild_to_json(row) -> dict:
         "report_tracker_channel_id": row["report_tracker_channel_id"],
         "voice_xp_cap_enabled": row["voice_xp_cap_enabled"],
         "voice_xp_cap_amount": row["voice_xp_cap_amount"],
+        "fluxer_patch_notes_channel_id": row["fluxer_patch_notes_channel_id"],
+        "fluxer_patch_notes_trigger_hour": row["fluxer_patch_notes_trigger_hour"],
+        "fluxer_patch_notes_trigger_minute": row["fluxer_patch_notes_trigger_minute"],
+        "timezone": row["timezone"],
     }
 
 
@@ -582,6 +587,10 @@ class SettingsPayload(BaseModel):
     warn_timeout_minutes: int = 60
     report_channel_id: str = ""
     report_tracker_channel_id: str = ""
+    fluxer_patch_notes_channel_id: str = ""
+    fluxer_patch_notes_trigger_hour: int = 0
+    fluxer_patch_notes_trigger_minute: int = 5
+    timezone: str = fluxer_patch_notes.DEFAULT_TIMEZONE_NAME
 
 
 def _diff_fields(previous, updated, field_labels: dict[str, str]) -> list[str]:
@@ -597,7 +606,7 @@ def _diff_fields(previous, updated, field_labels: dict[str, str]) -> list[str]:
     changed = []
     for column, label in field_labels.items():
         old = previous[column] if previous is not None else None
-        if old != updated[column]:
+        if old != updated[column] and label not in changed:
             changed.append(label)
     return changed
 
@@ -627,6 +636,10 @@ _SETTINGS_FIELD_LABELS = {
     "warn_timeout_minutes": "timeout length",
     "report_channel_id": "report channel",
     "report_tracker_channel_id": "report tracker channel",
+    "fluxer_patch_notes_channel_id": "Fluxer patch notes channel",
+    "fluxer_patch_notes_trigger_hour": "Fluxer patch notes send time",
+    "fluxer_patch_notes_trigger_minute": "Fluxer patch notes send time",
+    "timezone": "default timezone",
 }
 
 _ACTIVITY_LOG_FIELD_LABELS = {
@@ -674,6 +687,13 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
     user = require_login(request)
     prefix = (payload.command_prefix or "!").strip()[:5] or "!"
     voice_xp_cap_amount = max(1, min(1_000_000, payload.voice_xp_cap_amount or 750))
+    patch_notes_trigger_hour = max(0, min(23, payload.fluxer_patch_notes_trigger_hour))
+    patch_notes_trigger_minute = max(0, min(59, payload.fluxer_patch_notes_trigger_minute))
+    guild_timezone = (payload.timezone or fluxer_patch_notes.DEFAULT_TIMEZONE_NAME).strip()
+    try:
+        ZoneInfo(guild_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise _ApiError(400, f"'{guild_timezone}' isn't a recognized timezone.")
     previous = await db.get_guild(guild_id)
     await db.update_guild_settings(
         guild_id,
@@ -694,6 +714,10 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
         warn_timeout_minutes=payload.warn_timeout_minutes,
         report_channel_id=payload.report_channel_id or None,
         report_tracker_channel_id=payload.report_tracker_channel_id or None,
+        fluxer_patch_notes_channel_id=payload.fluxer_patch_notes_channel_id or None,
+        fluxer_patch_notes_trigger_hour=patch_notes_trigger_hour,
+        fluxer_patch_notes_trigger_minute=patch_notes_trigger_minute,
+        timezone=guild_timezone,
     )
     guild_cfg = await db.get_guild(guild_id)
     await _maybe_post_report_intro(previous, guild_cfg)
