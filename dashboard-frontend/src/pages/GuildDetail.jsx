@@ -27,6 +27,22 @@ import GuildSidebar from "../components/GuildSidebar";
 import useRolesChannels from "../hooks/useRolesChannels";
 import usePolling from "../hooks/usePolling";
 
+// Intl.supportedValuesOf is available in every evergreen browser this
+// dashboard targets; the curated fallback only matters for something
+// genuinely ancient, and only needs to cover the common cases well
+// enough that nobody's stuck without an option.
+const TIMEZONE_OPTIONS = (() => {
+  try {
+    return Intl.supportedValuesOf("timeZone");
+  } catch {
+    return [
+      "UTC", "America/Chicago", "America/New_York", "America/Denver", "America/Los_Angeles",
+      "America/Sao_Paulo", "Europe/London", "Europe/Berlin", "Europe/Moscow", "Africa/Cairo",
+      "Asia/Dubai", "Asia/Kolkata", "Asia/Shanghai", "Asia/Tokyo", "Australia/Sydney", "Pacific/Auckland",
+    ];
+  }
+})();
+
 const TABS = [
   { id: "overview", label: "Overview", icon: LayoutGrid, category: null },
   { id: "members", label: "Members", icon: Users, category: "Moderation" },
@@ -595,6 +611,7 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
         fluxer_patch_notes_channel_id: patchNotesOn ? form.fluxer_patch_notes_channel_id || "" : "",
         fluxer_patch_notes_trigger_hour: Number(form.fluxer_patch_notes_trigger_hour ?? 0),
         fluxer_patch_notes_trigger_minute: Number(form.fluxer_patch_notes_trigger_minute ?? 5),
+        timezone: form.timezone || "America/Chicago",
       });
       onSaved(result.guild);
       setWelcomeOn(!!result.guild.welcome_channel_id);
@@ -623,6 +640,20 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
           Command prefix
           <input type="text" value={form.command_prefix || "!"} maxLength={5}
                  onChange={(e) => set("command_prefix", e.target.value)} placeholder="!" />
+        </label>
+        <label>
+          Default timezone, used for anything scheduled at a time of day (currently just Fluxer patch notes below)
+          <select value={form.timezone || "America/Chicago"} onChange={(e) => set("timezone", e.target.value)}>
+            {/* Covers a stored value the browser's own timezone list doesn't recognize
+                (e.g. an ICU/tzdata version mismatch), so the picker never silently
+                swaps it out for something else just by rendering. */}
+            {form.timezone && !TIMEZONE_OPTIONS.includes(form.timezone) && (
+              <option value={form.timezone}>{form.timezone}</option>
+            )}
+            {TIMEZONE_OPTIONS.map((tz) => (
+              <option key={tz} value={tz}>{tz}</option>
+            ))}
+          </select>
         </label>
         <label>
           Mute role (fallback if timeout API is unavailable)
@@ -718,7 +749,7 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
                         onChange={(v) => set("fluxer_patch_notes_channel_id", v)} placeholder="Pick a channel" />
             </label>
             <label>
-              Sent daily at (America/Chicago time)
+              Sent daily at, in the server's default timezone ({form.timezone || "America/Chicago"})
               <input type="time" value={patchNotesTimeValue(form)}
                      onChange={(e) => setPatchNotesTime(e.target.value)} />
             </label>

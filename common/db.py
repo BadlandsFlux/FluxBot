@@ -86,6 +86,7 @@ _ALLOWED_SETTINGS = {
     "voice_xp_cap_enabled", "voice_xp_cap_amount",
     "fluxer_patch_notes_channel_id",
     "fluxer_patch_notes_trigger_hour", "fluxer_patch_notes_trigger_minute",
+    "timezone",
 }
 
 
@@ -1816,7 +1817,8 @@ async def record_fluxer_patch_notes_sent(guild_id: str, sent_date, commit_count:
 async def list_guilds_with_fluxer_patch_notes_channel() -> list[asyncpg.Record]:
     return await pool().fetch(
         """
-        SELECT guild_id, fluxer_patch_notes_channel_id, fluxer_patch_notes_trigger_hour, fluxer_patch_notes_trigger_minute
+        SELECT guild_id, fluxer_patch_notes_channel_id, fluxer_patch_notes_trigger_hour,
+               fluxer_patch_notes_trigger_minute, timezone
         FROM guilds WHERE fluxer_patch_notes_channel_id IS NOT NULL
         """,
     )

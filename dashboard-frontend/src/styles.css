@@ -306,7 +306,8 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
 /* --------------------------------------------------------------- forms */
 .settings-form label { display: block; margin-bottom: 14px; font-size: 13px; color: var(--muted); font-weight: 500; }
 .settings-form input,
-.settings-form textarea {
+.settings-form textarea,
+.settings-form select {
   display: block;
   margin-top: 6px;
   width: 100%;
@@ -320,7 +321,8 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
   resize: vertical;
 }
 .settings-form input:focus,
-.settings-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.settings-form textarea:focus,
+.settings-form select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .settings-form input[type="checkbox"] { display: inline-block; width: auto; margin-top: 0; }
 .form-row { display: grid; gap: 12px; }
 .form-row-3 { grid-template-columns: 1fr 1fr 1fr; }

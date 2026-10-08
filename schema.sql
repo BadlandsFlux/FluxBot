@@ -31,8 +31,9 @@ CREATE TABLE IF NOT EXISTS guilds (
     voice_xp_cap_enabled  BOOLEAN NOT NULL DEFAULT TRUE,  -- see member_voice_xp_daily below
     voice_xp_cap_amount   INTEGER NOT NULL DEFAULT 750,
     fluxer_patch_notes_channel_id TEXT,  -- see fluxer_patch_notes_log below; off until set
-    fluxer_patch_notes_trigger_hour   INTEGER NOT NULL DEFAULT 0,  -- 0-23, America/Chicago
+    fluxer_patch_notes_trigger_hour   INTEGER NOT NULL DEFAULT 0,  -- 0-23, in this guild's own timezone column below
     fluxer_patch_notes_trigger_minute INTEGER NOT NULL DEFAULT 5,  -- 0-59
+    timezone              TEXT NOT NULL DEFAULT 'America/Chicago',  -- IANA name; guild-local time for scheduled features (currently just Fluxer patch notes)
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -836,3 +837,6 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS voice_xp_cap_amount INTEGER NOT NULL
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS fluxer_patch_notes_channel_id TEXT;
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS fluxer_patch_notes_trigger_hour INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS fluxer_patch_notes_trigger_minute INTEGER NOT NULL DEFAULT 5;
+
+-- Migration for databases created before the per-guild default timezone setting existed.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'America/Chicago';

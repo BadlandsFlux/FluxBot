@@ -204,63 +204,70 @@ async def _prune_link_codes() -> None:
     _last_link_code_prune = now
 
 
-_last_patch_notes_attempt: Optional[datetime] = None
+_last_patch_notes_failure: Optional[datetime] = None
 _PATCH_NOTES_RETRY_INTERVAL = timedelta(minutes=5)
 
 
 async def _send_fluxer_patch_notes(bot: Bot) -> None:
-    """Each guild picks its own send time (fluxer_patch_notes_trigger_hour/
-    minute on its own Settings tab), so this checks every configured
-    guild on its own terms rather than firing once bot-wide. Always
-    reports on the Central day that just ended, not whatever's still in
-    progress -- see fluxer_patch_notes.yesterday_in_central's own
+    """Each guild picks its own send time AND its own timezone
+    (fluxer_patch_notes_trigger_hour/minute and timezone on its own
+    Settings tab), so this checks every configured guild on its own
+    terms rather than firing once bot-wide. Always reports on the most
+    recently completed day in the guild's own timezone, not whatever's
+    still in progress -- see fluxer_patch_notes.yesterday_in's own
     docstring for why a 00:05 trigger and an 11:55pm one both still
     deliver one complete day each, never a partial one.
 
     Dedupe is per (guild, date) in fluxer_patch_notes_log, so guilds
-    with different trigger times naturally get sent independently as
-    each one's own time arrives, surviving a restart. GitHub itself is
-    still fetched at most once per tick, not once per due guild: the
-    common case (most guilds left at the same default trigger time)
-    would otherwise mean one fetch per guild for identical content.
+    with different trigger times (or timezones) naturally get sent
+    independently as each one's own time arrives, surviving a restart.
+    GitHub is fetched at most once per distinct (date, timezone) pair
+    actually due this tick, not once per due guild: the common case
+    (most guilds left at the same default trigger time and timezone)
+    is a single shared fetch. Two guilds can land on the same calendar
+    date but still need separate fetches if they're in different
+    timezones, since that date's actual UTC window differs between
+    them.
 
-    A 5-minute retry floor on the actual GitHub call keeps an outage
-    from turning into hitting its API every 15-second tick until it
-    recovers -- it doesn't delay a healthy send, since a guild is no
-    longer "due" the moment it's actually been sent."""
-    global _last_patch_notes_attempt
-    now = fluxer_patch_notes.central_now()
-    report_date = fluxer_patch_notes.yesterday_in_central(now)
+    A 5-minute retry floor, engaged only after an actual fetch
+    failure, keeps a GitHub outage from turning into hitting its API
+    every 15-second tick until it recovers -- it doesn't delay a
+    healthy send, since a guild is no longer "due" the moment it's
+    actually been sent."""
+    global _last_patch_notes_failure
+    now_utc = datetime.now(timezone.utc)
+    if _last_patch_notes_failure and now_utc - _last_patch_notes_failure < _PATCH_NOTES_RETRY_INTERVAL:
+        return
 
     guild_channels = await db.list_guilds_with_fluxer_patch_notes_channel()
-    due = []
+    due_by_window = {}
     for row in guild_channels:
+        tz = fluxer_patch_notes.resolve_timezone(row["timezone"])
+        guild_now = fluxer_patch_notes.now_in(tz)
         trigger = (row["fluxer_patch_notes_trigger_hour"], row["fluxer_patch_notes_trigger_minute"])
-        if trigger > (now.hour, now.minute):
+        if trigger > (guild_now.hour, guild_now.minute):
             continue
+        report_date = fluxer_patch_notes.yesterday_in(tz, guild_now)
         if await db.get_fluxer_patch_notes_log(row["guild_id"], report_date):
             continue
-        due.append(row)
-    if not due:
+        due_by_window.setdefault((report_date, tz), []).append(row)
+    if not due_by_window:
         return
 
-    now_utc = datetime.now(timezone.utc)
-    if _last_patch_notes_attempt and now_utc - _last_patch_notes_attempt < _PATCH_NOTES_RETRY_INTERVAL:
-        return
-    _last_patch_notes_attempt = now_utc
-
-    try:
-        embed, commit_count = await fluxer_patch_notes.generate_patch_notes(report_date)
-    except Exception:
-        log.exception("Failed to generate Fluxer patch notes for %s, will retry", report_date)
-        return
-
-    for row in due:
+    for (report_date, tz), rows in due_by_window.items():
         try:
-            await bot.rest.send_message(row["fluxer_patch_notes_channel_id"], embeds=[embed])
+            embed, commit_count = await fluxer_patch_notes.generate_patch_notes(report_date, tz)
         except Exception:
-            log.warning("Failed to post Fluxer patch notes to guild %s", row["guild_id"])
-        await db.record_fluxer_patch_notes_sent(row["guild_id"], report_date, commit_count)
+            log.exception("Failed to generate Fluxer patch notes for %s (%s), will retry", report_date, tz)
+            _last_patch_notes_failure = now_utc
+            continue
+
+        for row in rows:
+            try:
+                await bot.rest.send_message(row["fluxer_patch_notes_channel_id"], embeds=[embed])
+            except Exception:
+                log.warning("Failed to post Fluxer patch notes to guild %s", row["guild_id"])
+            await db.record_fluxer_patch_notes_sent(row["guild_id"], report_date, commit_count)
 
 
 async def run_scheduler(bot: Bot) -> None:
