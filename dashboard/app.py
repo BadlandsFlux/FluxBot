@@ -399,6 +399,7 @@ def _guild_to_json(row) -> dict:
         "warn_timeout_minutes": row["warn_timeout_minutes"],
         "report_channel_id": row["report_channel_id"],
         "report_tracker_channel_id": row["report_tracker_channel_id"],
+        "voice_xp_cap_enabled": row["voice_xp_cap_enabled"],
     }
 
 
@@ -573,6 +574,7 @@ class SettingsPayload(BaseModel):
     leveling_enabled: bool = True
     level_up_channel_id: str = ""
     level_up_message: str = "GG {user}, you reached level {level}! 🎉"
+    voice_xp_cap_enabled: bool = True
     warn_timeout_at: int = 3
     warn_kick_at: int = 5
     warn_timeout_minutes: int = 60
@@ -616,6 +618,7 @@ _SETTINGS_FIELD_LABELS = {
     "leveling_enabled": "leveling on/off",
     "level_up_channel_id": "level-up channel",
     "level_up_message": "level-up message",
+    "voice_xp_cap_enabled": "voice XP daily cap",
     "warn_timeout_at": "warn-timeout threshold",
     "warn_kick_at": "warn-kick threshold",
     "warn_timeout_minutes": "timeout length",
@@ -680,6 +683,7 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
         leveling_enabled=payload.leveling_enabled,
         level_up_channel_id=payload.level_up_channel_id or None,
         level_up_message=payload.level_up_message or "GG {user}, you reached level {level}! 🎉",
+        voice_xp_cap_enabled=payload.voice_xp_cap_enabled,
         warn_timeout_at=payload.warn_timeout_at,
         warn_kick_at=payload.warn_kick_at,
         warn_timeout_minutes=payload.warn_timeout_minutes,

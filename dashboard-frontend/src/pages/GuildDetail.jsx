@@ -561,6 +561,7 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
         leveling_enabled: levelingOn,
         level_up_channel_id: form.level_up_channel_id || "",
         level_up_message: form.level_up_message || "GG {user}, you reached level {level}! 🎉",
+        voice_xp_cap_enabled: form.voice_xp_cap_enabled ?? true,
         warn_timeout_at: Number(form.warn_timeout_at),
         warn_kick_at: Number(form.warn_kick_at),
         warn_timeout_minutes: Number(form.warn_timeout_minutes),
@@ -672,6 +673,13 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
               <input type="text" value={form.level_up_message || ""} onChange={(e) => set("level_up_message", e.target.value)}
                      placeholder="GG {user}, you reached level {level}! 🎉" />
             </label>
+            <Switch checked={form.voice_xp_cap_enabled ?? true}
+                    onChange={(v) => set("voice_xp_cap_enabled", v)}
+                    label="Cap voice XP at 750/day per member" />
+            <p className="muted small">
+              Stops someone from out-earning everyone else just by leaving a client connected to voice.
+              A normal couple-hours-a-day habit never reaches it.
+            </p>
           </div>
         )}
 

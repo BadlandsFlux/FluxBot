@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS guilds (
     warn_timeout_minutes  INTEGER NOT NULL DEFAULT 60,
     report_channel_id         TEXT,  -- see reports table below; feature is off until this is set
     report_tracker_channel_id TEXT,
+    voice_xp_cap_enabled  BOOLEAN NOT NULL DEFAULT TRUE,  -- see member_voice_xp_daily below
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -168,6 +169,21 @@ CREATE TABLE IF NOT EXISTS member_voice_minutes (
     user_id         TEXT NOT NULL,
     minutes         DOUBLE PRECISION NOT NULL DEFAULT 0,
     PRIMARY KEY (guild_id, user_id)
+);
+
+-- Per-member, per-day voice XP already granted, so voice_tracker.py can
+-- clamp a member to VOICE_XP_DAILY_CAP XP/day (when guilds.voice_xp_cap_enabled
+-- is on) without an unattended 24/7 voice session being able to out-earn a
+-- normal couple-hours-a-day habit by nearly an order of magnitude. Keyed by
+-- `day` rather than reset by a scheduled job: a new day just gets a fresh
+-- row, nothing to clear. Rows are small and left in place as history rather
+-- than pruned, same as guild_daily_stats above.
+CREATE TABLE IF NOT EXISTS member_voice_xp_daily (
+    guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id         TEXT NOT NULL,
+    day             DATE NOT NULL,
+    xp_earned       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, day)
 );
 
 CREATE INDEX IF NOT EXISTS idx_warnings_guild_user ON warnings(guild_id, user_id);
@@ -788,3 +804,6 @@ END $$;
 -- report submission fails with a not-null violation. Safe to always
 -- run: a no-op on any database that never had the column.
 ALTER TABLE reports DROP COLUMN IF EXISTS privacy_deadline;
+
+-- Migration for databases created before the voice XP daily cap existed.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS voice_xp_cap_enabled BOOLEAN NOT NULL DEFAULT TRUE;

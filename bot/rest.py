@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 import aiohttp
 
+from bot.embed_utils import clamp_embeds
 from common.config import config
 
 
@@ -210,7 +211,7 @@ class FluxerREST:
         if content:
             payload["content"] = content
         if embeds:
-            payload["embeds"] = embeds
+            payload["embeds"] = clamp_embeds(embeds)
         return await self.request("POST", f"/channels/{channel_id}/messages", json=payload)
 
     async def send_message_with_files(self, channel_id: str, files: list[tuple[str, bytes]],
@@ -227,7 +228,7 @@ class FluxerREST:
         if content:
             payload["content"] = content
         if embeds:
-            payload["embeds"] = embeds
+            payload["embeds"] = clamp_embeds(embeds)
 
         if self._session is None:
             await self.start()
@@ -265,7 +266,7 @@ class FluxerREST:
         if content is not None:
             payload["content"] = content
         if embeds is not None:
-            payload["embeds"] = embeds
+            payload["embeds"] = clamp_embeds(embeds)
         return await self.request("PATCH", f"/channels/{channel_id}/messages/{message_id}", json=payload)
 
     async def delete_message(self, channel_id: str, message_id: str, reason: str = "") -> None:
@@ -295,7 +296,7 @@ class FluxerREST:
         if content:
             payload["content"] = content
         if embeds:
-            payload["embeds"] = embeds
+            payload["embeds"] = clamp_embeds(embeds)
         if username:
             payload["username"] = username
         if avatar_url:
@@ -340,7 +341,7 @@ class FluxerREST:
         if content is not None:
             payload["content"] = content
         if embeds is not None:
-            payload["embeds"] = embeds
+            payload["embeds"] = clamp_embeds(embeds)
         url = f"{self.base_url}/webhooks/{webhook_id}/{webhook_token}/messages/{message_id}"
         async with aiohttp.ClientSession() as session:
             async with session.patch(url, json=payload) as resp:
