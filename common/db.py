@@ -83,7 +83,7 @@ _ALLOWED_SETTINGS = {
     "leveling_enabled", "level_up_channel_id", "level_up_message",
     "warn_timeout_at", "warn_kick_at", "warn_timeout_minutes",
     "report_channel_id", "report_tracker_channel_id",
-    "voice_xp_cap_enabled",
+    "voice_xp_cap_enabled", "voice_xp_cap_amount",
 }
 
 

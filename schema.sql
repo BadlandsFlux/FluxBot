@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS guilds (
     report_channel_id         TEXT,  -- see reports table below; feature is off until this is set
     report_tracker_channel_id TEXT,
     voice_xp_cap_enabled  BOOLEAN NOT NULL DEFAULT TRUE,  -- see member_voice_xp_daily below
+    voice_xp_cap_amount   INTEGER NOT NULL DEFAULT 750,
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -807,3 +808,7 @@ ALTER TABLE reports DROP COLUMN IF EXISTS privacy_deadline;
 
 -- Migration for databases created before the voice XP daily cap existed.
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS voice_xp_cap_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- Migration for databases created before the cap amount was configurable
+-- (it used to be a hardcoded 750 in bot/voice_tracker.py).
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS voice_xp_cap_amount INTEGER NOT NULL DEFAULT 750;

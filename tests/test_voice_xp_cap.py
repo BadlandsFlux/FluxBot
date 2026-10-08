@@ -72,7 +72,7 @@ async def test_flush_member_caps_a_long_session_when_enabled(guild_id, monkeypat
     await voice_tracker._flush_member(bot, guild_id, "u1", now, keep_earning=False)
 
     assert len(granted_calls) == 1
-    assert granted_calls[0] <= voice_tracker.VOICE_XP_DAILY_CAP
+    assert granted_calls[0] <= voice_tracker.VOICE_XP_DAILY_CAP_DEFAULT
 
 
 async def test_flush_member_does_not_cap_when_guild_disables_it(guild_id, monkeypatch):
@@ -93,7 +93,28 @@ async def test_flush_member_does_not_cap_when_guild_disables_it(guild_id, monkey
 
     assert len(granted_calls) == 1
     # 5 hours * 6 XP/min max = 1800, well over the cap this guild opted out of.
-    assert granted_calls[0] > voice_tracker.VOICE_XP_DAILY_CAP
+    assert granted_calls[0] > voice_tracker.VOICE_XP_DAILY_CAP_DEFAULT
 
     # And the cap table was never touched for this guild/member.
     assert await db.add_voice_xp_capped(guild_id, "u1", proposed_xp=10, daily_cap=750) == 10
+
+
+async def test_flush_member_uses_the_guilds_own_configured_cap_amount(guild_id, monkeypatch):
+    await db.update_guild_settings(guild_id, voice_xp_cap_amount=200)
+
+    granted_calls = []
+
+    async def fake_grant_xp(bot, gid, uid, username, amount):
+        granted_calls.append(amount)
+
+    monkeypatch.setattr(voice_tracker.leveling, "grant_xp", fake_grant_xp)
+
+    bot = make_bot()
+    now = datetime.now(timezone.utc)
+    voice_tracker._accrual_start[(guild_id, "u1")] = now - timedelta(hours=5)
+
+    await voice_tracker._flush_member(bot, guild_id, "u1", now, keep_earning=False)
+
+    assert len(granted_calls) == 1
+    assert granted_calls[0] <= 200
+    assert granted_calls[0] < voice_tracker.VOICE_XP_DAILY_CAP_DEFAULT
