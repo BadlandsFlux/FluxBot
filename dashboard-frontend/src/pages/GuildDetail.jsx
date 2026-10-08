@@ -555,6 +555,18 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
     if (!next) set("fluxer_patch_notes_channel_id", "");
   }
 
+  function patchNotesTimeValue(f) {
+    const hour = f.fluxer_patch_notes_trigger_hour ?? 0;
+    const minute = f.fluxer_patch_notes_trigger_minute ?? 5;
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  }
+
+  function setPatchNotesTime(value) {
+    const [hour, minute] = value.split(":").map(Number);
+    if (Number.isNaN(hour) || Number.isNaN(minute)) return;
+    setForm((f) => ({ ...f, fluxer_patch_notes_trigger_hour: hour, fluxer_patch_notes_trigger_minute: minute }));
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setSaving(true);
@@ -581,6 +593,8 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
         report_channel_id: reportsOn ? form.report_channel_id || "" : "",
         report_tracker_channel_id: reportsOn ? form.report_tracker_channel_id || "" : "",
         fluxer_patch_notes_channel_id: patchNotesOn ? form.fluxer_patch_notes_channel_id || "" : "",
+        fluxer_patch_notes_trigger_hour: Number(form.fluxer_patch_notes_trigger_hour ?? 0),
+        fluxer_patch_notes_trigger_minute: Number(form.fluxer_patch_notes_trigger_minute ?? 5),
       });
       onSaved(result.guild);
       setWelcomeOn(!!result.guild.welcome_channel_id);
@@ -703,9 +717,11 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
               <Combobox options={channels} value={form.fluxer_patch_notes_channel_id || ""}
                         onChange={(v) => set("fluxer_patch_notes_channel_id", v)} placeholder="Pick a channel" />
             </label>
-            <p className="muted small">
-              What time of day it's sent is a bot-wide setting, set by the bot owner on the Fluxer Patch Notes page.
-            </p>
+            <label>
+              Sent daily at (America/Chicago time)
+              <input type="time" value={patchNotesTimeValue(form)}
+                     onChange={(e) => setPatchNotesTime(e.target.value)} />
+            </label>
             {!form.fluxer_patch_notes_channel_id && (
               <p className="muted small">Pick a channel above to finish turning this on.</p>
             )}

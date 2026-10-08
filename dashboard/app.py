@@ -402,6 +402,8 @@ def _guild_to_json(row) -> dict:
         "voice_xp_cap_enabled": row["voice_xp_cap_enabled"],
         "voice_xp_cap_amount": row["voice_xp_cap_amount"],
         "fluxer_patch_notes_channel_id": row["fluxer_patch_notes_channel_id"],
+        "fluxer_patch_notes_trigger_hour": row["fluxer_patch_notes_trigger_hour"],
+        "fluxer_patch_notes_trigger_minute": row["fluxer_patch_notes_trigger_minute"],
     }
 
 
@@ -584,6 +586,8 @@ class SettingsPayload(BaseModel):
     report_channel_id: str = ""
     report_tracker_channel_id: str = ""
     fluxer_patch_notes_channel_id: str = ""
+    fluxer_patch_notes_trigger_hour: int = 0
+    fluxer_patch_notes_trigger_minute: int = 5
 
 
 def _diff_fields(previous, updated, field_labels: dict[str, str]) -> list[str]:
@@ -599,7 +603,7 @@ def _diff_fields(previous, updated, field_labels: dict[str, str]) -> list[str]:
     changed = []
     for column, label in field_labels.items():
         old = previous[column] if previous is not None else None
-        if old != updated[column]:
+        if old != updated[column] and label not in changed:
             changed.append(label)
     return changed
 
@@ -630,6 +634,8 @@ _SETTINGS_FIELD_LABELS = {
     "report_channel_id": "report channel",
     "report_tracker_channel_id": "report tracker channel",
     "fluxer_patch_notes_channel_id": "Fluxer patch notes channel",
+    "fluxer_patch_notes_trigger_hour": "Fluxer patch notes send time",
+    "fluxer_patch_notes_trigger_minute": "Fluxer patch notes send time",
 }
 
 _ACTIVITY_LOG_FIELD_LABELS = {
@@ -677,6 +683,8 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
     user = require_login(request)
     prefix = (payload.command_prefix or "!").strip()[:5] or "!"
     voice_xp_cap_amount = max(1, min(1_000_000, payload.voice_xp_cap_amount or 750))
+    patch_notes_trigger_hour = max(0, min(23, payload.fluxer_patch_notes_trigger_hour))
+    patch_notes_trigger_minute = max(0, min(59, payload.fluxer_patch_notes_trigger_minute))
     previous = await db.get_guild(guild_id)
     await db.update_guild_settings(
         guild_id,
@@ -698,6 +706,8 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
         report_channel_id=payload.report_channel_id or None,
         report_tracker_channel_id=payload.report_tracker_channel_id or None,
         fluxer_patch_notes_channel_id=payload.fluxer_patch_notes_channel_id or None,
+        fluxer_patch_notes_trigger_hour=patch_notes_trigger_hour,
+        fluxer_patch_notes_trigger_minute=patch_notes_trigger_minute,
     )
     guild_cfg = await db.get_guild(guild_id)
     await _maybe_post_report_intro(previous, guild_cfg)
@@ -2095,29 +2105,6 @@ async def api_set_discord_relay_token(request: Request, payload: DiscordRelayTok
     token = payload.token.strip()
     await db.set_discord_relay_token(token or None)
     return {"ok": True}
-
-
-@app.get("/api/fluxer-patch-notes/config")
-async def api_get_fluxer_patch_notes_config(request: Request):
-    _require_owner(request)
-    cfg = await db.get_fluxer_patch_notes_config()
-    return {"trigger_hour": cfg["trigger_hour"], "trigger_minute": cfg["trigger_minute"]}
-
-
-class FluxerPatchNotesConfigPayload(BaseModel):
-    trigger_hour: int = 0
-    trigger_minute: int = 5
-
-
-@app.post("/api/fluxer-patch-notes/config")
-async def api_set_fluxer_patch_notes_config(request: Request, payload: FluxerPatchNotesConfigPayload):
-    _require_owner(request)
-    if not (0 <= payload.trigger_hour <= 23):
-        raise _ApiError(400, "Trigger hour must be between 0 and 23.")
-    if not (0 <= payload.trigger_minute <= 59):
-        raise _ApiError(400, "Trigger minute must be between 0 and 59.")
-    await db.set_fluxer_patch_notes_config(payload.trigger_hour, payload.trigger_minute)
-    return {"trigger_hour": payload.trigger_hour, "trigger_minute": payload.trigger_minute}
 
 
 @app.get("/api/fluxer-stats")

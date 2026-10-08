@@ -38,3 +38,14 @@ async def guild_id(_db_pool):
     await db.upsert_guild(gid, name="pytest guild")
     yield gid
     await db.pool().execute("DELETE FROM guilds WHERE guild_id=$1", gid)
+
+
+@pytest.fixture
+async def second_guild_id(_db_pool):
+    """A second fresh guild row, for tests that need two distinct guilds
+    at once (e.g. verifying a shared fetch batches across guilds due in
+    the same scheduler tick)."""
+    gid = str(uuid.uuid4().int & ((1 << 63) - 1))
+    await db.upsert_guild(gid, name="pytest guild 2")
+    yield gid
+    await db.pool().execute("DELETE FROM guilds WHERE guild_id=$1", gid)

@@ -155,7 +155,4 @@ export const api = {
   disableCommand: (id, name) => request(`/api/guilds/${id}/commands/${name}/disable`, { method: "POST" }),
   enableCommand: (id, name) => request(`/api/guilds/${id}/commands/${name}/enable`, { method: "POST" }),
   fluxerStats: () => request("/api/fluxer-stats"),
-  getFluxerPatchNotesConfig: () => request("/api/fluxer-patch-notes/config"),
-  setFluxerPatchNotesConfig: (payload) =>
-    request("/api/fluxer-patch-notes/config", { method: "POST", body: payload }),
 };

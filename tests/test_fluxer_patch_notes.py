@@ -1,8 +1,8 @@
 """Fluxer patch notes: the Central-time window math (including DST, since
 that's exactly the kind of thing that's easy to get wrong with a naive
 UTC offset), the Conventional-Commits theme grouping, the embed builder,
-the dashboard setting round-trip, and the scheduler's gating/dedupe
-logic.
+the per-guild dashboard setting round-trip, and the scheduler's
+per-guild gating/dedupe logic.
 """
 from __future__ import annotations
 
@@ -91,6 +91,19 @@ async def test_fluxer_patch_notes_channel_id_is_settable(guild_id):
     assert row["fluxer_patch_notes_channel_id"] == "chan123"
 
 
+async def test_fluxer_patch_notes_trigger_time_defaults_and_is_settable(guild_id):
+    row = await db.get_guild(guild_id)
+    assert row["fluxer_patch_notes_trigger_hour"] == 0
+    assert row["fluxer_patch_notes_trigger_minute"] == 5
+
+    await db.update_guild_settings(
+        guild_id, fluxer_patch_notes_trigger_hour=13, fluxer_patch_notes_trigger_minute=30,
+    )
+    row = await db.get_guild(guild_id)
+    assert row["fluxer_patch_notes_trigger_hour"] == 13
+    assert row["fluxer_patch_notes_trigger_minute"] == 30
+
+
 async def test_list_guilds_with_fluxer_patch_notes_channel_filters_unset(guild_id):
     await db.update_guild_settings(guild_id, fluxer_patch_notes_channel_id="chan999")
     rows = await db.list_guilds_with_fluxer_patch_notes_channel()
@@ -99,62 +112,42 @@ async def test_list_guilds_with_fluxer_patch_notes_channel_filters_unset(guild_i
     assert matching[0]["fluxer_patch_notes_channel_id"] == "chan999"
 
 
-# --------------------------------------------------------- config + log --
-async def test_fluxer_patch_notes_config_defaults_and_round_trip():
-    # The config row is a bot-wide singleton, not guild-scoped like most
-    # fixtures here, so it can't rely on a fresh-per-test row: wipe it
-    # first to actually exercise get_fluxer_patch_notes_config's
-    # insert-with-defaults path, rather than assuming nothing else
-    # (another test, a live manual check) has ever touched it.
-    await db.pool().execute("DELETE FROM fluxer_patch_notes_config WHERE id='config'")
-    cfg = await db.get_fluxer_patch_notes_config()
-    assert cfg["trigger_hour"] == 0
-    assert cfg["trigger_minute"] == 5
-
-    await db.set_fluxer_patch_notes_config(13, 30)
-    cfg = await db.get_fluxer_patch_notes_config()
-    assert cfg["trigger_hour"] == 13
-    assert cfg["trigger_minute"] == 30
-
-    # Restore the default so other tests in this module see a clean slate.
-    await db.set_fluxer_patch_notes_config(0, 5)
-
-
-async def test_fluxer_patch_notes_log_dedupe_keeps_the_first_count():
+# --------------------------------------------------------------------- log --
+async def test_fluxer_patch_notes_log_dedupe_keeps_the_first_count(guild_id):
     report_date = date(2026, 1, 1)
-    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE sent_date=$1", report_date)
+    await db.pool().execute(
+        "DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1 AND sent_date=$2", guild_id, report_date,
+    )
 
-    assert await db.get_fluxer_patch_notes_log(report_date) is None
-    await db.record_fluxer_patch_notes_sent(report_date, 7)
-    row = await db.get_fluxer_patch_notes_log(report_date)
+    assert await db.get_fluxer_patch_notes_log(guild_id, report_date) is None
+    await db.record_fluxer_patch_notes_sent(guild_id, report_date, 7)
+    row = await db.get_fluxer_patch_notes_log(guild_id, report_date)
     assert row["commit_count"] == 7
 
-    # A second attempt at recording the same date must not overwrite it
-    # (mirrors two scheduler ticks racing past the dedupe check).
-    await db.record_fluxer_patch_notes_sent(report_date, 999)
-    row = await db.get_fluxer_patch_notes_log(report_date)
+    # A second attempt at recording the same (guild, date) must not
+    # overwrite it (mirrors two scheduler ticks racing past the dedupe check).
+    await db.record_fluxer_patch_notes_sent(guild_id, report_date, 999)
+    row = await db.get_fluxer_patch_notes_log(guild_id, report_date)
     assert row["commit_count"] == 7
 
-    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE sent_date=$1", report_date)
+    await db.pool().execute(
+        "DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1 AND sent_date=$2", guild_id, report_date,
+    )
 
 
 # --------------------------------------------------------- scheduler gating --
-async def test_send_fluxer_patch_notes_noop_before_trigger_time(monkeypatch):
-    await db.set_fluxer_patch_notes_config(12, 0)
+async def test_send_fluxer_patch_notes_noop_before_any_guild_is_due(monkeypatch):
     monkeypatch.setattr(patch_notes, "central_now",
                          lambda: datetime(2026, 5, 1, 11, 59, tzinfo=ZoneInfo("America/Chicago")))
+    monkeypatch.setattr(db, "list_guilds_with_fluxer_patch_notes_channel", _empty_list)
     generated = []
     monkeypatch.setattr(patch_notes, "generate_patch_notes", lambda d: generated.append(d))
 
     await scheduler._send_fluxer_patch_notes(Bot("test-token"))
     assert generated == []
-    await db.set_fluxer_patch_notes_config(0, 5)
 
 
-async def test_send_fluxer_patch_notes_records_zero_count_with_no_channels_configured(monkeypatch):
-    report_date = date(2026, 5, 1)
-    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE sent_date=$1", report_date)
-    await db.set_fluxer_patch_notes_config(0, 0)
+async def test_send_fluxer_patch_notes_noop_with_no_channels_configured(monkeypatch):
     monkeypatch.setattr(patch_notes, "central_now",
                          lambda: datetime(2026, 5, 2, 0, 1, tzinfo=ZoneInfo("America/Chicago")))
     monkeypatch.setattr(db, "list_guilds_with_fluxer_patch_notes_channel", _empty_list)
@@ -164,19 +157,18 @@ async def test_send_fluxer_patch_notes_records_zero_count_with_no_channels_confi
     scheduler._last_patch_notes_attempt = None
 
     await scheduler._send_fluxer_patch_notes(Bot("test-token"))
-    assert fetched == []  # no channels anywhere -> not worth a GitHub call
-    row = await db.get_fluxer_patch_notes_log(report_date)
-    assert row["commit_count"] == 0
-
-    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE sent_date=$1", report_date)
-    await db.set_fluxer_patch_notes_config(0, 5)
+    assert fetched == []  # no guilds configured anywhere -> not worth a GitHub call
 
 
-async def test_send_fluxer_patch_notes_sends_to_every_configured_guild(guild_id, monkeypatch):
+async def test_send_fluxer_patch_notes_sends_to_a_due_guild(guild_id, monkeypatch):
     report_date = date(2026, 5, 3)
-    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE sent_date=$1", report_date)
-    await db.update_guild_settings(guild_id, fluxer_patch_notes_channel_id="chan555")
-    await db.set_fluxer_patch_notes_config(0, 0)
+    await db.pool().execute(
+        "DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1 AND sent_date=$2", guild_id, report_date,
+    )
+    await db.update_guild_settings(
+        guild_id, fluxer_patch_notes_channel_id="chan555",
+        fluxer_patch_notes_trigger_hour=0, fluxer_patch_notes_trigger_minute=0,
+    )
     monkeypatch.setattr(patch_notes, "central_now",
                          lambda: datetime(2026, 5, 4, 0, 1, tzinfo=ZoneInfo("America/Chicago")))
 
@@ -197,11 +189,86 @@ async def test_send_fluxer_patch_notes_sends_to_every_configured_guild(guild_id,
 
     await scheduler._send_fluxer_patch_notes(bot)
     assert "chan555" in sent
-    row = await db.get_fluxer_patch_notes_log(report_date)
+    row = await db.get_fluxer_patch_notes_log(guild_id, report_date)
     assert row["commit_count"] == 5
 
-    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE sent_date=$1", report_date)
-    await db.set_fluxer_patch_notes_config(0, 5)
+    await db.pool().execute(
+        "DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1 AND sent_date=$2", guild_id, report_date,
+    )
+
+
+async def test_send_fluxer_patch_notes_skips_a_guild_not_yet_due(guild_id, monkeypatch):
+    report_date = date(2026, 5, 5)
+    await db.pool().execute(
+        "DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1 AND sent_date=$2", guild_id, report_date,
+    )
+    await db.update_guild_settings(
+        guild_id, fluxer_patch_notes_channel_id="chan777",
+        fluxer_patch_notes_trigger_hour=12, fluxer_patch_notes_trigger_minute=0,
+    )
+    monkeypatch.setattr(patch_notes, "central_now",
+                         lambda: datetime(2026, 5, 6, 11, 59, tzinfo=ZoneInfo("America/Chicago")))
+    scheduler._last_patch_notes_attempt = None
+
+    sent = []
+
+    async def fake_send_message(channel_id, **kw):
+        sent.append(channel_id)
+        return {"id": "1"}
+
+    bot = Bot("test-token")
+    bot.rest.send_message = fake_send_message
+
+    await scheduler._send_fluxer_patch_notes(bot)
+    assert "chan777" not in sent
+    assert await db.get_fluxer_patch_notes_log(guild_id, report_date) is None
+
+
+async def test_send_fluxer_patch_notes_fetches_once_for_two_guilds_due_at_once(
+    guild_id, second_guild_id, monkeypatch,
+):
+    report_date = date(2026, 5, 7)
+    for gid in (guild_id, second_guild_id):
+        await db.pool().execute(
+            "DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1 AND sent_date=$2", gid, report_date,
+        )
+    await db.update_guild_settings(
+        guild_id, fluxer_patch_notes_channel_id="chan-a",
+        fluxer_patch_notes_trigger_hour=0, fluxer_patch_notes_trigger_minute=0,
+    )
+    await db.update_guild_settings(
+        second_guild_id, fluxer_patch_notes_channel_id="chan-b",
+        fluxer_patch_notes_trigger_hour=0, fluxer_patch_notes_trigger_minute=0,
+    )
+    monkeypatch.setattr(patch_notes, "central_now",
+                         lambda: datetime(2026, 5, 8, 0, 1, tzinfo=ZoneInfo("America/Chicago")))
+
+    fetch_calls = []
+
+    async def fake_generate(d):
+        fetch_calls.append(d)
+        return {"title": "fake embed"}, 3
+
+    monkeypatch.setattr(patch_notes, "generate_patch_notes", fake_generate)
+    scheduler._last_patch_notes_attempt = None
+
+    sent = []
+
+    async def fake_send_message(channel_id, **kw):
+        sent.append(channel_id)
+        return {"id": "1"}
+
+    bot = Bot("test-token")
+    bot.rest.send_message = fake_send_message
+
+    await scheduler._send_fluxer_patch_notes(bot)
+    assert len(fetch_calls) == 1  # one GitHub fetch shared by both due guilds
+    assert set(sent) == {"chan-a", "chan-b"}
+
+    for gid in (guild_id, second_guild_id):
+        await db.pool().execute(
+            "DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1 AND sent_date=$2", gid, report_date,
+        )
 
 
 async def _empty_list():

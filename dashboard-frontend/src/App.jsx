@@ -13,7 +13,6 @@ import Status from "./pages/Status";
 import BotProfile from "./pages/BotProfile";
 import DiscordRelaySetup from "./pages/DiscordRelaySetup";
 import FluxerStatus from "./pages/FluxerStatus";
-import FluxerPatchNotes from "./pages/FluxerPatchNotes";
 import { api, setUnauthorizedHandler } from "./api";
 
 export default function App() {
@@ -68,10 +67,6 @@ export default function App() {
               <Route
                 path="/fluxer-status"
                 element={me.user && me.is_owner ? <FluxerStatus /> : <Login botName={botName} />}
-              />
-              <Route
-                path="/fluxer-patch-notes"
-                element={me.user && me.is_owner ? <FluxerPatchNotes /> : <Login botName={botName} />}
               />
             </Routes>
           </main>

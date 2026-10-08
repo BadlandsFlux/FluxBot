@@ -209,24 +209,39 @@ _PATCH_NOTES_RETRY_INTERVAL = timedelta(minutes=5)
 
 
 async def _send_fluxer_patch_notes(bot: Bot) -> None:
-    """Fires once per Central calendar day, at whatever time the owner
-    configured on the dashboard (fluxer_patch_notes_config). Always
-    reports on the day that just ended, not whatever's still in
+    """Each guild picks its own send time (fluxer_patch_notes_trigger_hour/
+    minute on its own Settings tab), so this checks every configured
+    guild on its own terms rather than firing once bot-wide. Always
+    reports on the Central day that just ended, not whatever's still in
     progress -- see fluxer_patch_notes.yesterday_in_central's own
     docstring for why a 00:05 trigger and an 11:55pm one both still
     deliver one complete day each, never a partial one.
 
-    Gated two ways: the "already sent this date" log check (the real
-    dedupe, survives restarts), and a 5-minute retry floor so a GitHub
-    outage doesn't turn into hitting its API every 15-second tick until
-    it recovers."""
+    Dedupe is per (guild, date) in fluxer_patch_notes_log, so guilds
+    with different trigger times naturally get sent independently as
+    each one's own time arrives, surviving a restart. GitHub itself is
+    still fetched at most once per tick, not once per due guild: the
+    common case (most guilds left at the same default trigger time)
+    would otherwise mean one fetch per guild for identical content.
+
+    A 5-minute retry floor on the actual GitHub call keeps an outage
+    from turning into hitting its API every 15-second tick until it
+    recovers -- it doesn't delay a healthy send, since a guild is no
+    longer "due" the moment it's actually been sent."""
     global _last_patch_notes_attempt
     now = fluxer_patch_notes.central_now()
-    cfg = await db.get_fluxer_patch_notes_config()
-    if (now.hour, now.minute) < (cfg["trigger_hour"], cfg["trigger_minute"]):
-        return
     report_date = fluxer_patch_notes.yesterday_in_central(now)
-    if await db.get_fluxer_patch_notes_log(report_date):
+
+    guild_channels = await db.list_guilds_with_fluxer_patch_notes_channel()
+    due = []
+    for row in guild_channels:
+        trigger = (row["fluxer_patch_notes_trigger_hour"], row["fluxer_patch_notes_trigger_minute"])
+        if trigger > (now.hour, now.minute):
+            continue
+        if await db.get_fluxer_patch_notes_log(row["guild_id"], report_date):
+            continue
+        due.append(row)
+    if not due:
         return
 
     now_utc = datetime.now(timezone.utc)
@@ -234,27 +249,18 @@ async def _send_fluxer_patch_notes(bot: Bot) -> None:
         return
     _last_patch_notes_attempt = now_utc
 
-    guild_channels = await db.list_guilds_with_fluxer_patch_notes_channel()
-    if not guild_channels:
-        # Nobody's listening today, so there's no reason to spend a
-        # GitHub API call finding out what happened. Recorded anyway so
-        # a channel added later today doesn't retroactively trigger a
-        # send for a date that's already passed.
-        await db.record_fluxer_patch_notes_sent(report_date, 0)
-        return
-
     try:
         embed, commit_count = await fluxer_patch_notes.generate_patch_notes(report_date)
     except Exception:
         log.exception("Failed to generate Fluxer patch notes for %s, will retry", report_date)
         return
 
-    for row in guild_channels:
+    for row in due:
         try:
             await bot.rest.send_message(row["fluxer_patch_notes_channel_id"], embeds=[embed])
         except Exception:
             log.warning("Failed to post Fluxer patch notes to guild %s", row["guild_id"])
-    await db.record_fluxer_patch_notes_sent(report_date, commit_count)
+        await db.record_fluxer_patch_notes_sent(row["guild_id"], report_date, commit_count)
 
 
 async def run_scheduler(bot: Bot) -> None:
