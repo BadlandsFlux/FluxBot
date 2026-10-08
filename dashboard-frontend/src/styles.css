@@ -876,9 +876,8 @@ label > .combobox { margin-top: 6px; }
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.emoji-picker-value-custom { display: flex; align-items: center; gap: 6px; font-size: 13px; }
-.emoji-picker-value-custom img { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
-.emoji-picker-value-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.emoji-picker-value-custom { display: flex; align-items: center; flex-shrink: 0; }
+.emoji-picker-value-custom img { width: 22px; height: 22px; object-fit: contain; }
 .emoji-picker-panel {
   position: absolute;
   top: calc(100% + 6px);

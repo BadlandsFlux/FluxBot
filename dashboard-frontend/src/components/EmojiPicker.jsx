@@ -7,8 +7,8 @@ import useGuildEmojis from "../hooks/useGuildEmojis";
 // so a pick always replaces it outright. `guildId`, when given, adds
 // the server's own custom emoji to the panel alongside the standard set,
 // and lets the trigger resolve a picked custom emoji's `name:id` value
-// back to its thumbnail + name instead of showing that raw (long, ugly)
-// string.
+// back to just its thumbnail (full name on hover via the title tooltip)
+// instead of showing that raw (long, ugly) string.
 export default function EmojiPicker({ value, onChange, guildId }) {
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState("");
@@ -43,9 +43,8 @@ export default function EmojiPicker({ value, onChange, guildId }) {
       <button type="button" className="emoji-picker-trigger" onClick={() => setOpen((v) => !v)}
               title={matchedGuildEmoji ? `:${matchedGuildEmoji.name}:` : value || undefined}>
         {matchedGuildEmoji ? (
-          <span className="emoji-picker-value emoji-picker-value-custom">
+          <span className="emoji-picker-value-custom">
             <img src={matchedGuildEmoji.url} alt={matchedGuildEmoji.name} />
-            <span className="emoji-picker-value-name">{matchedGuildEmoji.name}</span>
           </span>
         ) : (
           <span className={value ? "emoji-picker-value" : "muted"}>{value || "Pick"}</span>
