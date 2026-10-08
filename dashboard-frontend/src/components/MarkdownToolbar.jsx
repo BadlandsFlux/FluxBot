@@ -1,4 +1,5 @@
 import { Bold, Italic, Underline, Strikethrough, Code, EyeOff, Heading1, Heading2, List, ListOrdered, Quote } from "lucide-react";
+import EmojiInsertButton from "./EmojiInsertButton";
 
 // Wraps the current selection in `before`/`after` (or inserts `placeholder`
 // between them if nothing's selected), then puts the cursor/selection back
@@ -106,7 +107,7 @@ export function handleListContinue(e, value, onChange) {
   });
 }
 
-export default function MarkdownToolbar({ textareaRef, value, onChange }) {
+export default function MarkdownToolbar({ textareaRef, value, onChange, guildId }) {
   return (
     <div className="markdown-toolbar" role="toolbar" aria-label="Text formatting">
       {BUTTONS.map(({ icon: Icon, title, action }) => (
@@ -123,6 +124,7 @@ export default function MarkdownToolbar({ textareaRef, value, onChange }) {
           <Icon size={14} />
         </button>
       ))}
+      <EmojiInsertButton targetRef={textareaRef} value={value} onChange={onChange} guildId={guildId} />
     </div>
   );
 }

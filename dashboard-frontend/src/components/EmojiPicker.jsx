@@ -1,14 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
+import EmojiPickerPanel from "./EmojiPickerPanel";
 
-const COMMON_EMOJI = [
-  "😀", "😂", "😍", "🥳", "😎", "🤔", "😭", "😡", "👍", "👎",
-  "❤️", "🔥", "🎉", "🎮", "🎵", "🎨", "📚", "⚽", "🏆", "🍕",
-  "☕", "🌟", "✅", "❌", "🔔", "💡", "🚀", "🎯", "🌈", "⭐",
-  "💯", "🙌", "👋", "🎁", "🐱", "🐶", "🌸", "☀️", "🌙", "⚡",
-];
-
-export default function EmojiPicker({ value, onChange }) {
+// `value` here is a single exact string (a reaction-role row's emoji),
+// so a pick always replaces it outright. `guildId`, when given, adds
+// the server's own custom emoji to the panel alongside the standard set.
+export default function EmojiPicker({ value, onChange, guildId }) {
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState("");
   const rootRef = useRef(null);
@@ -23,7 +20,15 @@ export default function EmojiPicker({ value, onChange }) {
 
   function pick(emoji) {
     onChange(emoji);
-    setOpen(false);
+    // Deferred, not called synchronously here: removing the clicked
+    // button's own panel in direct response to its own click, within
+    // the same event-handling tick, triggers a real Chromium quirk --
+    // the browser's focus manager, on finding the active element gone,
+    // can synthesize a phantom follow-up click (detail: 0) elsewhere on
+    // the page. Closing on the next tick lets the browser finish its
+    // own click bookkeeping first. See EmojiInsertButton.jsx, where this
+    // was first caught corrupting unrelated form state.
+    setTimeout(() => setOpen(false), 0);
     setCustom("");
   }
 
@@ -35,19 +40,7 @@ export default function EmojiPicker({ value, onChange }) {
       </button>
       {open && (
         <div className="emoji-picker-panel">
-          <div className="emoji-picker-grid">
-            {COMMON_EMOJI.map((e) => (
-              <button
-                type="button"
-                key={e}
-                className={`emoji-picker-cell ${value === e ? "selected" : ""}`}
-                onClick={() => pick(e)}
-                title={e}
-              >
-                {e}
-              </button>
-            ))}
-          </div>
+          <EmojiPickerPanel guildId={guildId} mode="reaction" onPick={pick} />
           <div className="emoji-picker-custom">
             <input
               type="text"

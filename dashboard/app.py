@@ -31,7 +31,7 @@ from bot.rest import FluxerAPIError, FluxerREST
 from common.url_safety import is_safe_external_url
 from common import db, fluxer_admin
 from common.config import config
-from common.discovery import get_media_base, guild_icon_url, user_avatar_url
+from common.discovery import emoji_url, get_media_base, guild_icon_url, user_avatar_url
 from dashboard import oauth
 
 log = logging.getLogger("fluxbot.dashboard")
@@ -1319,6 +1319,40 @@ async def api_guild_channels(request: Request, guild_id: str):
         if c.get("type") in (0, None)
     ]
     return {"channels": channels_list}
+
+
+def _guild_emoji_to_json(e, media_base: str) -> dict:
+    """`reaction` is the exact string Fluxer's reaction endpoints expect
+    (confirmed as `name:id` by Fluxer's docs); `tag` is the Discord-style
+    inline form (`<:name:id>` / `<a:name:id>`) used when inserting into
+    message text -- Fluxer's own docs don't specify that syntax, so this
+    follows the same convention the rest of this codebase assumes where
+    Fluxer's reference is silent."""
+    emoji_id = str(e["id"])
+    name = e.get("name", "emoji")
+    animated = bool(e.get("animated"))
+    return {
+        "id": emoji_id,
+        "name": name,
+        "animated": animated,
+        "url": emoji_url(media_base, emoji_id, animated=animated, size=64),
+        "reaction": f"{name}:{emoji_id}",
+        "tag": f"<{'a' if animated else ''}:{name}:{emoji_id}>",
+    }
+
+
+@app.get("/api/guilds/{guild_id}/emojis")
+async def api_guild_emojis(request: Request, guild_id: str):
+    """Powers the emoji picker (reaction roles, embed builder) with the
+    server's own custom emoji instead of making people paste `name:id`
+    by hand."""
+    await _require_manage(request, guild_id)
+    try:
+        emojis = await bot_rest.list_guild_emojis(guild_id)
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Couldn't fetch emoji from Fluxer (HTTP {e.status}).")
+    media_base = await get_media_base()
+    return {"emojis": [_guild_emoji_to_json(e, media_base) for e in emojis]}
 
 
 # ------------------------------------------------------------------ members --

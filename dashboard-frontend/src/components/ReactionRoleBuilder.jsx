@@ -148,7 +148,7 @@ export default function ReactionRoleBuilder({ guildId, roles, channels, onCreate
         </div>
         {rows.map((row, i) => (
           <div className="rr-row" key={i}>
-            <EmojiPicker value={row.emoji} onChange={(v) => updateRow(i, "emoji", v)} />
+            <EmojiPicker value={row.emoji} onChange={(v) => updateRow(i, "emoji", v)} guildId={guildId} />
             <input
               type="text"
               value={row.label}
