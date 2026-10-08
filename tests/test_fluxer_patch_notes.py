@@ -157,7 +157,7 @@ async def test_send_fluxer_patch_notes_records_zero_count_with_no_channels_confi
     await db.set_fluxer_patch_notes_config(0, 0)
     monkeypatch.setattr(patch_notes, "central_now",
                          lambda: datetime(2026, 5, 2, 0, 1, tzinfo=ZoneInfo("America/Chicago")))
-    monkeypatch.setattr(db, "list_guilds_with_fluxer_patch_notes_channel", lambda: _empty_list())
+    monkeypatch.setattr(db, "list_guilds_with_fluxer_patch_notes_channel", _empty_list)
 
     fetched = []
     monkeypatch.setattr(patch_notes, "generate_patch_notes", lambda d: fetched.append(d))
