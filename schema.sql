@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS guilds (
     report_tracker_channel_id TEXT,
     voice_xp_cap_enabled  BOOLEAN NOT NULL DEFAULT TRUE,  -- see member_voice_xp_daily below
     voice_xp_cap_amount   INTEGER NOT NULL DEFAULT 750,
+    fluxer_patch_notes_channel_id TEXT,  -- see fluxer_patch_notes_config/log below; off until set
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -488,6 +489,29 @@ CREATE TABLE IF NOT EXISTS discord_relay_status (
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Singleton row, same pattern as discord_relay_config: a bot-wide,
+-- owner-only setting (what time of day the Fluxer patch-notes digest
+-- goes out), not scoped to any one guild. Central time, not UTC, since
+-- that's the timezone the digest's "day" is always computed in (see
+-- bot/fluxer_patch_notes.py) regardless of where the bot itself runs.
+CREATE TABLE IF NOT EXISTS fluxer_patch_notes_config (
+    id             TEXT PRIMARY KEY DEFAULT 'config',
+    trigger_hour   INTEGER NOT NULL DEFAULT 0,  -- 0-23, America/Chicago
+    trigger_minute INTEGER NOT NULL DEFAULT 5,  -- 0-59
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One row per calendar day (America/Chicago) the digest has actually
+-- been generated and sent for. Doubles as the scheduler's dedupe guard
+-- (a bot restart mid-day must not re-send) and as the cache key so the
+-- content is fetched from GitHub once per day and fanned out to every
+-- guild with a channel configured, not fetched once per guild.
+CREATE TABLE IF NOT EXISTS fluxer_patch_notes_log (
+    sent_date     DATE PRIMARY KEY,
+    commit_count  INTEGER NOT NULL,
+    sent_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- One row per Fluxer message that couldn't be delivered to Discord
 -- because the relay's Discord connection was down at the time, not
 -- some other, unrelated failure (a bad channel id, missing permission,
@@ -812,3 +836,6 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS voice_xp_cap_enabled BOOLEAN NOT NUL
 -- Migration for databases created before the cap amount was configurable
 -- (it used to be a hardcoded 750 in bot/voice_tracker.py).
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS voice_xp_cap_amount INTEGER NOT NULL DEFAULT 750;
+
+-- Migration for databases created before the Fluxer patch-notes digest existed.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS fluxer_patch_notes_channel_id TEXT;

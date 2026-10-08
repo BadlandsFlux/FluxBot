@@ -327,6 +327,7 @@ function FeatureStatusRow({ guild, setTab }) {
     { key: "goodbye", label: "Goodbye", on: !!guild.goodbye_channel_id, tab: "settings" },
     { key: "leveling", label: "Leveling", on: !!guild.leveling_enabled, tab: "levels" },
     { key: "reports", label: "Reports", on: !!guild.report_channel_id, tab: "settings" },
+    { key: "patchnotes", label: "Patch notes", on: !!guild.fluxer_patch_notes_channel_id, tab: "settings" },
   ];
   return (
     <div className="feature-status-row">
@@ -524,6 +525,7 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
   const [welcomeOn, setWelcomeOn] = useState(!!guild.welcome_channel_id);
   const [goodbyeOn, setGoodbyeOn] = useState(!!guild.goodbye_channel_id);
   const [reportsOn, setReportsOn] = useState(!!guild.report_channel_id);
+  const [patchNotesOn, setPatchNotesOn] = useState(!!guild.fluxer_patch_notes_channel_id);
   const [saving, setSaving] = useState(false);
 
   function set(field, value) {
@@ -546,6 +548,11 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
       set("report_channel_id", "");
       set("report_tracker_channel_id", "");
     }
+  }
+
+  function togglePatchNotes(next) {
+    setPatchNotesOn(next);
+    if (!next) set("fluxer_patch_notes_channel_id", "");
   }
 
   async function handleSubmit(e) {
@@ -573,11 +580,13 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
         warn_timeout_minutes: Number(form.warn_timeout_minutes),
         report_channel_id: reportsOn ? form.report_channel_id || "" : "",
         report_tracker_channel_id: reportsOn ? form.report_tracker_channel_id || "" : "",
+        fluxer_patch_notes_channel_id: patchNotesOn ? form.fluxer_patch_notes_channel_id || "" : "",
       });
       onSaved(result.guild);
       setWelcomeOn(!!result.guild.welcome_channel_id);
       setGoodbyeOn(!!result.guild.goodbye_channel_id);
       setReportsOn(!!result.guild.report_channel_id);
+      setPatchNotesOn(!!result.guild.fluxer_patch_notes_channel_id);
       flash("Settings saved.");
     } catch (err) {
       flash(err.message, "error");
@@ -679,6 +688,25 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
                         onChange={(v) => set("report_tracker_channel_id", v)} placeholder="Optional, but recommended" />
             </label>
             {!form.report_channel_id && (
+              <p className="muted small">Pick a channel above to finish turning this on.</p>
+            )}
+          </div>
+        )}
+
+        <h2 className="section-divider">Fluxer patch notes</h2>
+        <Switch checked={patchNotesOn} onChange={togglePatchNotes}
+                label="Post a daily digest of fluxerapp/fluxer's commits here" />
+        {patchNotesOn && (
+          <div className="switch-panel">
+            <label>
+              Patch notes channel
+              <Combobox options={channels} value={form.fluxer_patch_notes_channel_id || ""}
+                        onChange={(v) => set("fluxer_patch_notes_channel_id", v)} placeholder="Pick a channel" />
+            </label>
+            <p className="muted small">
+              What time of day it's sent is a bot-wide setting, set by the bot owner on the Fluxer Patch Notes page.
+            </p>
+            {!form.fluxer_patch_notes_channel_id && (
               <p className="muted small">Pick a channel above to finish turning this on.</p>
             )}
           </div>

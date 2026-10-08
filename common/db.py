@@ -84,6 +84,7 @@ _ALLOWED_SETTINGS = {
     "warn_timeout_at", "warn_kick_at", "warn_timeout_minutes",
     "report_channel_id", "report_tracker_channel_id",
     "voice_xp_cap_enabled", "voice_xp_cap_amount",
+    "fluxer_patch_notes_channel_id",
 }
 
 
@@ -1785,6 +1786,57 @@ async def get_open_reports_by_reporter(reporter_id: str) -> list[asyncpg.Record]
     that's unambiguous enough to attribute the reply to without asking."""
     return await pool().fetch(
         "SELECT * FROM reports WHERE reporter_id=$1 AND status='open' ORDER BY created_at DESC", reporter_id,
+    )
+
+
+# ------------------------------------------------------ fluxer patch notes --
+async def get_fluxer_patch_notes_config() -> asyncpg.Record:
+    """Always returns a row (the DEFAULT-filled one if nothing's been
+    saved yet), unlike the discord-relay config/status rows above which
+    can legitimately be absent -- there's always a sensible trigger time
+    to report, 00:05 America/Chicago out of the box."""
+    row = await pool().fetchrow("SELECT * FROM fluxer_patch_notes_config WHERE id='config'")
+    if row:
+        return row
+    return await pool().fetchrow(
+        "INSERT INTO fluxer_patch_notes_config (id) VALUES ('config') RETURNING *",
+    )
+
+
+async def set_fluxer_patch_notes_config(trigger_hour: int, trigger_minute: int) -> None:
+    await pool().execute(
+        """
+        INSERT INTO fluxer_patch_notes_config (id, trigger_hour, trigger_minute, updated_at)
+        VALUES ('config', $1, $2, now())
+        ON CONFLICT (id) DO UPDATE SET
+            trigger_hour = EXCLUDED.trigger_hour, trigger_minute = EXCLUDED.trigger_minute, updated_at = now()
+        """,
+        trigger_hour, trigger_minute,
+    )
+
+
+async def get_fluxer_patch_notes_log(sent_date) -> Optional[asyncpg.Record]:
+    return await pool().fetchrow("SELECT * FROM fluxer_patch_notes_log WHERE sent_date=$1", sent_date)
+
+
+async def record_fluxer_patch_notes_sent(sent_date, commit_count: int) -> None:
+    # ON CONFLICT DO NOTHING, not a plain INSERT: the scheduler's own
+    # dedupe check (get_fluxer_patch_notes_log before fetching/sending)
+    # already guards the common case, but two ticks racing past that
+    # check for the same not-yet-logged date must not both succeed in
+    # inserting, that would mean two sends for the same day.
+    await pool().execute(
+        """
+        INSERT INTO fluxer_patch_notes_log (sent_date, commit_count) VALUES ($1, $2)
+        ON CONFLICT (sent_date) DO NOTHING
+        """,
+        sent_date, commit_count,
+    )
+
+
+async def list_guilds_with_fluxer_patch_notes_channel() -> list[asyncpg.Record]:
+    return await pool().fetch(
+        "SELECT guild_id, fluxer_patch_notes_channel_id FROM guilds WHERE fluxer_patch_notes_channel_id IS NOT NULL",
     )
 
 

@@ -55,6 +55,11 @@ export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
               Fluxer Status
             </Link>
           )}
+          {isOwner && (
+            <Link to="/fluxer-patch-notes" className="topbar-link">
+              Patch Notes
+            </Link>
+          )}
         </nav>
       </div>
       <div className="topbar-right">

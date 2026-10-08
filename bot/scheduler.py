@@ -21,7 +21,7 @@ from typing import Optional
 from bot.commands import Bot
 from bot.modules.fun import NUMBER_EMOJI
 from bot.modules import leveling, trivia as trivia_module
-from bot import voice_tracker
+from bot import fluxer_patch_notes, voice_tracker
 from common import db
 
 log = logging.getLogger("fluxbot.scheduler")
@@ -204,6 +204,59 @@ async def _prune_link_codes() -> None:
     _last_link_code_prune = now
 
 
+_last_patch_notes_attempt: Optional[datetime] = None
+_PATCH_NOTES_RETRY_INTERVAL = timedelta(minutes=5)
+
+
+async def _send_fluxer_patch_notes(bot: Bot) -> None:
+    """Fires once per Central calendar day, at whatever time the owner
+    configured on the dashboard (fluxer_patch_notes_config). Always
+    reports on the day that just ended, not whatever's still in
+    progress -- see fluxer_patch_notes.yesterday_in_central's own
+    docstring for why a 00:05 trigger and an 11:55pm one both still
+    deliver one complete day each, never a partial one.
+
+    Gated two ways: the "already sent this date" log check (the real
+    dedupe, survives restarts), and a 5-minute retry floor so a GitHub
+    outage doesn't turn into hitting its API every 15-second tick until
+    it recovers."""
+    global _last_patch_notes_attempt
+    now = fluxer_patch_notes.central_now()
+    cfg = await db.get_fluxer_patch_notes_config()
+    if (now.hour, now.minute) < (cfg["trigger_hour"], cfg["trigger_minute"]):
+        return
+    report_date = fluxer_patch_notes.yesterday_in_central(now)
+    if await db.get_fluxer_patch_notes_log(report_date):
+        return
+
+    now_utc = datetime.now(timezone.utc)
+    if _last_patch_notes_attempt and now_utc - _last_patch_notes_attempt < _PATCH_NOTES_RETRY_INTERVAL:
+        return
+    _last_patch_notes_attempt = now_utc
+
+    guild_channels = await db.list_guilds_with_fluxer_patch_notes_channel()
+    if not guild_channels:
+        # Nobody's listening today, so there's no reason to spend a
+        # GitHub API call finding out what happened. Recorded anyway so
+        # a channel added later today doesn't retroactively trigger a
+        # send for a date that's already passed.
+        await db.record_fluxer_patch_notes_sent(report_date, 0)
+        return
+
+    try:
+        embed, commit_count = await fluxer_patch_notes.generate_patch_notes(report_date)
+    except Exception:
+        log.exception("Failed to generate Fluxer patch notes for %s, will retry", report_date)
+        return
+
+    for row in guild_channels:
+        try:
+            await bot.rest.send_message(row["fluxer_patch_notes_channel_id"], embeds=[embed])
+        except Exception:
+            log.warning("Failed to post Fluxer patch notes to guild %s", row["guild_id"])
+    await db.record_fluxer_patch_notes_sent(report_date, commit_count)
+
+
 async def run_scheduler(bot: Bot) -> None:
     while True:
         try:
@@ -216,6 +269,7 @@ async def run_scheduler(bot: Bot) -> None:
             await _prune_relay_outbound_queue()
             await _prune_relay_send_claims()
             await _prune_link_codes()
+            await _send_fluxer_patch_notes(bot)
         except Exception:
             log.exception("Scheduler tick failed")
         await asyncio.sleep(CHECK_INTERVAL)
