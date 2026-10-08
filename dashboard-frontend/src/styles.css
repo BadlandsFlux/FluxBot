@@ -1098,6 +1098,14 @@ label > .combobox { margin-top: 6px; }
   cursor: pointer;
 }
 .markdown-toolbar-btn:hover { background: var(--panel-hover); color: var(--text); }
+/* ------------------------------------------------------- embed builder toolbar */
+.embed-builder-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
 /* ---------------------------------------------------------- embed fields */
 .embed-fields-section { margin-bottom: 14px; }
 .embed-fields-head {
@@ -1114,7 +1122,10 @@ label > .combobox { margin-top: 6px; }
   border-radius: var(--radius-sm);
   padding: 10px;
   margin-bottom: 8px;
+  transition: border-color 0.1s ease, background 0.1s ease;
 }
+.embed-field-row-dragging { opacity: 0.5; }
+.embed-field-row-drop-target { border-color: var(--accent); background: var(--accent-soft); }
 .embed-field-row-head {
   display: flex;
   align-items: center;
@@ -1122,6 +1133,20 @@ label > .combobox { margin-top: 6px; }
   margin-bottom: 6px;
 }
 .embed-field-row-head input[type="text"] { flex: 1; }
+.embed-field-drag-handle {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  cursor: grab;
+  flex-shrink: 0;
+}
+.embed-field-drag-handle:active { cursor: grabbing; }
+.embed-field-reorder-buttons {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.embed-field-reorder-buttons .btn { padding: 1px 4px; }
 .embed-field-inline-toggle {
   display: flex;
   align-items: center;
