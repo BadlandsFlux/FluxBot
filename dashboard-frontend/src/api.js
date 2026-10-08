@@ -78,6 +78,7 @@ export const api = {
     request(`/api/guilds/${id}/reactionroles/message/${messageId}`, { method: "DELETE" }),
   roles: (id) => request(`/api/guilds/${id}/roles`),
   channels: (id) => request(`/api/guilds/${id}/channels`),
+  guildEmojis: (id) => request(`/api/guilds/${id}/emojis`),
   members: (id, q = "", offset = 0) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);

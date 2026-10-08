@@ -102,6 +102,9 @@ class FluxerREST:
     async def list_guild_members(self, guild_id: str, limit: int = 100) -> list:
         return await self.request("GET", f"/guilds/{guild_id}/members", params={"limit": limit})
 
+    async def list_guild_emojis(self, guild_id: str) -> list:
+        return await self.request("GET", f"/guilds/{guild_id}/emojis")
+
     # ------------------------------------------------------- moderation --
     async def kick_member(self, guild_id: str, user_id: str, reason: str = "") -> None:
         await self.request(

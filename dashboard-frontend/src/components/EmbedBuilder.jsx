@@ -6,10 +6,11 @@ import Spinner from "./Spinner";
 import Combobox from "./Combobox";
 import MarkdownToolbar, { handleListContinue } from "./MarkdownToolbar";
 import EmbedPreview from "./EmbedPreview";
+import EmojiInsertButton from "./EmojiInsertButton";
 
 const MAX_FIELDS = 25;
 
-function FieldRow({ field, index, count, onChange, onRemove, onMove, dragState }) {
+function FieldRow({ field, index, count, onChange, onRemove, onMove, dragState, guildId }) {
   const valueRef = useRef(null);
   const { draggedId, setDraggedId, overId, setOverId } = dragState;
   const isDragging = draggedId === field.id;
@@ -77,7 +78,8 @@ function FieldRow({ field, index, count, onChange, onRemove, onMove, dragState }
           <X size={14} />
         </button>
       </div>
-      <MarkdownToolbar textareaRef={valueRef} value={field.value} onChange={(v) => onChange({ ...field, value: v })} />
+      <MarkdownToolbar textareaRef={valueRef} value={field.value} onChange={(v) => onChange({ ...field, value: v })}
+                       guildId={guildId} />
       <textarea
         ref={valueRef}
         value={field.value}
@@ -112,6 +114,9 @@ function slugForFilename(title) {
 export default function EmbedBuilder({ guildId, channels }) {
   const flash = useFlash();
   const descRef = useRef(null);
+  const titleRef = useRef(null);
+  const footerRef = useRef(null);
+  const authorNameRef = useRef(null);
   const importInputRef = useRef(null);
   const [channelId, setChannelId] = useState("");
   const [title, setTitle] = useState("");
@@ -292,7 +297,11 @@ export default function EmbedBuilder({ guildId, channels }) {
       <div className="form-row form-row-3">
         <label>
           Author name (optional)
-          <input type="text" value={authorName} onChange={(e) => setAuthorName(e.target.value)} placeholder="Staff team" maxLength={256} />
+          <div className="input-with-emoji">
+            <input ref={authorNameRef} type="text" value={authorName} onChange={(e) => setAuthorName(e.target.value)}
+                   placeholder="Staff team" maxLength={256} />
+            <EmojiInsertButton targetRef={authorNameRef} value={authorName} onChange={setAuthorName} guildId={guildId} />
+          </div>
         </label>
         <label>
           Author icon URL (optional)
@@ -307,7 +316,11 @@ export default function EmbedBuilder({ guildId, channels }) {
       <div className="form-row form-row-title-color">
         <label>
           Title
-          <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Embed title" maxLength={256} />
+          <div className="input-with-emoji">
+            <input ref={titleRef} type="text" value={title} onChange={(e) => setTitle(e.target.value)}
+                   placeholder="Embed title" maxLength={256} />
+            <EmojiInsertButton targetRef={titleRef} value={title} onChange={setTitle} guildId={guildId} />
+          </div>
         </label>
         <label>
           Color
@@ -321,7 +334,7 @@ export default function EmbedBuilder({ guildId, channels }) {
 
       <label>
         Description
-        <MarkdownToolbar textareaRef={descRef} value={description} onChange={setDescription} />
+        <MarkdownToolbar textareaRef={descRef} value={description} onChange={setDescription} guildId={guildId} />
         <textarea
           ref={descRef}
           value={description}
@@ -342,7 +355,7 @@ export default function EmbedBuilder({ guildId, channels }) {
         </div>
         {fields.map((f, i) => (
           <FieldRow key={f.id} field={f} index={i} count={fields.length} onChange={(next) => updateField(f.id, next)}
-                    onRemove={() => removeField(f.id)} onMove={moveField} dragState={dragState} />
+                    onRemove={() => removeField(f.id)} onMove={moveField} dragState={dragState} guildId={guildId} />
         ))}
       </div>
 
@@ -357,7 +370,11 @@ export default function EmbedBuilder({ guildId, channels }) {
         </label>
         <label>
           Footer (optional)
-          <input type="text" value={footer} onChange={(e) => setFooter(e.target.value)} placeholder="The team" maxLength={2048} />
+          <div className="input-with-emoji">
+            <input ref={footerRef} type="text" value={footer} onChange={(e) => setFooter(e.target.value)}
+                   placeholder="The team" maxLength={2048} />
+            <EmojiInsertButton targetRef={footerRef} value={footer} onChange={setFooter} guildId={guildId} />
+          </div>
         </label>
       </div>
 

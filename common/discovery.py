@@ -70,3 +70,10 @@ def user_avatar_url(media_base: str, user_id: str, avatar_hash: Optional[str],
     if animated:
         url += "&animated=true"
     return url
+
+
+def emoji_url(media_base: str, emoji_id: str, animated: bool = False, size: int = 64) -> str:
+    url = f"{media_base}/emojis/{emoji_id}.{'gif' if animated else 'webp'}?size={size}"
+    if animated:
+        url += "&animated=true"
+    return url
