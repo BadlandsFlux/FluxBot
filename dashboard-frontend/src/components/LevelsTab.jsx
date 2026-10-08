@@ -4,8 +4,101 @@ import { api } from "../api";
 import { useFlash } from "./Flash";
 import Spinner from "./Spinner";
 import Combobox from "./Combobox";
+import Switch from "./Switch";
 
-export default function LevelsTab({ guildId, roles, channels }) {
+// The settings endpoint's Pydantic model declares its channel/role/message
+// fields as plain `str` (default ""), not Optional[str], but an unset
+// channel comes back from the API as `null`. Spreading `guild` straight
+// into a save payload would send those nulls through and fail validation
+// (422) on any field this card doesn't itself edit, so every value needs
+// this same null -> "" treatment the rest of the settings UI already gives
+// each field individually.
+function withoutNulls(guild) {
+  return Object.fromEntries(Object.entries(guild).map(([k, v]) => [k, v === null ? "" : v]));
+}
+
+function LevelingSettingsCard({ guildId, guild, channels, onSaved }) {
+  const flash = useFlash();
+  const [form, setForm] = useState(guild);
+  const [levelingOn, setLevelingOn] = useState(!!guild.leveling_enabled);
+  const [voiceCapOn, setVoiceCapOn] = useState(guild.voice_xp_cap_enabled ?? true);
+  const [saving, setSaving] = useState(false);
+
+  function set(field, value) {
+    setForm((f) => ({ ...f, [field]: value }));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      // Spread the full current guild as the base, so this save (scoped
+      // to leveling fields) can never reset every OTHER setting back to
+      // the settings endpoint's own payload defaults, same reasoning as
+      // the main Settings form uses for its own unedited fields.
+      const result = await api.updateSettings(guildId, {
+        ...withoutNulls(guild),
+        leveling_enabled: levelingOn,
+        level_up_channel_id: form.level_up_channel_id || "",
+        level_up_message: form.level_up_message || "GG {user}, you reached level {level}! 🎉",
+        voice_xp_cap_enabled: voiceCapOn,
+        voice_xp_cap_amount: Number(form.voice_xp_cap_amount) || 750,
+      });
+      onSaved(result.guild);
+      setLevelingOn(!!result.guild.leveling_enabled);
+      setVoiceCapOn(result.guild.voice_xp_cap_enabled ?? true);
+      flash("Leveling settings saved.");
+    } catch (err) {
+      flash(err.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Leveling settings</h2>
+      <form onSubmit={handleSubmit} className="settings-form">
+        <Switch checked={levelingOn} onChange={setLevelingOn} label="Members earn XP for chatting" />
+        {levelingOn && (
+          <div className="switch-panel">
+            <label>
+              Level-up announcement channel
+              <Combobox options={channels} value={form.level_up_channel_id || ""}
+                        onChange={(v) => set("level_up_channel_id", v)}
+                        placeholder="Announce in the channel they leveled up in" />
+            </label>
+            <label>
+              Message, <code>{"{user}"}</code>, <code>{"{username}"}</code>, <code>{"{level}"}</code>,{" "}
+              <code>{"{title}"}</code> work
+              <input type="text" value={form.level_up_message || ""} onChange={(e) => set("level_up_message", e.target.value)}
+                     placeholder="GG {user}, you reached level {level}! 🎉" />
+            </label>
+            <Switch checked={voiceCapOn} onChange={setVoiceCapOn} label="Cap voice XP per member, per day" />
+            {voiceCapOn && (
+              <label>
+                XP per day
+                <input type="number" min={1} max={100000} value={form.voice_xp_cap_amount ?? 750}
+                       onChange={(e) => set("voice_xp_cap_amount", e.target.value)}
+                       style={{ maxWidth: 120 }} />
+              </label>
+            )}
+            <p className="muted small">
+              Stops someone from out-earning everyone else just by leaving a client connected to voice.
+              A normal couple-hours-a-day habit never reaches the default of 750/day.
+            </p>
+          </div>
+        )}
+        <button className="btn btn-primary btn-small" type="submit" disabled={saving}>
+          {saving ? <Spinner size={14} /> : null}
+          {saving ? "Saving…" : "Save leveling settings"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+export default function LevelsTab({ guildId, guild, roles, channels, onSaved }) {
   const flash = useFlash();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -149,29 +242,37 @@ export default function LevelsTab({ guildId, roles, channels }) {
 
   if (error) {
     return (
-      <div className="card empty-state">
-        <p className="error">{error}</p>
-      </div>
+      <>
+        <LevelingSettingsCard guildId={guildId} guild={guild} channels={channels} onSaved={onSaved} />
+        <div className="card empty-state">
+          <p className="error">{error}</p>
+        </div>
+      </>
     );
   }
   if (!data) {
     return (
-      <div className="loading-row">
-        <Spinner />
-        <span className="muted">Loading levels…</span>
-      </div>
+      <>
+        <LevelingSettingsCard guildId={guildId} guild={guild} channels={channels} onSaved={onSaved} />
+        <div className="loading-row">
+          <Spinner />
+          <span className="muted">Loading levels…</span>
+        </div>
+      </>
     );
   }
 
   return (
     <>
+      <LevelingSettingsCard guildId={guildId} guild={guild} channels={channels} onSaved={onSaved} />
+
       <div className="card">
         <h2>Leaderboard</h2>
         {data.leaderboard.length ? (
           <div className="table-scroll">
           <table className="table">
             <thead>
-              <tr><th>#</th><th>User</th><th>Level</th><th>XP</th><th>Manage XP</th></tr>
+              <tr><th>#</th><th>User</th><th>Level</th><th>Title</th><th>XP</th><th>Manage XP</th></tr>
             </thead>
             <tbody>
               {data.leaderboard.map((row, i) => (
@@ -179,6 +280,7 @@ export default function LevelsTab({ guildId, roles, channels }) {
                   <td>{i + 1}</td>
                   <td>{row.username}</td>
                   <td>{row.level}</td>
+                  <td className="muted small">{row.title}</td>
                   <td>{row.xp}</td>
                   <td>
                     <div className="xp-manage-row">

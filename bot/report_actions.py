@@ -18,6 +18,7 @@ from typing import Optional
 
 import asyncpg
 
+from bot.modules import achievements
 from bot.rest import FluxerAPIError
 from common import db
 
@@ -165,6 +166,7 @@ async def submit_report(rest, guild_id: str, reporter_id: str, content: str, sub
         guild_id, reporter_id, content, submit_channel_id, submit_message_id,
         visibility=visibility, possible_duplicate_of=possible_dup,
     )
+    await achievements.check_report_achievements(guild_id, reporter_id)
     if tracker_channel_id:
         message = await post_to_tracker(rest, tracker_channel_id, report)
         if message:

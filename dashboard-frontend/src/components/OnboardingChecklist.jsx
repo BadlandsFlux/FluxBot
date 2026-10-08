@@ -46,7 +46,7 @@ export default function OnboardingChecklist({ guild, autoroles, reactionRoles, t
       key: "leveling",
       label: "Leveling turned on",
       done: !!guild.leveling_enabled,
-      tab: "settings",
+      tab: "levels",
     },
     {
       key: "tags",

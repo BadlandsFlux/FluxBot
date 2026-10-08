@@ -83,7 +83,7 @@ _ALLOWED_SETTINGS = {
     "leveling_enabled", "level_up_channel_id", "level_up_message",
     "warn_timeout_at", "warn_kick_at", "warn_timeout_minutes",
     "report_channel_id", "report_tracker_channel_id",
-    "voice_xp_cap_enabled",
+    "voice_xp_cap_enabled", "voice_xp_cap_amount",
 }
 
 
@@ -1595,6 +1595,13 @@ async def create_report(guild_id: str, reporter_id: str, content: str, submit_ch
         guild_id, reporter_id, content, visibility, possible_duplicate_of,
         submit_channel_id, submit_message_id,
     )
+
+
+async def get_report_count_by_reporter(guild_id: str, reporter_id: str) -> int:
+    row = await pool().fetchrow(
+        "SELECT COUNT(*) AS count FROM reports WHERE guild_id=$1 AND reporter_id=$2", guild_id, reporter_id,
+    )
+    return row["count"]
 
 
 async def get_open_reports_for_dedup(guild_id: str, limit: int = 200) -> list[asyncpg.Record]:

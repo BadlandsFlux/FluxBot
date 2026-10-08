@@ -11,6 +11,10 @@ tab, or !rank / !leaderboard to check progress).
 
 XP curve is the common "MEE6-style" formula: level N requires
 5*N^2 + 50*N + 100 XP to clear, cumulative.
+
+Every level also has a cosmetic title (see LEVEL_TITLES below), shown
+in !rank/!leaderboard and available to a guild's level-up message via
+a {title} placeholder alongside {user}/{username}/{level}.
 """
 from __future__ import annotations
 
@@ -24,6 +28,53 @@ from common.discovery import get_media_base, user_avatar_url
 
 XP_MIN, XP_MAX = 15, 25
 XP_COOLDOWN_SECONDS = 60
+
+# Cosmetic only, no role or permission attached, just a flex shown in
+# !rank, !leaderboard, and available to level-up messages via {title}.
+# Tiered every 10 levels rather than one per level: most of these are
+# only ever seen by whoever's actually grinding that far up the curve
+# (see the XP curve, level 250 is a multi-year commitment even
+# uncapped), so a title per tier reads as a milestone, not noise.
+LEVEL_TITLES: list[tuple[int, str]] = [
+    (0, "Newcomer"),
+    (10, "Regular"),
+    (20, "Knows The Group Chat Better Than Real Life"),
+    (30, "Can't Stop Won't Stop"),
+    (40, "Parents Worried, Mods Impressed"),
+    (50, "Certified No-Lifer"),
+    (60, "Skin: Last Seen Never"),
+    (70, "Lives Here Now, Has For A While"),
+    (80, "Fluxer Is My Social Life (The Only One)"),
+    (90, "Sleep Is A Myth At This Point"),
+    (100, "Triple-Digit Legend, Single-Digit Social Skills"),
+    (110, "Therapist On Speed Dial"),
+    (120, "Has Forgotten The Sun Exists"),
+    (130, "Fluxer Built A Shrine, My Bank Account Did Not"),
+    (140, "My Cardio Is Scrolling, My Diet Is Energy Drinks"),
+    (150, "Unemployable (Confirmed, Not Allegedly)"),
+    (160, "Still Going?! Somebody Check On Them"),
+    (170, "Diagnosed: Terminally Online"),
+    (180, "Missing Persons Report Filed, Found On Fluxer"),
+    (190, "This Is My Villain Origin Story"),
+    (200, "Bicentennial No-Lifer, Zero Regrets (Lying)"),
+    (210, "The Server's Final Boss"),
+    (220, "Scientists Are Studying Me Against My Will"),
+    (230, "Achievement: Life. Status: Deleted"),
+    (240, "One Level From Ascension, Several From Sanity"),
+    (250, "Touched Grass Once. Filed A Complaint."),
+]
+
+
+def title_for_level(level: int) -> str:
+    """The highest title tier this level has reached. LEVEL_TITLES is
+    sorted ascending, so the last threshold <= level wins; level 0
+    always resolves since the list starts there."""
+    title = LEVEL_TITLES[0][1]
+    for threshold, text in LEVEL_TITLES:
+        if level < threshold:
+            break
+        title = text
+    return title
 
 
 def xp_for_level(level: int) -> int:
@@ -77,6 +128,7 @@ async def grant_xp(bot: Bot, guild_id: str, user_id: str, username: str, amount:
             .replace("{user}", f"<@{user_id}>")
             .replace("{username}", username)
             .replace("{level}", str(new_level))
+            .replace("{title}", title_for_level(new_level))
         )
         try:
             await bot.rest.send_message(channel_id, content=text, allowed_mentions=bot.rest.mention_only(user_id))
@@ -160,6 +212,7 @@ def register(bot: Bot) -> None:
             "color": 0x5865F2,
             "fields": [
                 {"name": "Level", "value": str(row["level"]), "inline": True},
+                {"name": "Title", "value": title_for_level(row["level"]), "inline": True},
                 {"name": "Rank", "value": f"#{rank_pos}", "inline": True},
                 {"name": "Total XP", "value": str(row["xp"]), "inline": True},
                 {"name": "Messages sent", "value": str(message_count), "inline": True},
@@ -214,7 +267,7 @@ def register(bot: Bot) -> None:
         lines = []
         for i, r in enumerate(rows):
             prefix = medals[i] if i < 3 else f"`#{i + 1}`"
-            lines.append(f"{prefix} <@{r['user_id']}>, level {r['level']} ({r['xp']} XP)")
+            lines.append(f"{prefix} <@{r['user_id']}>, level {r['level']} ({r['xp']} XP) — {title_for_level(r['level'])}")
         await ctx.embed("🏆 Leaderboard", "\n".join(lines))
 
     @bot.command("wrapped", category="Fun",

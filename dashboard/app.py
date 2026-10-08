@@ -400,6 +400,7 @@ def _guild_to_json(row) -> dict:
         "report_channel_id": row["report_channel_id"],
         "report_tracker_channel_id": row["report_tracker_channel_id"],
         "voice_xp_cap_enabled": row["voice_xp_cap_enabled"],
+        "voice_xp_cap_amount": row["voice_xp_cap_amount"],
     }
 
 
@@ -575,6 +576,7 @@ class SettingsPayload(BaseModel):
     level_up_channel_id: str = ""
     level_up_message: str = "GG {user}, you reached level {level}! 🎉"
     voice_xp_cap_enabled: bool = True
+    voice_xp_cap_amount: int = 750
     warn_timeout_at: int = 3
     warn_kick_at: int = 5
     warn_timeout_minutes: int = 60
@@ -619,6 +621,7 @@ _SETTINGS_FIELD_LABELS = {
     "level_up_channel_id": "level-up channel",
     "level_up_message": "level-up message",
     "voice_xp_cap_enabled": "voice XP daily cap",
+    "voice_xp_cap_amount": "voice XP daily cap amount",
     "warn_timeout_at": "warn-timeout threshold",
     "warn_kick_at": "warn-kick threshold",
     "warn_timeout_minutes": "timeout length",
@@ -670,6 +673,7 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
     await _require_manage(request, guild_id)
     user = require_login(request)
     prefix = (payload.command_prefix or "!").strip()[:5] or "!"
+    voice_xp_cap_amount = max(1, min(1_000_000, payload.voice_xp_cap_amount or 750))
     previous = await db.get_guild(guild_id)
     await db.update_guild_settings(
         guild_id,
@@ -684,6 +688,7 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
         level_up_channel_id=payload.level_up_channel_id or None,
         level_up_message=payload.level_up_message or "GG {user}, you reached level {level}! 🎉",
         voice_xp_cap_enabled=payload.voice_xp_cap_enabled,
+        voice_xp_cap_amount=voice_xp_cap_amount,
         warn_timeout_at=payload.warn_timeout_at,
         warn_kick_at=payload.warn_kick_at,
         warn_timeout_minutes=payload.warn_timeout_minutes,
@@ -1612,7 +1617,10 @@ async def api_guild_stats(request: Request, guild_id: str, days: int = 14):
 
 # ----------------------------------------------------------------- leveling --
 def _level_to_json(row, username: str) -> dict:
-    return {"user_id": row["user_id"], "username": username, "xp": row["xp"], "level": row["level"]}
+    return {
+        "user_id": row["user_id"], "username": username, "xp": row["xp"], "level": row["level"],
+        "title": leveling.title_for_level(row["level"]),
+    }
 
 
 def _level_role_to_json(row) -> dict:

@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
+from bot.modules import achievements
 from bot.modules.logging_mod import log_and_notify
 from bot.permissions import hierarchy_violation
 from bot.rest import FluxerAPIError
@@ -134,6 +135,7 @@ async def warn_member(rest, guild_id: str, user: dict, moderator: dict, reason: 
     _warning_id, active_count = await db.add_warning_and_count(guild_id, user_id, str(moderator["id"]), reason)
     await log_and_notify(rest, guild_id, "warn", user=user, moderator=moderator, reason=reason,
                           extra_fields=[{"name": "Total active warnings", "value": str(active_count), "inline": True}])
+    await achievements.check_warning_achievements(guild_id, user_id)
 
     result = {"active_count": active_count, "escalated": None, "timeout_minutes": None}
     guild_cfg = await db.get_guild(guild_id)

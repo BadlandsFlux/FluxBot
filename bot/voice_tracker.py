@@ -43,10 +43,12 @@ VOICE_XP_MIN_PER_MIN, VOICE_XP_MAX_PER_MIN = 3, 6  # lower than text's ~15-25/me
 
 # ~2.8 hours/day at the average rate. A normal couple-hours-a-day voice
 # habit never reaches it; an unattended 24/7 session drops from ~6,480
-# XP/day to this, about a ninth of its uncapped payoff. Toggled per guild
-# via guilds.voice_xp_cap_enabled (dashboard Settings > Leveling), on by
-# default.
-VOICE_XP_DAILY_CAP = 750
+# XP/day to this, about a ninth of its uncapped payoff. Per-guild via
+# guilds.voice_xp_cap_enabled/voice_xp_cap_amount (dashboard Levels tab),
+# on by default. This is only the fallback for the rare case guild_cfg
+# itself is missing (see _flush_member below); every real guild row
+# carries its own amount, defaulted to this same value by the schema.
+VOICE_XP_DAILY_CAP_DEFAULT = 750
 
 # In-memory only, rebuilt from live VOICE_STATE_UPDATE events (and a
 # best-effort seed from GUILD_CREATE's voice_states, if present) rather
@@ -109,7 +111,8 @@ async def _flush_member(bot: Bot, guild_id: str, user_id: str, now: datetime, ke
             guild_cfg = await db.get_guild(guild_id)
             cap_enabled = not guild_cfg or guild_cfg["voice_xp_cap_enabled"]
             if cap_enabled:
-                xp_amount = await db.add_voice_xp_capped(guild_id, user_id, xp_amount, VOICE_XP_DAILY_CAP)
+                cap_amount = guild_cfg["voice_xp_cap_amount"] if guild_cfg else VOICE_XP_DAILY_CAP_DEFAULT
+                xp_amount = await db.add_voice_xp_capped(guild_id, user_id, xp_amount, cap_amount)
             if xp_amount > 0:
                 await leveling.grant_xp(bot, guild_id, user_id, username, xp_amount)
 

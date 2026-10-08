@@ -269,7 +269,10 @@ export default function GuildDetail() {
             <TagsTab guildId={id} tags={tags} prefix={guild.command_prefix || "!"}
                      onChange={(t) => setData((d) => ({ ...d, tags: t }))} />
           )}
-          {tab === "levels" && <LevelsTab guildId={id} roles={roles} channels={channels} />}
+          {tab === "levels" && (
+            <LevelsTab guildId={id} guild={guild} roles={roles} channels={channels}
+                       onSaved={(g) => setData((d) => ({ ...d, guild: g }))} />
+          )}
           {tab === "embed" && (
             <div className="card">
               <h2>Send an embed</h2>
@@ -319,16 +322,16 @@ function AttentionRow({ activeWarningCount, openReportCount, setTab }) {
 // put so "is leveling on?" never requires a trip into Settings to answer.
 function FeatureStatusRow({ guild, setTab }) {
   const items = [
-    { key: "modlog", label: "Mod-log", on: !!guild.log_channel_id },
-    { key: "welcome", label: "Welcome", on: !!guild.welcome_channel_id },
-    { key: "goodbye", label: "Goodbye", on: !!guild.goodbye_channel_id },
-    { key: "leveling", label: "Leveling", on: !!guild.leveling_enabled },
-    { key: "reports", label: "Reports", on: !!guild.report_channel_id },
+    { key: "modlog", label: "Mod-log", on: !!guild.log_channel_id, tab: "settings" },
+    { key: "welcome", label: "Welcome", on: !!guild.welcome_channel_id, tab: "settings" },
+    { key: "goodbye", label: "Goodbye", on: !!guild.goodbye_channel_id, tab: "settings" },
+    { key: "leveling", label: "Leveling", on: !!guild.leveling_enabled, tab: "levels" },
+    { key: "reports", label: "Reports", on: !!guild.report_channel_id, tab: "settings" },
   ];
   return (
     <div className="feature-status-row">
       {items.map((item) => (
-        <button type="button" key={item.key} onClick={() => setTab("settings")} title="Go to Settings"
+        <button type="button" key={item.key} onClick={() => setTab(item.tab)} title={`Go to ${item.tab === "levels" ? "Levels" : "Settings"}`}
                 className={`feature-status-pill ${item.on ? "feature-status-on" : "feature-status-off"}`}>
           <span className="feature-status-dot" /> {item.label}
         </button>
@@ -520,7 +523,6 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
   const [form, setForm] = useState(guild);
   const [welcomeOn, setWelcomeOn] = useState(!!guild.welcome_channel_id);
   const [goodbyeOn, setGoodbyeOn] = useState(!!guild.goodbye_channel_id);
-  const [levelingOn, setLevelingOn] = useState(!!guild.leveling_enabled);
   const [reportsOn, setReportsOn] = useState(!!guild.report_channel_id);
   const [saving, setSaving] = useState(false);
 
@@ -558,10 +560,14 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
         welcome_message: form.welcome_message || "Welcome {user} to {server}! 👋",
         goodbye_channel_id: goodbyeOn ? form.goodbye_channel_id || "" : "",
         goodbye_message: form.goodbye_message || "{username} left {server}. 👋",
-        leveling_enabled: levelingOn,
+        // Leveling settings live on the Levels tab now; pass through
+        // whatever's already on this guild unedited so saving Settings
+        // can never clobber them back to the payload's own defaults.
+        leveling_enabled: form.leveling_enabled,
         level_up_channel_id: form.level_up_channel_id || "",
         level_up_message: form.level_up_message || "GG {user}, you reached level {level}! 🎉",
         voice_xp_cap_enabled: form.voice_xp_cap_enabled ?? true,
+        voice_xp_cap_amount: form.voice_xp_cap_amount ?? 750,
         warn_timeout_at: Number(form.warn_timeout_at),
         warn_kick_at: Number(form.warn_kick_at),
         warn_timeout_minutes: Number(form.warn_timeout_minutes),
@@ -571,7 +577,6 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
       onSaved(result.guild);
       setWelcomeOn(!!result.guild.welcome_channel_id);
       setGoodbyeOn(!!result.guild.goodbye_channel_id);
-      setLevelingOn(!!result.guild.leveling_enabled);
       setReportsOn(!!result.guild.report_channel_id);
       flash("Settings saved.");
     } catch (err) {
@@ -655,31 +660,6 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
             {!form.goodbye_channel_id && (
               <p className="muted small">Pick a channel above to finish turning this on.</p>
             )}
-          </div>
-        )}
-
-        <h2 className="section-divider">Leveling</h2>
-        <Switch checked={levelingOn} onChange={setLevelingOn} label="Members earn XP for chatting" />
-        {levelingOn && (
-          <div className="switch-panel">
-            <label>
-              Level-up announcement channel
-              <Combobox options={channels} value={form.level_up_channel_id || ""}
-                        onChange={(v) => set("level_up_channel_id", v)}
-                        placeholder="Announce in the channel they leveled up in" />
-            </label>
-            <label>
-              Message, <code>{"{user}"}</code>, <code>{"{username}"}</code>, <code>{"{level}"}</code> work
-              <input type="text" value={form.level_up_message || ""} onChange={(e) => set("level_up_message", e.target.value)}
-                     placeholder="GG {user}, you reached level {level}! 🎉" />
-            </label>
-            <Switch checked={form.voice_xp_cap_enabled ?? true}
-                    onChange={(v) => set("voice_xp_cap_enabled", v)}
-                    label="Cap voice XP at 750/day per member" />
-            <p className="muted small">
-              Stops someone from out-earning everyone else just by leaving a client connected to voice.
-              A normal couple-hours-a-day habit never reaches it.
-            </p>
           </div>
         )}
 
