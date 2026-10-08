@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import useGuildEmojis from "../hooks/useGuildEmojis";
 
 const RECENT_KEY = "fluxbot-recent-emoji";
 const RECENT_MAX = 24;
@@ -40,8 +40,7 @@ function saveRecent(emoji) {
  */
 export default function EmojiPickerPanel({ guildId, mode = "reaction", onPick }) {
   const [query, setQuery] = useState("");
-  const [guildEmojis, setGuildEmojis] = useState([]);
-  const [loadingGuildEmojis, setLoadingGuildEmojis] = useState(false);
+  const { emojis: guildEmojis, loading: loadingGuildEmojis } = useGuildEmojis(guildId);
   const [recent, setRecent] = useState(loadRecent);
   // The ~400KB standard-emoji dataset is only ever needed once this panel
   // actually renders (it's always inside an `open &&` dropdown), so it's
@@ -58,27 +57,6 @@ export default function EmojiPickerPanel({ guildId, mode = "reaction", onPick })
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!guildId) return undefined;
-    let cancelled = false;
-    setLoadingGuildEmojis(true);
-    api
-      .guildEmojis(guildId)
-      .then((data) => {
-        if (!cancelled) setGuildEmojis(data.emojis || []);
-      })
-      .catch(() => {
-        // Best-effort: the standard emoji grid below still works fine
-        // without the server's custom emoji.
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingGuildEmojis(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [guildId]);
 
   const needle = query.trim().toLowerCase();
   const filteredGroups = useMemo(() => {

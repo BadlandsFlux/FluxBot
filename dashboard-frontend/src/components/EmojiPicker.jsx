@@ -1,14 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import EmojiPickerPanel from "./EmojiPickerPanel";
+import useGuildEmojis from "../hooks/useGuildEmojis";
 
 // `value` here is a single exact string (a reaction-role row's emoji),
 // so a pick always replaces it outright. `guildId`, when given, adds
-// the server's own custom emoji to the panel alongside the standard set.
+// the server's own custom emoji to the panel alongside the standard set,
+// and lets the trigger resolve a picked custom emoji's `name:id` value
+// back to just its thumbnail (full name on hover via the title tooltip)
+// instead of showing that raw (long, ugly) string.
 export default function EmojiPicker({ value, onChange, guildId }) {
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState("");
   const rootRef = useRef(null);
+  const { emojis: guildEmojis } = useGuildEmojis(guildId);
+  const matchedGuildEmoji = guildEmojis.find((e) => e.reaction === value);
 
   useEffect(() => {
     function onClickOutside(e) {
@@ -34,8 +40,15 @@ export default function EmojiPicker({ value, onChange, guildId }) {
 
   return (
     <div className="emoji-picker" ref={rootRef}>
-      <button type="button" className="emoji-picker-trigger" onClick={() => setOpen((v) => !v)}>
-        <span className={value ? "emoji-picker-value" : "muted"}>{value || "Pick"}</span>
+      <button type="button" className="emoji-picker-trigger" onClick={() => setOpen((v) => !v)}
+              title={matchedGuildEmoji ? `:${matchedGuildEmoji.name}:` : value || undefined}>
+        {matchedGuildEmoji ? (
+          <span className="emoji-picker-value-custom">
+            <img src={matchedGuildEmoji.url} alt={matchedGuildEmoji.name} />
+          </span>
+        ) : (
+          <span className={value ? "emoji-picker-value" : "muted"}>{value || "Pick"}</span>
+        )}
         <ChevronDown size={12} />
       </button>
       {open && (
