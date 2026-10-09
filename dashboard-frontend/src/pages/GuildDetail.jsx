@@ -293,7 +293,7 @@ export default function GuildDetail() {
             <div className="card">
               <h2>Send an embed</h2>
               <p className="muted small">Compose a rich embed, with headers, fields, and formatting, and post it to any channel.</p>
-              <EmbedBuilder guildId={id} channels={channels} />
+              <EmbedBuilder guildId={id} />
             </div>
           )}
         </div>

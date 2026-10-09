@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Download, GripVertical, Plus, Send, Upload, X } from "lucide-react";
 import { api } from "../api";
 import { useFlash } from "./Flash";
@@ -9,6 +9,13 @@ import EmbedPreview from "./EmbedPreview";
 import EmojiInsertButton from "./EmojiInsertButton";
 
 const MAX_FIELDS = 25;
+
+// Fluxer's channel type enum (Discord-compatible); only the ones the
+// embed picker ever needs to tell apart.
+const CHANNEL_TYPE_FORUM = 15;
+const CHANNEL_TYPE_MEDIA = 16;
+const POST_ONLY_CHANNEL_TYPES = new Set([CHANNEL_TYPE_FORUM, CHANNEL_TYPE_MEDIA]);
+const CHANNEL_TYPE_SUFFIX = { 5: " (announcement)", [CHANNEL_TYPE_FORUM]: " (forum)", [CHANNEL_TYPE_MEDIA]: " (media)" };
 
 function FieldRow({ field, index, count, onChange, onRemove, onMove, dragState, guildId }) {
   const valueRef = useRef(null);
@@ -111,14 +118,21 @@ function slugForFilename(title) {
   return slug ? `embed-${slug}` : "embed";
 }
 
-export default function EmbedBuilder({ guildId, channels }) {
+export default function EmbedBuilder({ guildId }) {
   const flash = useFlash();
   const descRef = useRef(null);
   const titleRef = useRef(null);
   const footerRef = useRef(null);
   const authorNameRef = useRef(null);
   const importInputRef = useRef(null);
+  // Its own channel fetch, separate from the rest of the Settings tab's
+  // pickers (useRolesChannels): this is the one place in the dashboard
+  // that can actually post into a forum/media channel (via a named
+  // thread/post, see api_send_embed's include_posts branch), so it's
+  // the one picker that needs those included.
+  const [channels, setChannels] = useState([]);
   const [channelId, setChannelId] = useState("");
+  const [postTitle, setPostTitle] = useState("");
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [description, setDescription] = useState("");
@@ -141,6 +155,23 @@ export default function EmbedBuilder({ guildId, channels }) {
   const [draggedId, setDraggedId] = useState(null);
   const [overId, setOverId] = useState(null);
   const dragState = { draggedId, setDraggedId, overId, setOverId };
+
+  useEffect(() => {
+    let cancelled = false;
+    api.embedChannels(guildId)
+      .then((res) => !cancelled && setChannels(res.channels))
+      .catch(() => !cancelled && setChannels([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [guildId]);
+
+  const channelOptions = channels.map((c) => ({
+    ...c,
+    name: `${c.name}${CHANNEL_TYPE_SUFFIX[c.type] || ""}`,
+  }));
+  const selectedChannel = channels.find((c) => c.id === channelId);
+  const postingToForum = !!selectedChannel && POST_ONLY_CHANNEL_TYPES.has(selectedChannel.type);
 
   function addField() {
     if (fields.length >= MAX_FIELDS) return;
@@ -239,10 +270,15 @@ export default function EmbedBuilder({ guildId, channels }) {
       flash("Pick a channel and give at least a title or description.", "error");
       return;
     }
+    if (postingToForum && !postTitle.trim()) {
+      flash("That's a forum/media channel, give the post a title.", "error");
+      return;
+    }
     setSubmitting(true);
     try {
       await api.sendEmbed(guildId, {
         channel_id: channelId,
+        post_title: postTitle.trim(),
         title: title.trim(),
         url: url.trim(),
         description: description.trim(),
@@ -257,6 +293,7 @@ export default function EmbedBuilder({ guildId, channels }) {
         fields: fields.map((f) => ({ name: f.name.trim(), value: f.value.trim(), inline: f.inline })),
       });
       flash("Embed sent.");
+      setPostTitle("");
       setTitle("");
       setUrl("");
       setDescription("");
@@ -291,8 +328,18 @@ export default function EmbedBuilder({ guildId, channels }) {
 
       <label>
         Channel
-        <Combobox options={channels} value={channelId} onChange={setChannelId} placeholder="Pick a channel" />
+        <Combobox options={channelOptions} value={channelId} onChange={setChannelId} placeholder="Pick a channel" />
       </label>
+      {postingToForum && (
+        <label>
+          Post title
+          <input type="text" value={postTitle} onChange={(e) => setPostTitle(e.target.value)}
+                 placeholder="Title for the new forum post" maxLength={100} />
+          <p className="muted small">
+            Forum/media channels don't take a plain message, each send here starts a new post.
+          </p>
+        </label>
+      )}
 
       <div className="form-row form-row-3">
         <label>

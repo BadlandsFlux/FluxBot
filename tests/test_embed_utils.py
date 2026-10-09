@@ -95,3 +95,27 @@ async def test_edit_message_clamps_embeds_before_sending():
     calls = await _capture_request(rest)
     await rest.edit_message("chan1", "msg1", embeds=[{"fields": [{"name": "n", "value": "v" * 2000}]}])
     assert len(calls[0]["embeds"][0]["fields"][0]["value"]) == FIELD_VALUE_LIMIT
+
+
+async def test_start_forum_post_hits_the_threads_endpoint_with_a_named_starter_message():
+    rest = FluxerREST("tok")
+    calls = []
+
+    async def fake_request(method, path, *, json=None, params=None, retries=3):
+        calls.append((method, path, json))
+        return {"id": "1"}
+
+    rest.request = fake_request
+    await rest.start_forum_post("chan1", name="My Post", embeds=[{"description": "z" * 5000}])
+    method, path, payload = calls[0]
+    assert method == "POST"
+    assert path == "/channels/chan1/threads"
+    assert payload["name"] == "My Post"
+    assert len(payload["message"]["embeds"][0]["description"]) == DESCRIPTION_LIMIT
+
+
+async def test_start_forum_post_truncates_an_overlong_name_to_100_chars():
+    rest = FluxerREST("tok")
+    calls = await _capture_request(rest)
+    await rest.start_forum_post("chan1", name="x" * 150)
+    assert len(calls[0]["name"]) == 100

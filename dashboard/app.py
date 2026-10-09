@@ -1326,21 +1326,40 @@ async def api_guild_roles(request: Request, guild_id: str):
     return {"roles": roles_list}
 
 
+# Fluxer's channel `type` enum (https://docs.fluxer.app/http-api/channels/),
+# Discord-compatible. GUILD_TEXT and GUILD_ANNOUNCEMENT both take a plain
+# POST .../messages like any other text channel, so every channel picker
+# in the dashboard (mod-log, welcome, reaction-role target, etc.) offers
+# both. GUILD_FORUM/GUILD_MEDIA don't -- Fluxer returns 400
+# CANNOT_SEND_MESSAGES_IN_NON_TEXT_CHANNEL for those, you have to start a
+# thread/post instead (see bot_rest.start_forum_post) -- so only a picker
+# that actually knows how to do that (the embed builder) asks for them,
+# via include_posts.
+_CHANNEL_TYPE_TEXT = 0
+_CHANNEL_TYPE_ANNOUNCEMENT = 5
+_CHANNEL_TYPE_FORUM = 15
+_CHANNEL_TYPE_MEDIA = 16
+_POST_ONLY_CHANNEL_TYPES = {_CHANNEL_TYPE_FORUM, _CHANNEL_TYPE_MEDIA}
+_MESSAGEABLE_CHANNEL_TYPES = {_CHANNEL_TYPE_TEXT, _CHANNEL_TYPE_ANNOUNCEMENT, None}
+
+
 @app.get("/api/guilds/{guild_id}/channels")
-async def api_guild_channels(request: Request, guild_id: str):
+async def api_guild_channels(request: Request, guild_id: str, include_posts: bool = False):
     """Powers the channel picker dropdowns (mod-log, welcome, reaction-role
-    target channel)."""
+    target channel, embeds). `include_posts=true` (used by the embed
+    builder, the one picker that knows how to post into a forum/media
+    channel) also includes those in the result; every other caller gets
+    just the plain-messageable types."""
     await _require_manage(request, guild_id)
     try:
         guild = await bot_rest.get_guild(guild_id)
     except FluxerAPIError as e:
         raise _ApiError(502, f"Couldn't fetch channels from Fluxer (HTTP {e.status}).")
-    # Best-effort text-channel filter: Discord-style type 0 = text. If an
-    # instance omits `type` entirely we keep the channel rather than hide it.
+    allowed_types = _MESSAGEABLE_CHANNEL_TYPES | _POST_ONLY_CHANNEL_TYPES if include_posts else _MESSAGEABLE_CHANNEL_TYPES
     channels_list = [
-        {"id": str(c["id"]), "name": c.get("name", "channel")}
+        {"id": str(c["id"]), "name": c.get("name", "channel"), "type": c.get("type")}
         for c in guild.get("channels", [])
-        if c.get("type") in (0, None)
+        if c.get("type") in allowed_types
     ]
     return {"channels": channels_list}
 
@@ -1820,6 +1839,7 @@ _EMBED_TITLE_MAX = 256
 _EMBED_DESCRIPTION_MAX = 4096
 _EMBED_FOOTER_MAX = 2048
 _EMBED_AUTHOR_NAME_MAX = 256
+_FORUM_POST_TITLE_MAX = 100  # Fluxer's "start thread" name field, 1-100 chars
 
 
 class EmbedFieldPayload(BaseModel):
@@ -1830,6 +1850,7 @@ class EmbedFieldPayload(BaseModel):
 
 class EmbedPayload(BaseModel):
     channel_id: str
+    post_title: str = ""  # required only when channel_id is a forum/media channel
     title: str = ""
     description: str = ""
     url: str = ""
@@ -1909,8 +1930,30 @@ async def api_send_embed(request: Request, guild_id: str, payload: EmbedPayload)
     if fields:
         embed["fields"] = fields
 
+    # Forum/media channels don't take a plain message (see
+    # _POST_ONLY_CHANNEL_TYPES above), they need a named post instead.
+    # Re-fetching the guild here (rather than trusting a type the client
+    # sent) means a stale/forged channel_id still gets the right call,
+    # and a channel that's vanished since the picker loaded fails with a
+    # clear error instead of silently posting nowhere.
     try:
-        await bot_rest.send_message(channel_id, embeds=[embed])
+        guild = await bot_rest.get_guild(guild_id)
+    except FluxerAPIError as e:
+        raise _ApiError(502, f"Couldn't verify that channel with Fluxer (HTTP {e.status}).")
+    channel_type = next(
+        (c.get("type") for c in guild.get("channels", []) if str(c.get("id")) == channel_id), None,
+    )
+
+    try:
+        if channel_type in _POST_ONLY_CHANNEL_TYPES:
+            post_title = payload.post_title.strip()
+            if not post_title:
+                raise _ApiError(400, "That's a forum/media channel, give the post a title.")
+            if len(post_title) > _FORUM_POST_TITLE_MAX:
+                raise _ApiError(400, f"Post title is too long (max {_FORUM_POST_TITLE_MAX} characters).")
+            await bot_rest.start_forum_post(channel_id, name=post_title, embeds=[embed])
+        else:
+            await bot_rest.send_message(channel_id, embeds=[embed])
     except FluxerAPIError as e:
         raise _ApiError(502, f"Fluxer rejected that (HTTP {e.status}), check the bot can post in that channel.")
 
