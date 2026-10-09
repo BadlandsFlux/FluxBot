@@ -150,10 +150,30 @@ button { font-family: inherit; }
 .topbar-home-btn:hover { color: var(--text); border-color: var(--border-hover); background: var(--bg-elevated); }
 
 .topbar-nav { display: flex; gap: 18px; }
-.topbar-link { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600; }
+.topbar-link { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; }
 .topbar-link:hover { color: var(--text); }
 
 .topbar-user { display: flex; align-items: center; gap: 12px; }
+
+/* Nothing here used to wrap or shrink, so once the brand, Servers
+   button, guild switcher, nav links, theme toggle, and user/logout
+   controls together needed more than the viewport's width, the whole
+   topbar (and with it, the page body, since nothing constrained it)
+   just overflowed horizontally -- the dashboard was unusable on a
+   phone-width screen, not just cosmetically cramped. Letting
+   everything wrap is the simplest fix that touches no markup or JS:
+   .topbar-right drops to its own full-width row so theme/user/logout
+   read as one group, and .topbar-left's own contents wrap naturally
+   above it. white-space: nowrap below keeps each individual label
+   (e.g. "Discord Relay") from breaking mid-word once its row gets
+   narrow, same as .sidebar-item already does for the same reason. */
+@media (max-width: 760px) {
+  .topbar { flex-wrap: wrap; row-gap: 10px; padding: 12px 16px; justify-content: flex-start; }
+  .topbar-left { flex-wrap: wrap; row-gap: 10px; }
+  .topbar-nav { flex-wrap: wrap; row-gap: 8px; }
+  .brand, .topbar-home-btn { white-space: nowrap; }
+  .topbar-right { width: 100%; justify-content: space-between; }
+}
 
 .user-pill {
   padding: 6px 14px;
@@ -401,7 +421,11 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
   background: var(--bg-elevated);
 }
 .rr-message-card-editing { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.rr-message-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+/* flex-wrap so .rr-message-actions (flex-shrink: 0, i.e. never shrinks --
+   its row of small icon buttons needs to stay tap-sized) drops to its own
+   line below the channel name once a narrow screen can't fit both on one
+   row, rather than forcing the row (and the page) wider than the viewport. */
+.rr-message-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .rr-message-channel { font-weight: 700; font-size: 14px; }
 .rr-message-actions { display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
 .rr-message-entries { display: flex; flex-direction: column; gap: 6px; }
@@ -551,10 +575,20 @@ code { background: var(--bg-elevated); padding: 2px 6px; border-radius: 5px; fon
 .feature-status-on { color: var(--text); }
 .feature-status-on .feature-status-dot { background: var(--success); }
 
-.overview-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+/* minmax(0, 1fr), not bare 1fr: a bare 1fr track still respects its
+   item's content-based automatic minimum size, so the "Recent activity"
+   card's mini mod-log table (wrapped in .table-scroll for its own
+   overflow-x: auto, but nested well below the actual grid item, .card)
+   was quietly forcing this whole column -- and with it the grid, the
+   page, everything -- wider than the viewport on any narrow screen.
+   minmax(0, 1fr) is the standard fix: it tells the track its minimum
+   is 0 outright, so content that wants to overflow has to scroll
+   inside .table-scroll like it's supposed to, instead of pushing the
+   column wider. */
+.overview-two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; }
 .overview-two-col .card { margin-bottom: 0; }
 @media (max-width: 900px) {
-  .overview-two-col { grid-template-columns: 1fr; }
+  .overview-two-col { grid-template-columns: minmax(0, 1fr); }
 }
 
 .overview-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
@@ -1350,7 +1384,12 @@ label > .combobox { margin-top: 6px; }
 .status-ok { background: rgba(74, 222, 128, 0.12); color: var(--success); }
 .status-down { background: rgba(241, 101, 101, 0.12); color: var(--danger); }
 .status-unknown { background: rgba(136, 145, 168, 0.12); color: var(--muted); }
-.status-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+/* auto-fit + minmax, same as .stat-grid: reflows to fewer columns on a
+   narrow screen on its own, and (unlike a bare 1fr) its minimum is an
+   explicit pixel value rather than each item's own content-based
+   minimum, so it can't be forced wider than the viewport the way
+   .overview-two-col's bare 1fr columns were. */
+.status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 16px; }
 .status-item {
   padding: 18px 12px;
   border-radius: var(--radius-sm);
@@ -1476,7 +1515,17 @@ label > .combobox { margin-top: 6px; }
 }
 
 @media (max-width: 760px) {
-  .guild-layout { flex-direction: column; gap: 16px; }
+  /* .guild-layout's desktop rule sets align-items: flex-start for its
+     row layout (top-align the sidebar and main column next to each
+     other). That same declaration still applies once flex-direction
+     flips to column here -- align-items now controls the CROSS axis,
+     which is now width, not the vertical alignment it meant before --
+     so without this override, .guild-main (and everything inside it:
+     the overview stat grid, mod-log table, reaction-role rows, ...)
+     shrinks to whatever width its own widest content wants instead of
+     being capped at the viewport, dragging the entire page into
+     horizontal overflow on every tab. */
+  .guild-layout { flex-direction: column; align-items: stretch; gap: 16px; }
   .guild-sidebar { position: static; width: 100%; }
   .sidebar-nav { flex-direction: row; overflow-x: auto; }
   .sidebar-group { flex-direction: row; margin-bottom: 0; margin-right: 6px; padding-right: 6px; border-right: 1px solid var(--border); flex-shrink: 0; }
@@ -1524,7 +1573,12 @@ label > .combobox { margin-top: 6px; }
 /* -------------------------------------------------------------- bot profile */
 .bot-profile-card { max-width: 480px; margin: 20px auto; }
 .bot-profile-card h2 { display: flex; align-items: center; gap: 8px; }
-.bot-profile-form { display: flex; align-items: center; gap: 20px; margin-top: 16px; }
+/* flex-wrap: a native <input type="file"> has its own wide min-content
+   (the OS-rendered picker button plus filename), which .bot-profile-controls
+   (flex: 1) can't shrink it below -- without somewhere to give, that pushed
+   this row past the viewport on a narrow screen. Wrapping lets the controls
+   drop below the avatar preview instead. */
+.bot-profile-form { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin-top: 16px; }
 .bot-profile-preview {
   width: 96px;
   height: 96px;
@@ -1539,7 +1593,7 @@ label > .combobox { margin-top: 6px; }
 }
 .bot-profile-preview img { width: 100%; height: 100%; object-fit: cover; }
 .bot-profile-preview-empty { color: var(--muted); font-size: 28px; font-weight: 700; }
-.bot-profile-controls { display: flex; flex-direction: column; gap: 10px; flex: 1; }
+.bot-profile-controls { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 180px; }
 .bot-profile-controls input[type="file"] { font-size: 12px; color: var(--muted); }
 
 /* -------------------------------------------------------------- banners */
