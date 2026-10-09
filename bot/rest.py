@@ -217,6 +217,21 @@ class FluxerREST:
             payload["embeds"] = clamp_embeds(embeds)
         return await self.request("POST", f"/channels/{channel_id}/messages", json=payload)
 
+    async def start_forum_post(self, channel_id: str, name: str, content: Optional[str] = None,
+                                embeds: Optional[list] = None, allowed_mentions: Optional[dict] = None) -> dict:
+        """Forum and media channels (GUILD_FORUM/GUILD_MEDIA) don't accept
+        a plain POST .../messages the way a text channel does -- Fluxer
+        returns 400 CANNOT_SEND_MESSAGES_IN_NON_TEXT_CHANNEL for that, the
+        same as Discord. Posting there means starting a thread instead,
+        whose first message carries the actual content."""
+        message: dict = {"allowed_mentions": allowed_mentions or self.SAFE_ALLOWED_MENTIONS}
+        if content:
+            message["content"] = content
+        if embeds:
+            message["embeds"] = clamp_embeds(embeds)
+        payload = {"name": name[:100], "message": message}
+        return await self.request("POST", f"/channels/{channel_id}/threads", json=payload)
+
     async def send_message_with_files(self, channel_id: str, files: list[tuple[str, bytes]],
                                        content: Optional[str] = None, embeds: Optional[list] = None,
                                        allowed_mentions: Optional[dict] = None, retries: int = 3) -> dict:
