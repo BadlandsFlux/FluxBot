@@ -24,6 +24,11 @@ event is awaited sequentially by bot/client.py's _dispatch, see the
 comment on _spawn_actor_lookup below for why that matters), the base
 log entry goes out immediately and a background task edits in a
 "Performed By" field a moment later if the audit log resolves an actor.
+An uncached MESSAGE_DELETE gets the same backfill treatment under a
+"Deleted By" field, keyed off the channel (there's no author to key
+off of, that's exactly what's missing), and only ever resolves when a
+moderator deleted someone else's message — Discord's audit log has
+nothing at all for a self-delete.
 
 Bot-authored messages are always excluded from edit/delete logging
 (a bot editing its own embed, e.g. a live poll count, isn't useful
@@ -66,6 +71,7 @@ AUDIT_LOG_ROLE_CREATE = 30
 AUDIT_LOG_ROLE_UPDATE = 31
 AUDIT_LOG_ROLE_DELETE = 32
 AUDIT_LOG_MEMBER_ROLE_UPDATE = 25
+AUDIT_LOG_MESSAGE_DELETE = 72
 
 # Independent of voice_tracker.py's own per-member channel tracking
 # (that one's about XP eligibility/accrual, this one's just "did they
@@ -118,6 +124,17 @@ def _now_iso() -> str:
 
 def _jump_link(guild_id: str, channel_id: str, message_id: str) -> str:
     return f"{config.web_base}/channels/{guild_id}/{channel_id}/{message_id}"
+
+
+def _user_field(user_id: str) -> dict:
+    """An explicit, hard-to-miss "User" field naming who an event
+    concerns. The embed `author` block (see _author_field) already shows
+    this, but it's a small header easy to skim past, especially once a
+    channel/role mention in the body fields is visually louder than it —
+    exactly how a "privileged role added" log could go out without
+    anyone noticing who it was added to. Fields are where readers
+    actually look, so the subject belongs here too, not only in author."""
+    return {"name": "User", "value": f"<@{user_id}>", "inline": True}
 
 
 async def _author_field(user_id: str, username: str, avatar_hash: Optional[str]) -> dict:
@@ -212,6 +229,67 @@ async def _attach_actor(bot: Bot, guild_id: str, channel_id: str, message_id: st
         pass  # cosmetic follow-up only, never let this crash anything
 
 
+async def _find_message_deleter(bot: Bot, guild_id: str, deleted_in_channel_id: str) -> Optional[dict]:
+    """Like _find_actor, but for MESSAGE_DELETE: Discord keys those audit
+    entries by the deleted message's AUTHOR as target_id, which is
+    exactly what's unknown here (this only runs for a message that
+    wasn't cached, so there's no author to filter on). The only usable
+    signal left is the channel the deletion happened in, carried in the
+    entry's `options`, not `target_id`. This also means it only ever
+    resolves a MODERATOR deleting someone else's message, Discord
+    doesn't write an audit log entry at all when someone deletes their
+    own, so a self-deleted, uncached message still won't get a "Deleted
+    By" field, same as every other best-effort lookup in this file: the
+    absence isn't a bug, there's genuinely nothing to find."""
+    try:
+        audit = await bot.rest.get_audit_log(guild_id, action_type=AUDIT_LOG_MESSAGE_DELETE, limit=10)
+        users_by_id = {str(u["id"]): u for u in audit.get("users", [])}
+        for entry in audit.get("audit_log_entries", []):
+            entry_id = str(entry.get("id", ""))
+            if entry_id and entry_id in _consumed_audit_entries:
+                continue
+            if str(entry.get("options", {}).get("channel_id")) == str(deleted_in_channel_id):
+                if entry_id:
+                    _consumed_audit_entries[entry_id] = True
+                actor_id = str(entry.get("user_id", ""))
+                return users_by_id.get(actor_id) or {"id": actor_id, "username": "unknown"}
+    except Exception:
+        log.debug("Audit log lookup failed for guild=%s message delete in channel=%s",
+                   guild_id, deleted_in_channel_id, exc_info=True)
+    return None
+
+
+def _spawn_message_deleter_lookup(bot: Bot, guild_id: str, log_channel_id: str, message_id: Optional[str],
+                                   deleted_in_channel_id: str, base_embed: dict) -> None:
+    """Same fire-and-forget rationale as _spawn_actor_lookup."""
+    if not message_id:
+        return
+    task = asyncio.create_task(
+        _attach_message_deleter(bot, guild_id, log_channel_id, message_id, deleted_in_channel_id, base_embed))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def _attach_message_deleter(bot: Bot, guild_id: str, channel_id: str, message_id: str,
+                                   deleted_in_channel_id: str, base_embed: dict) -> None:
+    try:
+        await asyncio.sleep(1.0)  # audit log entries can lag slightly behind the gateway event
+        actor = await _find_message_deleter(bot, guild_id, deleted_in_channel_id)
+        if not actor:
+            return
+        embed = dict(base_embed)
+        fields = list(embed.get("fields", []))
+        fields.append({
+            "name": "Deleted By",
+            "value": f"{actor.get('username', 'unknown')} ({actor.get('id', 'unknown')})",
+            "inline": True,
+        })
+        embed["fields"] = fields
+        await bot.rest.edit_message(channel_id, message_id, embeds=[embed])
+    except Exception:
+        pass  # cosmetic follow-up only, never let this crash anything
+
+
 def register(bot: Bot) -> None:
 
     @bot.on("GUILD_CREATE")
@@ -278,6 +356,7 @@ def register(bot: Bot) -> None:
             "color": 0xF5A623,
             "author": await _author_field(cached["author_id"], cached["author_username"], cached.get("author_avatar")),
             "fields": [
+                _user_field(cached["author_id"]),
                 {"name": "Before", "value": _truncate(cached["content"]) or "*(empty)*", "inline": False},
                 {"name": "After", "value": _truncate(new_content) or "*(empty)*", "inline": False},
                 {"name": "Channel", "value": f"<#{cached['channel_id']}>", "inline": True},
@@ -305,11 +384,13 @@ def register(bot: Bot) -> None:
             if cached["author_id"] and await db.is_ignored_log_user(guild_id, cached["author_id"]):
                 message_cache.forget(str(message_id))
                 return
+            deleted_channel_id = cached["channel_id"]
             embed = {
                 "title": "Message Deleted",
                 "color": 0xE0245E,
                 "author": await _author_field(cached["author_id"], cached["author_username"], cached.get("author_avatar")),
                 "fields": [
+                    _user_field(cached["author_id"]),
                     {"name": "Content", "value": _truncate(cached["content"]) or "*(empty)*", "inline": False},
                     {"name": "Channel", "value": f"<#{cached['channel_id']}>", "inline": True},
                 ],
@@ -317,16 +398,22 @@ def register(bot: Bot) -> None:
                 "timestamp": _now_iso(),
             }
         else:
-            channel_id = data.get("channel_id")
+            # No cached author to show, and no "User" field to match:
+            # _spawn_message_deleter_lookup below still has a shot at
+            # naming WHO deleted it (not who wrote it) via the audit log.
+            deleted_channel_id = data.get("channel_id")
             embed = {
                 "title": "Message Deleted",
                 "color": 0xE0245E,
                 "description": "Content not available (not cached during this bot session).",
-                "fields": [{"name": "Channel", "value": f"<#{channel_id}>" if channel_id else "unknown", "inline": True}],
+                "fields": [{"name": "Channel", "value": f"<#{deleted_channel_id}>" if deleted_channel_id else "unknown", "inline": True}],
                 "footer": {"text": f"Message ID: {message_id}"},
                 "timestamp": _now_iso(),
             }
-        await _send_log(bot, settings["log_channel_id"], embed)
+        sent_id = await _send_log(bot, settings["log_channel_id"], embed)
+        if deleted_channel_id:
+            _spawn_message_deleter_lookup(bot, guild_id, settings["log_channel_id"], sent_id,
+                                           str(deleted_channel_id), embed)
         message_cache.forget(str(message_id))
 
     # ---------------------------------------------------------------- members --
@@ -350,6 +437,7 @@ def register(bot: Bot) -> None:
             "color": 0x4ADE80,
             "author": await _author_field(str(user_id), user.get("username", "unknown"), user.get("avatar")),
             "fields": [
+                _user_field(str(user_id)),
                 {"name": "Account Created", "value": format_date(created_at) if created_at else "unknown", "inline": True},
             ],
             "footer": {"text": f"User ID: {user_id}"},
@@ -375,6 +463,7 @@ def register(bot: Bot) -> None:
             "title": "Member Left",
             "color": 0xF16565,
             "author": await _author_field(str(user_id), user.get("username", "unknown"), user.get("avatar")),
+            "fields": [_user_field(str(user_id))],
             "footer": {"text": f"User ID: {user_id}"},
             "timestamp": _now_iso(),
         }
@@ -415,7 +504,7 @@ def register(bot: Bot) -> None:
         if not privileged_added and not privileged_removed:
             return  # roles changed, but none of them carry elevated permissions, not logged
 
-        fields = []
+        fields = [_user_field(user_id)]
         if privileged_added:
             fields.append({"name": "Privileged Roles Added", "value": ", ".join(f"<@&{r}>" for r in privileged_added), "inline": False})
         if privileged_removed:
@@ -645,13 +734,14 @@ def register(bot: Bot) -> None:
 
         if old_channel is None:
             title, color = "Joined Voice", 0x4ADE80
-            fields = [{"name": "Channel", "value": f"<#{new_channel}>", "inline": True}]
+            fields = [_user_field(user_id), {"name": "Channel", "value": f"<#{new_channel}>", "inline": True}]
         elif new_channel is None:
             title, color = "Left Voice", 0xF16565
-            fields = [{"name": "Channel", "value": f"<#{old_channel}>", "inline": True}]
+            fields = [_user_field(user_id), {"name": "Channel", "value": f"<#{old_channel}>", "inline": True}]
         else:
             title, color = "Switched Voice Channel", 0xF5A623
             fields = [
+                _user_field(user_id),
                 {"name": "From", "value": f"<#{old_channel}>", "inline": True},
                 {"name": "To", "value": f"<#{new_channel}>", "inline": True},
             ]

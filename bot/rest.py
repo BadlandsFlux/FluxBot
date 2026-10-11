@@ -125,6 +125,12 @@ class FluxerREST:
             json={"reason": reason} if reason else None,
         )
 
+    async def get_guild_ban(self, guild_id: str, user_id: str) -> dict:
+        """{"user": {...}, "reason": ...} — used to recover the banned
+        user's username for logging before the ban record is deleted by
+        unban_member, since they're not a guild member to look up after."""
+        return await self.request("GET", f"/guilds/{guild_id}/bans/{user_id}")
+
     async def timeout_member(self, guild_id: str, user_id: str, until_iso: str, reason: str = "") -> None:
         await self.request(
             "PATCH", f"/guilds/{guild_id}/members/{user_id}",
