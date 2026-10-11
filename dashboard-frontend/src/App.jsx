@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import TopBar from "./components/TopBar";
 import { FlashProvider } from "./components/Flash";
 import Spinner from "./components/Spinner";
@@ -10,9 +10,7 @@ import GuildDetail from "./pages/GuildDetail";
 import ReportDetail from "./pages/ReportDetail";
 import Commands from "./pages/Commands";
 import Status from "./pages/Status";
-import BotProfile from "./pages/BotProfile";
-import DiscordRelaySetup from "./pages/DiscordRelaySetup";
-import FluxerStatus from "./pages/FluxerStatus";
+import OwnerSettings from "./pages/OwnerSettings";
 import { api, setUnauthorizedHandler } from "./api";
 
 export default function App() {
@@ -57,17 +55,13 @@ export default function App() {
               <Route path="/commands" element={<Commands />} />
               <Route path="/status" element={<Status />} />
               <Route
-                path="/bot-profile"
-                element={me.user && me.is_owner ? <BotProfile /> : <Login botName={botName} />}
+                path="/owner-settings"
+                element={me.user && me.is_owner ? <OwnerSettings /> : <Login botName={botName} />}
               />
-              <Route
-                path="/discord-relay-setup"
-                element={me.user && me.is_owner ? <DiscordRelaySetup /> : <Login botName={botName} />}
-              />
-              <Route
-                path="/fluxer-status"
-                element={me.user && me.is_owner ? <FluxerStatus /> : <Login botName={botName} />}
-              />
+              {/* Old standalone routes, kept as redirects so existing bookmarks/links still land somewhere useful. */}
+              <Route path="/bot-profile" element={<Navigate to="/owner-settings?tab=bot-profile" replace />} />
+              <Route path="/discord-relay-setup" element={<Navigate to="/owner-settings?tab=discord-relay" replace />} />
+              <Route path="/fluxer-status" element={<Navigate to="/owner-settings?tab=fluxer-status" replace />} />
             </Routes>
           </main>
         </GuildsProvider>

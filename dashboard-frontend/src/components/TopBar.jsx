@@ -51,18 +51,8 @@ export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
         Status
       </Link>
       {isOwner && (
-        <Link to="/bot-profile" className="topbar-link" onClick={() => setMenuOpen(false)}>
-          Bot Profile
-        </Link>
-      )}
-      {isOwner && (
-        <Link to="/discord-relay-setup" className="topbar-link" onClick={() => setMenuOpen(false)}>
-          Discord Relay
-        </Link>
-      )}
-      {isOwner && (
-        <Link to="/fluxer-status" className="topbar-link" onClick={() => setMenuOpen(false)}>
-          Fluxer Status
+        <Link to="/owner-settings" className="topbar-link" onClick={() => setMenuOpen(false)}>
+          Owner Settings
         </Link>
       )}
     </>

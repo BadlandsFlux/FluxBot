@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Zap } from "lucide-react";
 
@@ -9,13 +10,18 @@ const ERROR_MESSAGES = {
 
 export default function Login({ botName }) {
   const [params] = useSearchParams();
+  const [iconFailed, setIconFailed] = useState(false);
   const errorCode = params.get("login_error");
   const errorMessage = errorCode ? ERROR_MESSAGES[errorCode] || "Login failed. Try again." : null;
 
   return (
     <div className="card center-card">
-      <div className="center-card-icon">
-        <Zap size={24} strokeWidth={2.5} />
+      <div className={`center-card-icon${iconFailed ? "" : " center-card-icon-custom"}`}>
+        {iconFailed ? (
+          <Zap size={24} strokeWidth={2.5} />
+        ) : (
+          <img src="/api/bot-profile/icon" alt="" onError={() => setIconFailed(true)} />
+        )}
       </div>
       <h1>{botName}</h1>
       <p className="muted">Sign in to manage moderation, autoroles, and reaction roles for your servers.</p>

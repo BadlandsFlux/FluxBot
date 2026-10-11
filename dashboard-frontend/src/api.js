@@ -156,4 +156,6 @@ export const api = {
   disableCommand: (id, name) => request(`/api/guilds/${id}/commands/${name}/disable`, { method: "POST" }),
   enableCommand: (id, name) => request(`/api/guilds/${id}/commands/${name}/enable`, { method: "POST" }),
   fluxerStats: () => request("/api/fluxer-stats"),
+  inviteSettings: () => request("/api/invite-settings"),
+  setInvitePermissions: (permissions) => request("/api/invite-settings", { method: "POST", body: { permissions } }),
 };

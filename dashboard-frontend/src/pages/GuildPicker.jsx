@@ -1,9 +1,17 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { UserPlus } from "lucide-react";
 import { useGuilds } from "../context/GuildsContext";
+import { api } from "../api";
 import Spinner from "../components/Spinner";
 
 export default function GuildPicker() {
   const { guilds, loading, error } = useGuilds();
+  const [inviteUrl, setInviteUrl] = useState(null);
+
+  useEffect(() => {
+    api.inviteSettings().then((d) => setInviteUrl(d.invite_url)).catch(() => {});
+  }, []);
 
   if (loading) {
     return (
@@ -24,9 +32,16 @@ export default function GuildPicker() {
 
   return (
     <>
-      <div className="page-head">
-        <h1>Your servers</h1>
-        <p className="muted">Servers where you can manage the bot.</p>
+      <div className="page-head page-head-row">
+        <div>
+          <h1>Your servers</h1>
+          <p className="muted">Servers where you can manage the bot.</p>
+        </div>
+        {inviteUrl && (
+          <a className="btn btn-primary btn-small" href={inviteUrl} target="_blank" rel="noreferrer">
+            <UserPlus size={14} /> Invite to a server
+          </a>
+        )}
       </div>
       {guilds.length ? (
         <div className="grid">
