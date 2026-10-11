@@ -399,6 +399,19 @@ CREATE TABLE IF NOT EXISTS bot_profile (
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Singleton row, same pattern as bot_profile: the permissions bitmask
+-- the owner wants requested when someone invites this bot to their own
+-- Fluxer server (the dashboard builds the actual invite URL from this
+-- plus FLUXER_OAUTH_CLIENT_ID/FLUXER_WEB_BASE, already configured for
+-- login). Defaults to 0 (no elevated permissions requested) rather
+-- than a guess like Administrator, an owner who hasn't thought about
+-- this yet shouldn't have a high-privilege invite link live by default.
+CREATE TABLE IF NOT EXISTS bot_invite_settings (
+    id           TEXT PRIMARY KEY DEFAULT 'bot',
+    permissions  BIGINT NOT NULL DEFAULT 0,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- One Discord channel can feed multiple Fluxer channels (e.g. two
 -- different communities both wanting the same announcements), so this
 -- isn't unique on discord_channel_id alone, it's unique on the pairing.

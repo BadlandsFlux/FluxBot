@@ -308,7 +308,16 @@ h2 { margin: 0 0 16px; font-size: 16px; font-weight: 700; }
   background: linear-gradient(135deg, var(--accent), #a78bfa);
   display: flex; align-items: center; justify-content: center;
   color: white;
+  overflow: hidden;
 }
+/* Same reasoning as .brand-mark-custom in the top bar: a real uploaded
+   image already has its own colors and needs a neutral backdrop, not
+   the accent gradient meant to give a plain icon some contrast. */
+.center-card-icon-custom {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-hover);
+}
+.center-card-icon img { width: 100%; height: 100%; object-fit: cover; }
 
 /* --------------------------------------------------------------- buttons */
 .btn {
@@ -906,6 +915,24 @@ label > .combobox { margin-top: 6px; }
 }
 .guild-switcher-option:hover { background: var(--panel-hover); }
 .guild-switcher-option.selected { color: var(--accent); font-weight: 700; }
+.guild-switcher-invite {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+.guild-switcher-invite:hover { background: var(--panel-hover); }
 
 /* -------------------------------------------------------------- switch */
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }

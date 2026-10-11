@@ -1074,6 +1074,21 @@ async def get_bot_avatar() -> Optional[asyncpg.Record]:
     return await pool().fetchrow("SELECT * FROM bot_profile WHERE id='bot'")
 
 
+async def get_bot_invite_permissions() -> int:
+    row = await pool().fetchrow("SELECT permissions FROM bot_invite_settings WHERE id='bot'")
+    return row["permissions"] if row else 0
+
+
+async def set_bot_invite_permissions(permissions: int) -> None:
+    await pool().execute(
+        """
+        INSERT INTO bot_invite_settings (id, permissions, updated_at) VALUES ('bot', $1, now())
+        ON CONFLICT (id) DO UPDATE SET permissions = EXCLUDED.permissions, updated_at = now()
+        """,
+        permissions,
+    )
+
+
 # ------------------------------------------------------------ discord relay --
 async def add_discord_relay_mapping(fluxer_guild_id: str, discord_channel_id: str, fluxer_channel_id: str,
                                      direction: str = "discord_to_fluxer", show_attribution: bool = True,

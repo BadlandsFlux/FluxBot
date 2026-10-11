@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { ChevronDown, Search } from "lucide-react";
+import { ChevronDown, Search, UserPlus } from "lucide-react";
 import { useGuilds } from "../context/GuildsContext";
+import { api } from "../api";
 
 export default function GuildSwitcher() {
   const location = useLocation();
@@ -9,7 +10,12 @@ export default function GuildSwitcher() {
   const { guilds } = useGuilds();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [inviteUrl, setInviteUrl] = useState(null);
   const rootRef = useRef(null);
+
+  useEffect(() => {
+    api.inviteSettings().then((d) => setInviteUrl(d.invite_url)).catch(() => {});
+  }, []);
 
   const match = location.pathname.match(/^\/guild\/([^/]+)/);
   const currentId = match ? match[1] : null;
@@ -78,6 +84,17 @@ export default function GuildSwitcher() {
               </button>
             ))}
           </div>
+          {inviteUrl && (
+            <a
+              className="guild-switcher-invite"
+              href={inviteUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setOpen(false)}
+            >
+              <UserPlus size={14} /> Invite to a server
+            </a>
+          )}
         </div>
       )}
     </div>

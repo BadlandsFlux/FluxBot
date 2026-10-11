@@ -2085,6 +2085,49 @@ async def bot_profile_icon():
     return await _serve_bot_avatar_or_default()
 
 
+# -------------------------------------------------------- invite settings --
+def _fluxer_invite_url(permissions: int) -> Optional[str]:
+    """None when there's no OAuth2 application configured at all
+    (FLUXER_OAUTH_CLIENT_ID unset): the dashboard's own login already
+    depends on that same application, so if login works, this does
+    too, nothing extra to configure beyond the permissions bitmask
+    itself. scope=bot (not bot+identify or anything login-related),
+    same shape as every Discord/Fluxer bot invite link."""
+    if not config.oauth_client_id:
+        return None
+    return f"{config.web_base}/oauth2/authorize?client_id={config.oauth_client_id}&scope=bot&permissions={permissions}"
+
+
+@app.get("/api/invite-settings")
+async def api_get_invite_settings(request: Request):
+    """Any logged-in user, not owner-only: this just hands back a URL
+    meant to be clicked from the homepage/server-switcher by anyone
+    who wants to add the bot to another server of theirs, nothing
+    sensitive in the permissions number itself (it's embedded in the
+    URL either way)."""
+    require_login(request)
+    permissions = await db.get_bot_invite_permissions()
+    return {"invite_url": _fluxer_invite_url(permissions), "permissions": permissions}
+
+
+class InvitePermissionsPayload(BaseModel):
+    permissions: int
+
+
+@app.post("/api/invite-settings")
+async def api_set_invite_settings(request: Request, payload: InvitePermissionsPayload):
+    _require_owner(request)
+    # Bounded to what a real permissions bitmask could ever need (a
+    # 53-bit value comfortably covers Discord's current permission
+    # flags with room to grow) and to stay a non-negative integer:
+    # loosely matches JS's safe-integer range too, so the frontend
+    # never has to worry about precision loss round-tripping this.
+    if not (0 <= payload.permissions < (1 << 53)):
+        raise _ApiError(400, "Permissions must be a non-negative integer.")
+    await db.set_bot_invite_permissions(payload.permissions)
+    return {"ok": True, "invite_url": _fluxer_invite_url(payload.permissions)}
+
+
 # ---------------------------------------------------------- discord relay --
 # Discord CDN domains a proxied avatar URL is allowed to come from. This
 # endpoint is public (no auth, same reasoning as the icon/favicon routes
