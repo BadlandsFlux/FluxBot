@@ -7,6 +7,8 @@ isn't a guild member to look up anymore.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from bot.commands import Bot
@@ -18,8 +20,10 @@ from common import db
 @pytest.fixture(autouse=True)
 def _clear_activity_log_caches():
     activity_log._member_roles.clear()
+    activity_log._consumed_audit_entries.clear()
     yield
     activity_log._member_roles.clear()
+    activity_log._consumed_audit_entries.clear()
     for task in list(activity_log._background_tasks):
         task.cancel()
 
@@ -67,6 +71,61 @@ async def test_privileged_role_change_embed_names_the_user_in_a_field(guild_id, 
     # embed author block as the only place the affected user was named.
     user_field = _field(embed, "User")
     assert user_field["value"] == "<@user1>"
+
+
+async def test_uncached_message_delete_backfills_deleter_from_audit_log(guild_id, monkeypatch):
+    """A message that aged out of the cache (or was sent before this bot
+    session) still has nothing to say about WHO wrote it, but if a
+    moderator deleted it, Discord's audit log can say who did THAT —
+    this used to go unused, leaving the log with nothing but a channel
+    mention and a raw message ID."""
+    bot = Bot("test-token")
+    activity_log.register(bot)
+    await db.set_activity_log_settings(
+        guild_id, log_channel_id="log1", log_message_edits=False, log_message_deletes=True,
+        log_member_joins=False, log_member_leaves=False, log_channel_changes=False,
+        log_role_changes=False, log_voice_activity=False, log_privileged_role_changes=False,
+    )
+
+    sent = []
+    edited = []
+
+    async def fake_send_message(channel_id, embeds=None, **kw):
+        sent.append((channel_id, embeds[0]))
+        return {"id": "logmsg1"}
+
+    async def fake_edit_message(channel_id, message_id, embeds=None, **kw):
+        edited.append((channel_id, message_id, embeds[0]))
+
+    async def fake_get_audit_log(guild_id, action_type=None, limit=10):
+        return {
+            "audit_log_entries": [
+                {"id": "entry1", "user_id": "mod1", "target_id": "deleted_msg_author",
+                 "options": {"channel_id": "chan1"}},
+            ],
+            "users": [{"id": "mod1", "username": "staffmod"}],
+        }
+
+    monkeypatch.setattr(bot.rest, "send_message", fake_send_message)
+    monkeypatch.setattr(bot.rest, "edit_message", fake_edit_message)
+    monkeypatch.setattr(bot.rest, "get_audit_log", fake_get_audit_log)
+
+    await bot.gateway._dispatch("MESSAGE_DELETE", {
+        "guild_id": guild_id, "id": "deletedmsg1", "channel_id": "chan1",
+    })
+
+    assert len(sent) == 1
+    _, embed = sent[0]
+    assert embed["description"].startswith("Content not available")
+
+    tasks = list(activity_log._background_tasks)
+    assert tasks, "expected a background actor-lookup task to have been spawned"
+    await asyncio.gather(*tasks)
+
+    assert len(edited) == 1
+    _, _, edited_embed = edited[0]
+    deleted_by = _field(edited_embed, "Deleted By")
+    assert "staffmod" in deleted_by["value"]
 
 
 async def test_unban_logs_the_real_username_not_unknown(guild_id):
