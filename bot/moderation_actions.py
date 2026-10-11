@@ -102,8 +102,16 @@ async def ban_member(rest, guild_id: str, user: dict, moderator: dict, reason: s
 
 
 async def unban_member(rest, guild_id: str, user_id: str, moderator: dict, reason: str = "") -> None:
+    # Looked up before the actual unban call: once the ban record is gone,
+    # there's no way left to recover who this user even was (they're not
+    # a guild member to fetch), so the log would otherwise show "@unknown".
+    try:
+        ban = await rest.get_guild_ban(guild_id, user_id)
+        user = ban.get("user") or {"id": user_id}
+    except FluxerAPIError:
+        user = {"id": user_id}
     await rest.unban_member(guild_id, user_id, reason)
-    await log_and_notify(rest, guild_id, "unban", user={"id": user_id}, moderator=moderator, reason=reason)
+    await log_and_notify(rest, guild_id, "unban", user=user, moderator=moderator, reason=reason)
 
 
 async def timeout_member(rest, guild_id: str, user: dict, moderator: dict, seconds: int,

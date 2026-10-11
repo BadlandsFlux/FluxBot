@@ -120,6 +120,17 @@ def _jump_link(guild_id: str, channel_id: str, message_id: str) -> str:
     return f"{config.web_base}/channels/{guild_id}/{channel_id}/{message_id}"
 
 
+def _user_field(user_id: str) -> dict:
+    """An explicit, hard-to-miss "User" field naming who an event
+    concerns. The embed `author` block (see _author_field) already shows
+    this, but it's a small header easy to skim past, especially once a
+    channel/role mention in the body fields is visually louder than it —
+    exactly how a "privileged role added" log could go out without
+    anyone noticing who it was added to. Fields are where readers
+    actually look, so the subject belongs here too, not only in author."""
+    return {"name": "User", "value": f"<@{user_id}>", "inline": True}
+
+
 async def _author_field(user_id: str, username: str, avatar_hash: Optional[str]) -> dict:
     field = {"name": f"{username} ({user_id})"}
     if avatar_hash:
@@ -278,6 +289,7 @@ def register(bot: Bot) -> None:
             "color": 0xF5A623,
             "author": await _author_field(cached["author_id"], cached["author_username"], cached.get("author_avatar")),
             "fields": [
+                _user_field(cached["author_id"]),
                 {"name": "Before", "value": _truncate(cached["content"]) or "*(empty)*", "inline": False},
                 {"name": "After", "value": _truncate(new_content) or "*(empty)*", "inline": False},
                 {"name": "Channel", "value": f"<#{cached['channel_id']}>", "inline": True},
@@ -310,6 +322,7 @@ def register(bot: Bot) -> None:
                 "color": 0xE0245E,
                 "author": await _author_field(cached["author_id"], cached["author_username"], cached.get("author_avatar")),
                 "fields": [
+                    _user_field(cached["author_id"]),
                     {"name": "Content", "value": _truncate(cached["content"]) or "*(empty)*", "inline": False},
                     {"name": "Channel", "value": f"<#{cached['channel_id']}>", "inline": True},
                 ],
@@ -350,6 +363,7 @@ def register(bot: Bot) -> None:
             "color": 0x4ADE80,
             "author": await _author_field(str(user_id), user.get("username", "unknown"), user.get("avatar")),
             "fields": [
+                _user_field(str(user_id)),
                 {"name": "Account Created", "value": format_date(created_at) if created_at else "unknown", "inline": True},
             ],
             "footer": {"text": f"User ID: {user_id}"},
@@ -375,6 +389,7 @@ def register(bot: Bot) -> None:
             "title": "Member Left",
             "color": 0xF16565,
             "author": await _author_field(str(user_id), user.get("username", "unknown"), user.get("avatar")),
+            "fields": [_user_field(str(user_id))],
             "footer": {"text": f"User ID: {user_id}"},
             "timestamp": _now_iso(),
         }
@@ -415,7 +430,7 @@ def register(bot: Bot) -> None:
         if not privileged_added and not privileged_removed:
             return  # roles changed, but none of them carry elevated permissions, not logged
 
-        fields = []
+        fields = [_user_field(user_id)]
         if privileged_added:
             fields.append({"name": "Privileged Roles Added", "value": ", ".join(f"<@&{r}>" for r in privileged_added), "inline": False})
         if privileged_removed:
@@ -645,13 +660,14 @@ def register(bot: Bot) -> None:
 
         if old_channel is None:
             title, color = "Joined Voice", 0x4ADE80
-            fields = [{"name": "Channel", "value": f"<#{new_channel}>", "inline": True}]
+            fields = [_user_field(user_id), {"name": "Channel", "value": f"<#{new_channel}>", "inline": True}]
         elif new_channel is None:
             title, color = "Left Voice", 0xF16565
-            fields = [{"name": "Channel", "value": f"<#{old_channel}>", "inline": True}]
+            fields = [_user_field(user_id), {"name": "Channel", "value": f"<#{old_channel}>", "inline": True}]
         else:
             title, color = "Switched Voice Channel", 0xF5A623
             fields = [
+                _user_field(user_id),
                 {"name": "From", "value": f"<#{old_channel}>", "inline": True},
                 {"name": "To", "value": f"<#{new_channel}>", "inline": True},
             ]
