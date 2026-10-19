@@ -4,6 +4,7 @@ import { Zap, Home, Menu, X } from "lucide-react";
 import { api } from "../api";
 import GuildSwitcher from "./GuildSwitcher";
 import ThemeToggle from "./ThemeToggle";
+import PalettePicker from "./PalettePicker";
 
 export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
   const [iconFailed, setIconFailed] = useState(false);
@@ -81,6 +82,7 @@ export default function TopBar({ user, isOwner, botName, onLoggedOut }) {
         <nav className="topbar-nav">{navLinks}</nav>
       </div>
       <div className="topbar-right">
+        <PalettePicker />
         <ThemeToggle />
         {user && (
           <div className="topbar-user">
