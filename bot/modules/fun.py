@@ -1,6 +1,6 @@
 """Fun commands.
 
-    !roll [spec ...]    e.g. !roll, !roll 2d6, !roll 1d20+5 2d4, !roll adv, !roll 4d6kh3
+    !roll [spec ...]    e.g. !roll, !roll 2d6, !roll 1d20+5 2d4, !roll adv, !roll 4d6kh3, !roll help
     !coinflip
     !wheel opt1, opt2, opt3, ...
     !poll "Question" "Option 1" "Option 2" ... [duration]
@@ -52,6 +52,8 @@ MAX_SIDES = 1000
 MAX_MODIFIER = 1000
 DISPLAY_CAP = 30
 REROLL_ALL_EMOJI = "\U0001F501"
+CLOSE_EMOJI = "❌"  # ❌
+CLOSED_COLOR = 0x95A5A6  # same gray !poll uses once it's closed
 
 _MAX_ROLL_SESSIONS = 500
 _roll_sessions = BoundedDict(max_size=_MAX_ROLL_SESSIONS)
@@ -155,11 +157,18 @@ def _parse_dice_spec(spec: str):
     return group
 
 
-def _build_roll_embed(title: str, groups, footer: str) -> dict:
+def _build_roll_embed(title: str, groups, footer: str, closed: bool = False) -> dict:
+    fields = []
+    for i, g in enumerate(groups):
+        # Prefix with the reaction number that rerolls just this group, so
+        # it's clear at a glance which click targets which die (the bare
+        # !roll's d4/d6/.../d100 fields looked identical otherwise).
+        name = f"{NUMBER_EMOJI[i]} {g.label}" if len(groups) > 1 else g.label
+        fields.append({"name": name, "value": g.format(), "inline": len(groups) > 1})
     embed = {
-        "title": title,
-        "color": 0x5865F2,
-        "fields": [{"name": g.label, "value": g.format(), "inline": len(groups) > 1} for g in groups],
+        "title": f"{title}, Closed" if closed else title,
+        "color": CLOSED_COLOR if closed else 0x5865F2,
+        "fields": fields,
         "footer": {"text": footer},
     }
     if len(groups) > 1:
@@ -167,13 +176,42 @@ def _build_roll_embed(title: str, groups, footer: str) -> dict:
     return embed
 
 
+def _build_roll_help_embed() -> dict:
+    return {
+        "title": "🎲 !roll help",
+        "color": 0x5865F2,
+        "description": "Roll dice, D&D-style. Everything below can be combined in one command.",
+        "fields": [
+            {"name": "Basic", "value": "`!roll 2d6` — 2 six-sided dice\n`!roll d20` — count defaults to 1", "inline": False},
+            {"name": "Modifiers", "value": "`!roll 1d20+5`, `!roll 3d4-2`", "inline": False},
+            {"name": "Multiple groups", "value": "`!roll 2d6 1d20+5` — rolls both, plus a grand total", "inline": False},
+            {"name": "Keep highest/lowest", "value": "`!roll 4d6kh3` — ability scores (drop the lowest)\n"
+                                                       "`!roll 2d20kl1` — same as disadvantage", "inline": False},
+            {"name": "Advantage / disadvantage", "value": "`!roll adv` → `2d20kh1`\n`!roll dis` → `2d20kl1`\n"
+                                                            "`!roll adv+2` adds a modifier too", "inline": False},
+            {"name": "Bare !roll", "value": "Shows the standard set: d4, d6, d8, d10, d12, d20, d100", "inline": False},
+            {"name": "Limits", "value": f"Up to {MAX_DICE_PER_GROUP} dice and {MAX_SIDES} sides per group, "
+                                         f"±{MAX_MODIFIER} modifier, {MAX_GROUPS} groups per command", "inline": False},
+            {"name": "Reactions", "value": f"{REROLL_ALL_EMOJI} reroll everything · a number rerolls just that "
+                                            f"group (multi-group rolls only) · {CLOSE_EMOJI} close the roll",
+             "inline": False},
+        ],
+    }
+
+
 def register(bot: Bot) -> None:
 
     @bot.command("roll", category="Fun", aliases=["dice"],
                  help_text="Roll dice, D&D-style. Usage: !roll [spec ...], e.g. !roll 2d6, "
                             "!roll 1d20+5 2d4, !roll adv, !roll 4d6kh3. Bare !roll shows the standard set. "
-                            "React with 🔁 to reroll everything, or a number to reroll just that group.")
+                            "!roll help for the full notation guide. "
+                            "React with 🔁 to reroll everything, a number to reroll just that group, "
+                            "or ❌ to close.")
     async def roll(ctx: Context) -> None:
+        if ctx.args and ctx.args[0].lower() == "help":
+            await ctx.bot.rest.send_message(ctx.channel_id, embeds=[_build_roll_help_embed()])
+            return
+
         specs = list(ctx.args) if ctx.args else list(STANDARD_DICE)
         title = "🎲 Standard dice set" if not ctx.args else "🎲 Dice roll"
 
@@ -203,6 +241,7 @@ def register(bot: Bot) -> None:
             if len(groups) > 1:
                 for i in range(len(groups)):
                     await ctx.bot.rest.add_reaction(ctx.channel_id, message_id, NUMBER_EMOJI[i])
+            await ctx.bot.rest.add_reaction(ctx.channel_id, message_id, CLOSE_EMOJI)
         except Exception:
             pass  # the roll itself already sent fine; reroll reactions just won't be clickable
 
@@ -216,7 +255,7 @@ def register(bot: Bot) -> None:
         emoji_data = data.get("emoji", {})
         emoji = emoji_data.get("name") if isinstance(emoji_data, dict) else emoji_data
         group_count = len(session.groups)
-        valid_emoji = {REROLL_ALL_EMOJI}
+        valid_emoji = {REROLL_ALL_EMOJI, CLOSE_EMOJI}
         if group_count > 1:
             valid_emoji |= set(NUMBER_EMOJI[:group_count])
         if emoji not in valid_emoji:
@@ -227,7 +266,22 @@ def register(bot: Bot) -> None:
         if bot_user_id and user_id == str(bot_user_id):
             return  # our own seed reactions added when the roll was posted
         if user_id != session.user_id:
-            return  # only the original roller can trigger their own reroll
+            return  # only the original roller can trigger their own reroll/close
+
+        if emoji == CLOSE_EMOJI:
+            del _roll_sessions[message_id]
+            embed = _build_roll_embed(session.title, session.groups, session.footer, closed=True)
+            try:
+                await bot.rest.edit_message(session.channel_id, message_id, content="", embeds=[embed])
+            except Exception:
+                return
+            seeded = [REROLL_ALL_EMOJI, CLOSE_EMOJI] + (list(NUMBER_EMOJI[:group_count]) if group_count > 1 else [])
+            for seeded_emoji in seeded:
+                try:
+                    await bot.rest.remove_own_reaction(session.channel_id, message_id, seeded_emoji)
+                except Exception:
+                    pass  # bot likely lacks Manage Messages; the roll is still marked closed either way
+            return
 
         indices = range(group_count) if emoji == REROLL_ALL_EMOJI else [NUMBER_EMOJI.index(emoji)]
         for i in indices:
