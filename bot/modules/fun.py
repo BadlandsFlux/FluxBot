@@ -1,6 +1,6 @@
 """Fun commands.
 
-    !roll [NdM]     e.g. !roll, !roll 2d6, !roll d20
+    !roll [spec ...]    e.g. !roll, !roll 2d6, !roll 1d20+5 2d4, !roll adv, !roll 4d6kh3
     !coinflip
     !wheel opt1, opt2, opt3, ...
     !poll "Question" "Option 1" "Option 2" ... [duration]
@@ -12,8 +12,11 @@ from __future__ import annotations
 import platform
 import random
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
+from bot.bounded_cache import BoundedDict
 from bot.commands import Bot, Context
 from bot.timeutil import format_duration, parse_duration_seconds
 from common import db
@@ -35,30 +38,210 @@ NEOFETCH_ART = [
     "         ",
 ]
 
-DICE_RE = re.compile(r"^(\d*)d(\d+)$", re.IGNORECASE)
 NUMBER_EMOJI = [f"{i}\ufe0f\u20e3" for i in range(1, 10)] + ["\U0001F51F"]  # 1..9, then 🔟
+
+
+GROUP_RE = re.compile(r"^(\d*)d(\d+)(kh\d+|kl\d+)?([+-]\d+)?$", re.IGNORECASE)
+ADV_RE = re.compile(r"^(?:adv|advantage)([+-]\d+)?$", re.IGNORECASE)
+DIS_RE = re.compile(r"^(?:dis|disadvantage)([+-]\d+)?$", re.IGNORECASE)
+
+STANDARD_DICE = ["d4", "d6", "d8", "d10", "d12", "d20", "d100"]
+MAX_GROUPS = len(NUMBER_EMOJI)
+MAX_DICE_PER_GROUP = 100
+MAX_SIDES = 1000
+MAX_MODIFIER = 1000
+DISPLAY_CAP = 30
+REROLL_ALL_EMOJI = "\U0001F501"
+
+_MAX_ROLL_SESSIONS = 500
+_roll_sessions = BoundedDict(max_size=_MAX_ROLL_SESSIONS)
+
+
+@dataclass
+class DiceGroup:
+    label: str
+    count: int
+    sides: int
+    keep_mode: Optional[str] = None
+    keep_n: Optional[int] = None
+    modifier: int = 0
+    rolls: list = field(default_factory=list)
+
+    def reroll(self) -> None:
+        self.rolls = [random.randint(1, self.sides) for _ in range(self.count)]
+
+    @property
+    def _kept_mask(self):
+        if not self.keep_mode:
+            return [True] * len(self.rolls)
+        order = sorted(range(len(self.rolls)), key=lambda i: self.rolls[i], reverse=(self.keep_mode == "kh"))
+        kept_idx = set(order[: self.keep_n])
+        return [i in kept_idx for i in range(len(self.rolls))]
+
+    @property
+    def total(self) -> int:
+        kept = [v for v, keep in zip(self.rolls, self._kept_mask) if keep]
+        return sum(kept) + self.modifier
+
+    def format(self) -> str:
+        indexed = list(zip(self.rolls, self._kept_mask))
+        # Kept dice first so a small keep_n on a large count (e.g. 100d6kh3)
+        # doesn't get silently truncated out of the displayed pips.
+        ordered = [t for t in indexed if t[1]] + [t for t in indexed if not t[1]]
+        shown = ordered[:DISPLAY_CAP]
+        pieces = []
+        for value, keep in shown:
+            text = str(value)
+            if self.sides == 20 and value == 20:
+                text = f"**{value}**\U0001F4A5"
+            elif self.sides == 20 and value == 1:
+                text = f"**{value}**\U0001F4A2"
+            if not keep:
+                text = f"~~{text}~~"
+            pieces.append(text)
+        extra = len(ordered) - len(shown)
+        rolls_str = "[" + ", ".join(pieces) + (f", ...+{extra} more" if extra else "") + "]"
+        if self.keep_mode:
+            kept_label = "highest" if self.keep_mode == "kh" else "lowest"
+            suffix = f" -> kept {kept_label} {self.keep_n}"
+        else:
+            suffix = ""
+        mod_str = f" {'+' if self.modifier >= 0 else '-'} {abs(self.modifier)}" if self.modifier else ""
+        return f"{rolls_str}{suffix}{mod_str} = **{self.total}**"
+
+
+@dataclass
+class _RollSession:
+    user_id: str
+    channel_id: str
+    title: str
+    footer: str
+    groups: list
+
+
+def _parse_dice_spec(spec: str):
+    adv = ADV_RE.match(spec)
+    dis = DIS_RE.match(spec)
+    expanded = spec
+    if adv or dis:
+        modifier_text = (adv or dis).group(1) or ""
+        expanded = f"2d20{'kh' if adv else 'kl'}1{modifier_text}"
+
+    m = GROUP_RE.match(expanded)
+    if not m:
+        return f"Can't parse `{spec}`. Try dice notation like `2d6`, `1d20+5`, `4d6kh3`, or `adv`/`dis`."
+
+    count = int(m.group(1)) if m.group(1) else 1
+    sides = int(m.group(2))
+    keep_token = m.group(3)
+    modifier = int(m.group(4)) if m.group(4) else 0
+
+    if not (1 <= count <= MAX_DICE_PER_GROUP):
+        return f"`{spec}`: keep dice count between 1 and {MAX_DICE_PER_GROUP}."
+    if not (2 <= sides <= MAX_SIDES):
+        return f"`{spec}`: keep sides between 2 and {MAX_SIDES}."
+    if not (-MAX_MODIFIER <= modifier <= MAX_MODIFIER):
+        return f"`{spec}`: keep the modifier within +/-{MAX_MODIFIER}."
+
+    keep_mode = keep_n = None
+    if keep_token:
+        keep_mode = keep_token[:2].lower()
+        keep_n = int(keep_token[2:])
+        if not (1 <= keep_n <= count):
+            return f"`{spec}`: `{keep_token}` needs a number between 1 and {count}."
+
+    group = DiceGroup(label=spec, count=count, sides=sides, keep_mode=keep_mode, keep_n=keep_n, modifier=modifier)
+    group.reroll()
+    return group
+
+
+def _build_roll_embed(title: str, groups, footer: str) -> dict:
+    embed = {
+        "title": title,
+        "color": 0x5865F2,
+        "fields": [{"name": g.label, "value": g.format(), "inline": len(groups) > 1} for g in groups],
+        "footer": {"text": footer},
+    }
+    if len(groups) > 1:
+        embed["description"] = f"**Grand total: {sum(g.total for g in groups)}**"
+    return embed
 
 
 def register(bot: Bot) -> None:
 
-    @bot.command("roll", category="Fun", aliases=["dice"], help_text="Roll dice. Usage: !roll [NdM], e.g. !roll 2d6")
+    @bot.command("roll", category="Fun", aliases=["dice"],
+                 help_text="Roll dice, D&D-style. Usage: !roll [spec ...], e.g. !roll 2d6, "
+                            "!roll 1d20+5 2d4, !roll adv, !roll 4d6kh3. Bare !roll shows the standard set. "
+                            "React with 🔁 to reroll everything, or a number to reroll just that group.")
     async def roll(ctx: Context) -> None:
-        spec = ctx.args[0] if ctx.args else "1d6"
-        m = DICE_RE.match(spec)
-        if not m:
-            await ctx.reply("Format is `NdM`, e.g. `!roll 2d6` or `!roll d20`.")
+        specs = list(ctx.args) if ctx.args else list(STANDARD_DICE)
+        title = "🎲 Standard dice set" if not ctx.args else "🎲 Dice roll"
+
+        if len(specs) > MAX_GROUPS:
+            await ctx.reply(f"Keep it to {MAX_GROUPS} dice groups or fewer per roll.")
             return
-        count = int(m.group(1)) if m.group(1) else 1
-        sides = int(m.group(2))
-        if not (1 <= count <= 20) or not (2 <= sides <= 1000):
-            await ctx.reply("Keep it reasonable: 1-20 dice, 2-1000 sides.")
+
+        groups: list[DiceGroup] = []
+        for spec in specs:
+            result = _parse_dice_spec(spec)
+            if isinstance(result, str):
+                await ctx.reply(result)
+                return
+            groups.append(result)
+
+        footer = f"Rolled by {ctx.author.get('username', 'someone')}"
+        embed = _build_roll_embed(title, groups, footer)
+        sent = await ctx.bot.rest.send_message(ctx.channel_id, embeds=[embed])
+        message_id = str(sent["id"])
+
+        _roll_sessions[message_id] = _RollSession(
+            user_id=str(ctx.author.get("id")), channel_id=ctx.channel_id,
+            title=title, footer=footer, groups=groups,
+        )
+        try:
+            await ctx.bot.rest.add_reaction(ctx.channel_id, message_id, REROLL_ALL_EMOJI)
+            if len(groups) > 1:
+                for i in range(len(groups)):
+                    await ctx.bot.rest.add_reaction(ctx.channel_id, message_id, NUMBER_EMOJI[i])
+        except Exception:
+            pass  # the roll itself already sent fine; reroll reactions just won't be clickable
+
+    @bot.on("MESSAGE_REACTION_ADD")
+    async def on_roll_reaction(data: dict) -> None:
+        message_id = str(data.get("message_id"))
+        session = _roll_sessions.get(message_id)
+        if not session:
             return
-        rolls = [random.randint(1, sides) for _ in range(count)]
-        total = sum(rolls)
-        if count == 1:
-            await ctx.reply(f"🎲 Rolled a **{total}** (d{sides}).")
-        else:
-            await ctx.reply(f"🎲 Rolled {rolls} = **{total}** ({count}d{sides}).")
+
+        emoji_data = data.get("emoji", {})
+        emoji = emoji_data.get("name") if isinstance(emoji_data, dict) else emoji_data
+        group_count = len(session.groups)
+        valid_emoji = {REROLL_ALL_EMOJI}
+        if group_count > 1:
+            valid_emoji |= set(NUMBER_EMOJI[:group_count])
+        if emoji not in valid_emoji:
+            return
+
+        user_id = str(data.get("user_id"))
+        bot_user_id = (bot.gateway.user or {}).get("id")
+        if bot_user_id and user_id == str(bot_user_id):
+            return  # our own seed reactions added when the roll was posted
+        if user_id != session.user_id:
+            return  # only the original roller can trigger their own reroll
+
+        indices = range(group_count) if emoji == REROLL_ALL_EMOJI else [NUMBER_EMOJI.index(emoji)]
+        for i in indices:
+            session.groups[i].reroll()
+
+        embed = _build_roll_embed(session.title, session.groups, session.footer)
+        try:
+            await bot.rest.edit_message(session.channel_id, message_id, content="", embeds=[embed])
+        except Exception:
+            return
+        try:
+            await bot.rest.remove_user_reaction(session.channel_id, message_id, emoji, user_id)
+        except Exception:
+            pass  # bot likely lacks Manage Messages; reroll still works, just can't re-click instantly
 
     @bot.command("coinflip", category="Fun", aliases=["flip", "coin"], help_text="Flip a coin. Usage: !coinflip")
     async def coinflip(ctx: Context) -> None:
