@@ -228,11 +228,13 @@ async def test_bare_roll_shows_standard_dice_set(guild_id):
     assert len(sent_embeds) == 1
     embed = sent_embeds[0]
     assert embed["title"] == "🎲 Standard dice set"
-    assert [f["name"] for f in embed["fields"]] == fun_mod.STANDARD_DICE
+    expected_names = [f"{fun_mod.NUMBER_EMOJI[i]} {spec}" for i, spec in enumerate(fun_mod.STANDARD_DICE)]
+    assert [f["name"] for f in embed["fields"]] == expected_names
     assert fun_mod.REROLL_ALL_EMOJI in added_reactions
     assert added_reactions.count(fun_mod.REROLL_ALL_EMOJI) == 1
-    # One number reaction per standard die, since there are 7 > 1 groups.
-    assert len(added_reactions) == 1 + len(fun_mod.STANDARD_DICE)
+    assert fun_mod.CLOSE_EMOJI in added_reactions
+    # One number reaction per standard die (7 > 1 groups), plus reroll-all and close.
+    assert len(added_reactions) == 2 + len(fun_mod.STANDARD_DICE)
 
 
 async def test_single_group_roll_gets_no_number_reactions(guild_id):
@@ -243,9 +245,9 @@ async def test_single_group_roll_gets_no_number_reactions(guild_id):
     embed = sent_embeds[0]
     assert embed["title"] == "🎲 Dice roll"
     assert len(embed["fields"]) == 1
-    assert embed["fields"][0]["name"] == "2d6"
+    assert embed["fields"][0]["name"] == "2d6"  # single group: no number prefix needed
     assert "description" not in embed  # no grand total needed for one group
-    assert added_reactions == [fun_mod.REROLL_ALL_EMOJI]
+    assert added_reactions == [fun_mod.REROLL_ALL_EMOJI, fun_mod.CLOSE_EMOJI]
 
 
 async def test_multi_group_roll_shows_grand_total_and_numbered_reactions(guild_id):
@@ -255,10 +257,11 @@ async def test_multi_group_roll_shows_grand_total_and_numbered_reactions(guild_i
     assert replies == []
     embed = sent_embeds[0]
     assert len(embed["fields"]) == 2
-    assert embed["fields"][0]["name"] == "2d6"
-    assert embed["fields"][1]["name"] == "1d20+5"
+    assert embed["fields"][0]["name"] == f"{fun_mod.NUMBER_EMOJI[0]} 2d6"
+    assert embed["fields"][1]["name"] == f"{fun_mod.NUMBER_EMOJI[1]} 1d20+5"
     assert "Grand total" in embed["description"]
-    assert added_reactions == [fun_mod.REROLL_ALL_EMOJI, fun_mod.NUMBER_EMOJI[0], fun_mod.NUMBER_EMOJI[1]]
+    assert added_reactions == [fun_mod.REROLL_ALL_EMOJI, fun_mod.NUMBER_EMOJI[0], fun_mod.NUMBER_EMOJI[1],
+                                fun_mod.CLOSE_EMOJI]
 
 
 async def test_invalid_spec_replies_with_error_and_sends_no_embed(guild_id):
@@ -388,3 +391,105 @@ async def test_single_group_roll_ignores_number_reaction(guild_id):
     await dispatch_reaction(bot, message_id="msg1", emoji={"name": fun_mod.NUMBER_EMOJI[0]},
                              user_id="u1", guild_id=guild_id)
     assert edited == []
+
+
+# ------------------------------------------------------------------ close --
+
+async def test_close_reaction_marks_embed_closed_and_ends_session(guild_id):
+    bot = make_bot()
+    await run_roll(bot, guild_id, "!roll 2d6 1d20")
+    assert "msg1" in fun_mod._roll_sessions
+
+    edited = []
+    removed_own = []
+
+    async def fake_edit_message(channel_id, message_id, content=None, embeds=None, **kw):
+        edited.append(embeds[0])
+
+    async def fake_remove_own_reaction(channel_id, message_id, emoji):
+        removed_own.append(emoji)
+
+    bot.rest.edit_message = fake_edit_message
+    bot.rest.remove_own_reaction = fake_remove_own_reaction
+
+    await dispatch_reaction(bot, message_id="msg1", emoji={"name": fun_mod.CLOSE_EMOJI},
+                             user_id="u1", guild_id=guild_id)
+
+    assert len(edited) == 1
+    closed_embed = edited[0]
+    assert closed_embed["title"].endswith(", Closed")
+    assert closed_embed["color"] == fun_mod.CLOSED_COLOR
+    assert "msg1" not in fun_mod._roll_sessions  # session ended, no further reroll/close possible
+    # Every reaction the bot itself seeded gets cleaned up: reroll-all, both
+    # group numbers, and the close reaction itself.
+    assert set(removed_own) == {fun_mod.REROLL_ALL_EMOJI, fun_mod.NUMBER_EMOJI[0], fun_mod.NUMBER_EMOJI[1],
+                                 fun_mod.CLOSE_EMOJI}
+
+
+async def test_close_reaction_ignores_other_users(guild_id):
+    bot = make_bot()
+    await run_roll(bot, guild_id, "!roll 2d6")
+
+    edited = []
+
+    async def fake_edit_message(*a, **kw):
+        edited.append(1)
+
+    bot.rest.edit_message = fake_edit_message
+
+    await dispatch_reaction(bot, message_id="msg1", emoji={"name": fun_mod.CLOSE_EMOJI},
+                             user_id="someone-else-entirely", guild_id=guild_id)
+
+    assert edited == []
+    assert "msg1" in fun_mod._roll_sessions  # still open
+
+
+async def test_closed_roll_ignores_further_reactions(guild_id):
+    bot = make_bot()
+    await run_roll(bot, guild_id, "!roll 2d6")
+
+    async def fake_edit_message(*a, **kw):
+        pass
+
+    async def fake_remove_own_reaction(*a, **kw):
+        pass
+
+    bot.rest.edit_message = fake_edit_message
+    bot.rest.remove_own_reaction = fake_remove_own_reaction
+
+    await dispatch_reaction(bot, message_id="msg1", emoji={"name": fun_mod.CLOSE_EMOJI},
+                             user_id="u1", guild_id=guild_id)
+    assert "msg1" not in fun_mod._roll_sessions
+
+    edited = []
+
+    async def fake_edit_message_after_close(*a, **kw):
+        edited.append(1)
+
+    bot.rest.edit_message = fake_edit_message_after_close
+    await dispatch_reaction(bot, message_id="msg1", emoji={"name": fun_mod.REROLL_ALL_EMOJI},
+                             user_id="u1", guild_id=guild_id)
+    assert edited == []
+
+
+# -------------------------------------------------------------------- help --
+
+async def test_roll_help_sends_help_embed_and_starts_no_session(guild_id):
+    bot = make_bot()
+    sent_embeds, added_reactions, replies = await run_roll(bot, guild_id, "!roll help")
+
+    assert replies == []
+    assert added_reactions == []  # a help embed isn't a roll; nothing to react to
+    assert len(sent_embeds) == 1
+    embed = sent_embeds[0]
+    assert embed["title"] == "🎲 !roll help"
+    assert len(fun_mod._roll_sessions) == 0
+
+
+async def test_roll_help_is_case_insensitive(guild_id):
+    bot = make_bot()
+    sent_embeds, _, replies = await run_roll(bot, guild_id, "!roll HELP")
+
+    assert replies == []
+    assert len(sent_embeds) == 1
+    assert sent_embeds[0]["title"] == "🎲 !roll help"
