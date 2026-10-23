@@ -19,7 +19,7 @@ A self-hosted moderation and community bot for [Fluxer](https://fluxer.app), pai
 
 ## Screenshots
 
-**Overview tab**, member/channel/role counts, what's configured, activity charts, and recent mod actions at a glance. Dark and light themes both supported, toggle in the top bar.
+**Overview tab**, member/channel/role counts, what's configured, activity charts, and recent mod actions at a glance. Dark and light themes both supported, toggle in the top bar, alongside a palette picker (Original, Badlands Red, or your own custom accent color) that also lives there.
 
 ![Overview tab, dark theme](docs/screenshots/overview-dark.png)
 ![Overview tab, light theme](docs/screenshots/overview-light.png)
