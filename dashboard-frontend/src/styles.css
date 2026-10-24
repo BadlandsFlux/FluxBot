@@ -1,8 +1,12 @@
 /* Two independent axes: data-theme (light/dark, unchanged from before)
-   and data-palette (original/badlands-red, new). Each palette defines
-   its own dark set here and its own light overrides further down, the
-   same shape badlands-red's reference implementation (Fluxvertise)
-   already uses, so the two stay easy to compare side by side. */
+   and data-palette (original/badlands-red/custom). Each built-in palette
+   defines its own dark set here and its own light overrides further
+   down, the same shape badlands-red's reference implementation
+   (Fluxvertise) already uses, so the two stay easy to compare side by
+   side. "custom" has no block of its own: it inherits Original's base
+   (bg/panel/text/etc, proven to have working contrast in both themes)
+   and PalettePicker.jsx overrides just the accent-related variables
+   inline, from the user's own color pickers. */
 :root {
   --bg: #0b0d14;
   --bg-elevated: #12151f;
@@ -300,6 +304,45 @@ button { font-family: inherit; }
 }
 .palette-swatch-original { background: linear-gradient(135deg, #6d7bff, #a78bfa); }
 .palette-swatch-badlands-red { background: linear-gradient(135deg, #d92b2b, #7a1212); }
+
+.palette-picker-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px 4px;
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+}
+.palette-picker-color-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.palette-picker-color-row input[type="color"] {
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+.palette-picker-reset {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+  font-family: inherit;
+}
+.palette-picker-reset:hover { color: var(--text); }
 
 /* Everything the desktop topbar fits on one row -- nav links, the
    theme toggle, the user pill, logout -- doesn't fit on a phone-width
