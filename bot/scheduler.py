@@ -256,7 +256,7 @@ async def _send_fluxer_patch_notes(bot: Bot) -> None:
 
     for (report_date, tz), rows in due_by_window.items():
         try:
-            embed, commit_count = await fluxer_patch_notes.generate_patch_notes(report_date, tz)
+            embeds, commit_count = await fluxer_patch_notes.generate_patch_notes(report_date, tz)
         except Exception:
             log.exception("Failed to generate Fluxer patch notes for %s (%s), will retry", report_date, tz)
             _last_patch_notes_failure = now_utc
@@ -264,7 +264,7 @@ async def _send_fluxer_patch_notes(bot: Bot) -> None:
 
         for row in rows:
             try:
-                await bot.rest.send_message(row["fluxer_patch_notes_channel_id"], embeds=[embed])
+                await bot.rest.send_message(row["fluxer_patch_notes_channel_id"], embeds=embeds)
             except Exception:
                 log.warning("Failed to post Fluxer patch notes to guild %s", row["guild_id"])
             await db.record_fluxer_patch_notes_sent(row["guild_id"], report_date, commit_count)
