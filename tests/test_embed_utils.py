@@ -8,8 +8,8 @@ FluxerREST actually applies the clamp before sending/editing.
 from __future__ import annotations
 
 from bot.embed_utils import (
-    DESCRIPTION_LIMIT, FIELD_NAME_LIMIT, FIELD_VALUE_LIMIT, FOOTER_LIMIT, TITLE_LIMIT,
-    clamp_embed, clamp_embeds,
+    DESCRIPTION_LIMIT, FIELD_NAME_LIMIT, FIELD_VALUE_LIMIT, FOOTER_LIMIT, MAX_FIELDS, TITLE_LIMIT,
+    TOTAL_LIMIT, clamp_embed, clamp_embeds,
 )
 from bot.rest import FluxerREST
 
@@ -70,6 +70,53 @@ def test_missing_optional_pieces_dont_raise():
     assert clamp_embed({}) == {}
     assert clamp_embed({"fields": []}) == {"fields": []}
     assert clamp_embed({"footer": {}}) == {"footer": {}}
+
+
+def _total_len(embed: dict) -> int:
+    total = len(embed.get("title") or "") + len(embed.get("description") or "")
+    total += len((embed.get("footer") or {}).get("text") or "")
+    for f in embed.get("fields") or []:
+        total += len(f.get("name") or "") + len(f.get("value") or "")
+    return total
+
+
+def test_more_than_25_fields_are_dropped_even_though_each_is_tiny():
+    # Each field is well under its own 1024-char cap, but Discord/Fluxer
+    # still rejects the whole message past 25 fields -- this is exactly
+    # what Fluxer patch notes hit on a busy day (many small per-commit
+    # fields, none individually oversized).
+    embed = {"fields": [{"name": f"f{i}", "value": "ok"} for i in range(40)]}
+    clamp_embed(embed)
+    assert len(embed["fields"]) == MAX_FIELDS
+    assert embed["footer"]["text"] == "(truncated)"
+
+
+def test_many_fields_each_within_their_own_limit_still_clamped_to_the_aggregate_total():
+    # 10 fields at ~900 chars each individually pass the 1024-char
+    # per-field check but sum to ~9000, clearing the 6000 aggregate cap.
+    embed = {"fields": [{"name": f"f{i}", "value": "x" * 900} for i in range(10)]}
+    clamp_embed(embed)
+    assert _total_len(embed) <= TOTAL_LIMIT
+    assert len(embed["fields"]) < 10
+    assert embed["footer"]["text"] == "(truncated)"
+
+
+def test_aggregate_clamp_leaves_a_small_embed_with_many_fields_untouched():
+    embed = {"fields": [{"name": f"f{i}", "value": "short"} for i in range(5)]}
+    before = dict(embed)
+    clamp_embed(embed)
+    assert embed == before
+    assert "footer" not in embed
+
+
+def test_aggregate_clamp_appends_to_an_existing_footer_rather_than_overwriting_it():
+    embed = {
+        "footer": {"text": "existing note"},
+        "fields": [{"name": f"f{i}", "value": "x" * 900} for i in range(10)],
+    }
+    clamp_embed(embed)
+    assert embed["footer"]["text"].startswith("existing note")
+    assert embed["footer"]["text"].endswith("(truncated)")
 
 
 async def _capture_request(rest):
