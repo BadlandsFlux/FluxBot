@@ -92,13 +92,21 @@ async def _close_trivia(bot: Bot) -> None:
             reactors = await bot.rest.get_reaction_users(t["channel_id"], t["message_id"], correct_emoji)
             winners = [str(u["id"]) for u in reactors if str(u.get("id")) != bot_id]
 
+            guild_cfg = await db.get_guild(t["guild_id"])
+            cap_enabled = not guild_cfg or guild_cfg["trivia_xp_cap_enabled"]
+            cap_amount = guild_cfg["trivia_xp_cap_amount"] if guild_cfg else trivia_module.TRIVIA_XP_CAP_DEFAULT
+
             for user_id in winners:
                 try:
                     member = await bot.get_member(t["guild_id"], user_id, fresh=False)
                     username = member.get("user", member).get("username", "someone")
                 except Exception:
                     username = "someone"
-                await leveling.grant_xp(bot, t["guild_id"], user_id, username, trivia_module.XP_REWARD)
+                xp_amount = trivia_module.XP_REWARD
+                if cap_enabled:
+                    xp_amount = await db.add_trivia_xp_capped(t["guild_id"], user_id, xp_amount, cap_amount)
+                if xp_amount > 0:
+                    await leveling.grant_xp(bot, t["guild_id"], user_id, username, xp_amount)
 
             winner_text = (
                 ", ".join(f"<@{uid}>" for uid in winners) if winners else "nobody got it this time"
@@ -107,7 +115,7 @@ async def _close_trivia(bot: Bot) -> None:
                 "title": f"🧠 {t['question']}",
                 "description": f"Correct answer: {correct_emoji} **{options[t['correct_index']]}**\n\n{winner_text}",
                 "color": 0x2ecc71,
-                "footer": {"text": f"+{trivia_module.XP_REWARD} XP each" if winners else "Trivia closed"},
+                "footer": {"text": f"+{trivia_module.XP_REWARD} XP each (daily cap may apply)" if winners else "Trivia closed"},
             }
             await bot.rest.edit_message(
                 t["channel_id"], t["message_id"], content="", embeds=[embed],
@@ -256,7 +264,7 @@ async def _send_fluxer_patch_notes(bot: Bot) -> None:
 
     for (report_date, tz), rows in due_by_window.items():
         try:
-            embed, commit_count = await fluxer_patch_notes.generate_patch_notes(report_date, tz)
+            embeds, commit_count = await fluxer_patch_notes.generate_patch_notes(report_date, tz)
         except Exception:
             log.exception("Failed to generate Fluxer patch notes for %s (%s), will retry", report_date, tz)
             _last_patch_notes_failure = now_utc
@@ -264,7 +272,7 @@ async def _send_fluxer_patch_notes(bot: Bot) -> None:
 
         for row in rows:
             try:
-                await bot.rest.send_message(row["fluxer_patch_notes_channel_id"], embeds=[embed])
+                await bot.rest.send_message(row["fluxer_patch_notes_channel_id"], embeds=embeds)
             except Exception:
                 log.warning("Failed to post Fluxer patch notes to guild %s", row["guild_id"])
             await db.record_fluxer_patch_notes_sent(row["guild_id"], report_date, commit_count)

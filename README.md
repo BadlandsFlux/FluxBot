@@ -320,7 +320,7 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!roll [NdM]`, `!coinflip`, `!wheel a, b, c` | none | Fun stuff |
 | `!8ball <question>` | none | Ask the magic 8-ball a question |
 | `!neofetch` | none | Bot/system/community stats, neofetch-style |
-| `!trivia` | none | Multiple-choice trivia, closes in 30s, correct answers earn XP |
+| `!trivia` | none | Multiple-choice trivia, one round per server, closes in 30s, correct answers earn XP (daily cap applies) |
 | `!link` | none | Start linking your Discord and Fluxer accounts (DMs you a code) |
 | `!unlink` | none | Remove your account link |
 | `!linkstatus` | none | Show whether you're currently linked |

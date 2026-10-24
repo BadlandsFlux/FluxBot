@@ -137,16 +137,25 @@ def _bucket_for(message: str) -> tuple[str, str]:
     return _BUCKET_LABELS.get(commit_type, _DEFAULT_BUCKET), rest
 
 
-def _build_embed(commits: list[dict], title: str, empty_description: str) -> dict:
+MAX_FIELDS_PER_EMBED = 25  # Discord/Fluxer's hard per-embed field cap
+MAX_EMBEDS_PER_MESSAGE = 10  # Discord/Fluxer's hard per-message embed cap
+# Headroom under embed_utils.TOTAL_LIMIT (6000, the real aggregate cap) for
+# whatever a given embed's title ends up costing; clamp_embeds (bot/rest.py,
+# applied to every outgoing embed) is still the hard backstop if a title
+# runs this estimate a little over.
+_SAFE_EMBED_BUDGET = 5500
+
+
+def _build_embeds(commits: list[dict], title: str, empty_description: str) -> list[dict]:
     commits_url = f"https://github.com/{REPO}/commits/main/"
     if not commits:
-        return {
+        return [{
             "title": title,
             "url": commits_url,
             "description": empty_description,
             "color": 0x5865F2,
             "footer": {"text": "0 commits"},
-        }
+        }]
 
     buckets: dict[str, list[str]] = {}
     for c in commits:
@@ -162,23 +171,51 @@ def _build_embed(commits: list[dict], title: str, empty_description: str) -> dic
     # past that silently gets cut off by clamp_embeds -- fields give far
     # more headroom, the same fix !help's command list already needed
     # (see chunk_lines).
-    fields = [
+    all_fields = [
         {"name": label if i == 0 else f"{label} (cont.)", "value": chunk, "inline": False}
         for label in _BUCKET_ORDER if label in buckets
         for i, chunk in enumerate(chunk_lines(buckets[label]))
     ]
+
+    # Spread across multiple embeds (Discord/Fluxer allow up to 10 per
+    # message) instead of capping to just one: a busy day on an active
+    # repo can easily need more total room than a single embed has, even
+    # after chunk_lines already spreads each theme across its own
+    # continuation fields.
+    pages: list[list[dict]] = [[]]
+    page_len = len(title)
+    for field in all_fields:
+        field_len = len(field["name"]) + len(field["value"])
+        if pages[-1] and (len(pages[-1]) >= MAX_FIELDS_PER_EMBED or page_len + field_len > _SAFE_EMBED_BUDGET):
+            pages.append([])
+            page_len = len(title)
+        pages[-1].append(field)
+        page_len += field_len
+
+    truncated = len(pages) > MAX_EMBEDS_PER_MESSAGE
+    if truncated:
+        pages = pages[:MAX_EMBEDS_PER_MESSAGE]
+
+    multi = len(pages) > 1
+    embeds = [
+        {
+            "title": f"{title} ({i + 1}/{len(pages)})" if multi else title,
+            "url": commits_url,
+            "fields": page_fields,
+            "color": 0x5865F2,
+        }
+        for i, page_fields in enumerate(pages)
+    ]
     count = len(commits)
-    return {
-        "title": title,
-        "url": commits_url,
-        "fields": fields,
-        "color": 0x5865F2,
-        "footer": {"text": f"{count} commit{'s' if count != 1 else ''}"},
-    }
+    footer_text = f"{count} commit{'s' if count != 1 else ''}"
+    if truncated:
+        footer_text += " (truncated)"
+    embeds[-1]["footer"] = {"text": footer_text}
+    return embeds
 
 
-def build_patch_notes_embed(commits: list[dict], report_date: date) -> dict:
-    return _build_embed(
+def build_patch_notes_embed(commits: list[dict], report_date: date) -> list[dict]:
+    return _build_embeds(
         commits,
         title=f"Fluxer patch notes — {report_date.isoformat()}",
         empty_description=f"No commits to {REPO}'s main branch that day.",
@@ -193,24 +230,24 @@ def _format_moment(dt: datetime) -> str:
     return f"{dt:%b} {dt.day}, {dt.year} {hour12}:{dt.minute:02d} {dt:%p} {dt.tzname()}"
 
 
-def build_patch_notes_range_embed(commits: list[dict], since: datetime, until: datetime) -> dict:
+def build_patch_notes_range_embed(commits: list[dict], since: datetime, until: datetime) -> list[dict]:
     """For the on-demand `!patchnotes` command: an arbitrary [since, until)
     window rather than one calendar day, so the title spells out the
     actual window covered instead of just a date."""
-    return _build_embed(
+    return _build_embeds(
         commits,
         title=f"Fluxer patch notes — {_format_moment(since)} to {_format_moment(until)}",
         empty_description=f"No commits to {REPO}'s main branch in that window.",
     )
 
 
-async def generate_patch_notes(report_date: date, tz: ZoneInfo) -> tuple[dict, int]:
-    """Returns (embed, commit_count) for `report_date` in `tz`. The one
+async def generate_patch_notes(report_date: date, tz: ZoneInfo) -> tuple[list[dict], int]:
+    """Returns (embeds, commit_count) for `report_date` in `tz`. The one
     place both the embed content and the count stored in
     fluxer_patch_notes_log come from, so they can never drift apart."""
     commits = await fetch_commits_for_date(report_date, tz)
-    embed = build_patch_notes_embed(commits, report_date)
-    return embed, len(commits)
+    embeds = build_patch_notes_embed(commits, report_date)
+    return embeds, len(commits)
 
 
 def now_in(tz: ZoneInfo) -> datetime:

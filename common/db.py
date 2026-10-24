@@ -84,6 +84,7 @@ _ALLOWED_SETTINGS = {
     "warn_timeout_at", "warn_kick_at", "warn_timeout_minutes",
     "report_channel_id", "report_tracker_channel_id",
     "voice_xp_cap_enabled", "voice_xp_cap_amount",
+    "trivia_xp_cap_enabled", "trivia_xp_cap_amount",
     "fluxer_patch_notes_channel_id",
     "fluxer_patch_notes_trigger_hour", "fluxer_patch_notes_trigger_minute",
     "timezone",
@@ -695,6 +696,42 @@ async def add_voice_xp_capped(guild_id: str, user_id: str, proposed_xp: int, dai
             return granted
 
 
+async def add_trivia_xp_capped(guild_id: str, user_id: str, proposed_xp: int, daily_cap: int) -> int:
+    """Same shape as add_voice_xp_capped above, against member_trivia_xp_daily
+    instead: atomically adds up to `proposed_xp` toward today's per-member
+    trivia XP cap and returns how much was actually granted."""
+    if proposed_xp <= 0:
+        return 0
+    async with pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO member_trivia_xp_daily (guild_id, user_id, day, xp_earned)
+                VALUES ($1, $2, CURRENT_DATE, 0)
+                ON CONFLICT (guild_id, user_id, day) DO NOTHING
+                """,
+                guild_id, user_id,
+            )
+            row = await conn.fetchrow(
+                """
+                SELECT xp_earned FROM member_trivia_xp_daily
+                WHERE guild_id=$1 AND user_id=$2 AND day=CURRENT_DATE
+                FOR UPDATE
+                """,
+                guild_id, user_id,
+            )
+            granted = max(0, min(proposed_xp, daily_cap - row["xp_earned"]))
+            if granted > 0:
+                await conn.execute(
+                    """
+                    UPDATE member_trivia_xp_daily SET xp_earned = xp_earned + $3
+                    WHERE guild_id=$1 AND user_id=$2 AND day=CURRENT_DATE
+                    """,
+                    guild_id, user_id, granted,
+                )
+            return granted
+
+
 async def get_top_voice_members(guild_id: str, limit: int = 5) -> list[asyncpg.Record]:
     return await pool().fetch(
         "SELECT * FROM member_voice_minutes WHERE guild_id=$1 ORDER BY minutes DESC LIMIT $2",
@@ -780,6 +817,16 @@ async def add_trivia_question(guild_id: str, channel_id: str, message_id: str, q
 async def list_due_trivia(now) -> list[asyncpg.Record]:
     return await pool().fetch(
         "SELECT * FROM trivia_questions WHERE NOT closed AND close_at <= $1", now,
+    )
+
+
+async def get_open_trivia(guild_id: str) -> Optional[asyncpg.Record]:
+    """The guild's currently open (not yet closed) trivia question, if
+    any -- used to cap a server to one !trivia round at a time rather
+    than letting rounds pile up and compete for the same reactions."""
+    return await pool().fetchrow(
+        "SELECT * FROM trivia_questions WHERE guild_id=$1 AND NOT closed ORDER BY created_at LIMIT 1",
+        guild_id,
     )
 
 
