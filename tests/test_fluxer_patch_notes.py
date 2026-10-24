@@ -77,10 +77,11 @@ def test_bucket_for_only_uses_the_first_message_line():
 
 # ------------------------------------------------------------ embed builder --
 def test_build_patch_notes_embed_with_no_commits():
-    embed = patch_notes.build_patch_notes_embed([], date(2026, 10, 8))
-    assert "No commits" in embed["description"]
-    assert embed["footer"]["text"] == "0 commits"
-    assert "2026-10-08" in embed["title"]
+    embeds = patch_notes.build_patch_notes_embed([], date(2026, 10, 8))
+    assert len(embeds) == 1
+    assert "No commits" in embeds[0]["description"]
+    assert embeds[0]["footer"]["text"] == "0 commits"
+    assert "2026-10-08" in embeds[0]["title"]
 
 
 def test_build_patch_notes_embed_groups_by_theme_in_order():
@@ -89,7 +90,9 @@ def test_build_patch_notes_embed_groups_by_theme_in_order():
         {"commit": {"message": "feat(app): a feature"}, "html_url": "https://x/2"},
         {"commit": {"message": "chore: cleanup"}, "html_url": "https://x/3"},
     ]
-    embed = patch_notes.build_patch_notes_embed(commits, date(2026, 10, 8))
+    embeds = patch_notes.build_patch_notes_embed(commits, date(2026, 10, 8))
+    assert len(embeds) == 1
+    embed = embeds[0]
     assert embed["footer"]["text"] == "3 commits"
     field_names = [f["name"] for f in embed["fields"]]
     # Features before Fixes before Maintenance, regardless of input order.
@@ -102,8 +105,8 @@ def test_build_patch_notes_embed_groups_by_theme_in_order():
 
 def test_build_patch_notes_embed_singular_commit_count():
     commits = [{"commit": {"message": "fix: one thing"}, "html_url": "https://x/1"}]
-    embed = patch_notes.build_patch_notes_embed(commits, date(2026, 10, 8))
-    assert embed["footer"]["text"] == "1 commit"
+    embeds = patch_notes.build_patch_notes_embed(commits, date(2026, 10, 8))
+    assert embeds[-1]["footer"]["text"] == "1 commit"
 
 
 # ------------------------------------------------------- range embed builder --
@@ -122,11 +125,12 @@ def test_format_moment_handles_noon_and_midnight():
 def test_build_patch_notes_range_embed_with_no_commits():
     since = datetime(2026, 10, 23, 18, 5, tzinfo=CENTRAL)
     until = datetime(2026, 10, 24, 9, 30, tzinfo=CENTRAL)
-    embed = patch_notes.build_patch_notes_range_embed([], since, until)
-    assert "No commits" in embed["description"]
-    assert embed["footer"]["text"] == "0 commits"
-    assert "Oct 23, 2026 6:05 PM" in embed["title"]
-    assert "Oct 24, 2026 9:30 AM" in embed["title"]
+    embeds = patch_notes.build_patch_notes_range_embed([], since, until)
+    assert len(embeds) == 1
+    assert "No commits" in embeds[0]["description"]
+    assert embeds[0]["footer"]["text"] == "0 commits"
+    assert "Oct 23, 2026 6:05 PM" in embeds[0]["title"]
+    assert "Oct 24, 2026 9:30 AM" in embeds[0]["title"]
 
 
 def test_build_patch_notes_range_embed_groups_by_theme_in_order():
@@ -136,7 +140,9 @@ def test_build_patch_notes_range_embed_groups_by_theme_in_order():
         {"commit": {"message": "fix(ui): a fix"}, "html_url": "https://x/1"},
         {"commit": {"message": "feat(app): a feature"}, "html_url": "https://x/2"},
     ]
-    embed = patch_notes.build_patch_notes_range_embed(commits, since, until)
+    embeds = patch_notes.build_patch_notes_range_embed(commits, since, until)
+    assert len(embeds) == 1
+    embed = embeds[0]
     assert embed["footer"]["text"] == "2 commits"
     field_names = [f["name"] for f in embed["fields"]]
     assert field_names.index("✨ Features") < field_names.index("🐛 Fixes")
@@ -152,18 +158,60 @@ def test_build_patch_notes_embed_overflows_a_busy_day_into_continuation_fields()
          "html_url": f"https://x/{i}"}
         for i in range(80)
     ]
-    embed = patch_notes.build_patch_notes_embed(commits, date(2026, 10, 8))
-    assert embed["footer"]["text"] == "80 commits"
-    fix_fields = [f for f in embed["fields"] if f["name"].startswith("🐛 Fixes")]
+    embeds = patch_notes.build_patch_notes_embed(commits, date(2026, 10, 8))
+    assert embeds[-1]["footer"]["text"] == "80 commits"
+    all_fields = [f for e in embeds for f in e["fields"]]
+    fix_fields = [f for f in all_fields if f["name"].startswith("🐛 Fixes")]
     assert len(fix_fields) > 1
     assert fix_fields[0]["name"] == "🐛 Fixes"
     assert fix_fields[1]["name"] == "🐛 Fixes (cont.)"
-    for f in embed["fields"]:
+    for f in all_fields:
         assert len(f["value"]) <= 1024
-    # Every commit still shows up somewhere, just split across fields.
-    all_values = "\n".join(f["value"] for f in embed["fields"])
+    # Every commit still shows up somewhere, just split across fields
+    # (and, if there's enough of them, across embeds).
+    all_values = "\n".join(f["value"] for f in all_fields)
     assert "[a fairly descriptive fix description number 0](https://x/0)" in all_values
     assert "[a fairly descriptive fix description number 79](https://x/79)" in all_values
+
+
+def test_build_patch_notes_embed_spreads_an_extremely_busy_day_across_embeds():
+    # Enough commits that even after chunk_lines spreads them across
+    # fields, one embed's ~6000-char aggregate budget isn't enough --
+    # this is the exact shape of the real-world report: hundreds of
+    # commits in one window, previously capped to a single embed whose
+    # footer just said "(truncated)" with no way to see the rest.
+    commits = [
+        {"commit": {"message": f"fix(area{i}): a fairly descriptive fix description number {i}"},
+         "html_url": f"https://github.com/fluxerapp/fluxer/commit/{i:040x}"}
+        for i in range(300)
+    ]
+    embeds = patch_notes.build_patch_notes_embed(commits, date(2026, 10, 8))
+    assert len(embeds) > 1
+    assert len(embeds) <= patch_notes.MAX_EMBEDS_PER_MESSAGE
+    assert embeds[-1]["footer"]["text"] == "300 commits"  # all fit, no "(truncated)"
+    for embed in embeds:
+        assert len(embed["fields"]) <= patch_notes.MAX_FIELDS_PER_EMBED
+    all_values = "\n".join(f["value"] for e in embeds for f in e["fields"])
+    assert "[a fairly descriptive fix description number 0]" in all_values
+    assert "[a fairly descriptive fix description number 299]" in all_values
+    # Every embed after the first is labeled with its position.
+    assert embeds[0]["title"].endswith(f"(1/{len(embeds)})")
+    assert embeds[1]["title"].endswith(f"(2/{len(embeds)})")
+
+
+def test_build_patch_notes_embed_still_truncates_past_the_10_embed_cap():
+    # Even spread across the max 10 embeds, a truly enormous backlog
+    # (hundreds of commits accumulated, e.g. the daily auto-post channel
+    # was never configured) can still exceed what one message can hold --
+    # this must stay visibly marked, never silently incomplete.
+    commits = [
+        {"commit": {"message": f"fix(area{i}): a fairly descriptive fix description number {i}"},
+         "html_url": f"https://github.com/fluxerapp/fluxer/commit/{i:040x}"}
+        for i in range(1000)
+    ]
+    embeds = patch_notes.build_patch_notes_embed(commits, date(2026, 10, 8))
+    assert len(embeds) == patch_notes.MAX_EMBEDS_PER_MESSAGE
+    assert embeds[-1]["footer"]["text"] == "1000 commits (truncated)"
 
 
 # ------------------------------------------------------- settings round-trip --
@@ -279,7 +327,7 @@ async def test_send_fluxer_patch_notes_sends_to_a_due_guild(guild_id, monkeypatc
     monkeypatch.setattr(patch_notes, "now_in", lambda tz: datetime(2026, 5, 4, 0, 1, tzinfo=tz))
 
     async def fake_generate(d, tz):
-        return {"title": "fake embed"}, 5
+        return [{"title": "fake embed"}], 5
 
     monkeypatch.setattr(patch_notes, "generate_patch_notes", fake_generate)
     scheduler._last_patch_notes_failure = None
@@ -354,7 +402,7 @@ async def test_send_fluxer_patch_notes_fetches_once_for_two_guilds_due_at_once(
 
     async def fake_generate(d, tz):
         fetch_calls.append((d, tz))
-        return {"title": "fake embed"}, 3
+        return [{"title": "fake embed"}], 3
 
     monkeypatch.setattr(patch_notes, "generate_patch_notes", fake_generate)
     scheduler._last_patch_notes_failure = None
@@ -404,7 +452,7 @@ async def test_send_fluxer_patch_notes_fetches_separately_for_different_timezone
 
     async def fake_generate(d, tz):
         fetch_calls.append((d, tz))
-        return {"title": "fake embed"}, 3
+        return [{"title": "fake embed"}], 3
 
     monkeypatch.setattr(patch_notes, "generate_patch_notes", fake_generate)
     scheduler._last_patch_notes_failure = None
@@ -544,3 +592,51 @@ async def test_patchnotes_replies_with_an_error_on_fetch_failure(guild_id, monke
     sent_embeds, replies = await run_patchnotes(bot_obj, guild_id)
     assert sent_embeds == []
     assert len(replies) == 1 and "Couldn't fetch" in replies[0]
+
+
+async def test_patchnotes_sends_every_embed_on_a_busy_window(guild_id, monkeypatch):
+    # The actual regression this guards: a window with enough commits to
+    # need multiple embeds must have all of them land in the one
+    # send_message call, not just the first.
+    bot_obj = Bot("test-token")
+    info_mod.register(bot_obj)
+    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1", guild_id)
+
+    commits = [
+        {"commit": {"message": f"fix(area{i}): a fairly descriptive fix description number {i}"},
+         "html_url": f"https://github.com/fluxerapp/fluxer/commit/{i:040x}"}
+        for i in range(300)
+    ]
+
+    async def fake_fetch(since, until):
+        return commits
+
+    monkeypatch.setattr(patch_notes, "fetch_commits_in_range", fake_fetch)
+    monkeypatch.setattr(patch_notes, "now_in", lambda tz: datetime(2026, 6, 2, 15, 30, tzinfo=tz))
+
+    sent_embed_lists = []
+
+    async def fake_send_message(channel_id, content=None, embeds=None, **kw):
+        sent_embed_lists.append(embeds)
+        return {"id": "msg1"}
+
+    async def fake_get_guild(gid):
+        return {"id": gid, "owner_id": "someone-else", "roles": []}
+
+    async def fake_get_member(gid, user_id):
+        return {"user": {"id": user_id}, "roles": []}
+
+    bot_obj.rest.send_message = fake_send_message
+    bot_obj.rest.get_guild = fake_get_guild
+    bot_obj.rest.get_guild_member = fake_get_member
+
+    message = {
+        "content": "!patchnotes", "author": {"id": "u1", "username": "tester"},
+        "guild_id": guild_id, "channel_id": "chan1",
+    }
+    await bot_obj._on_message(message)
+
+    assert len(sent_embed_lists) == 1  # still a single send_message call
+    embeds = sent_embed_lists[0]
+    assert len(embeds) > 1
+    assert embeds[-1]["footer"]["text"] == "300 commits"

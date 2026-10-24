@@ -199,5 +199,5 @@ def register(bot: Bot) -> None:
             await ctx.reply("Couldn't fetch Fluxer patch notes right now, try again in a bit.")
             return
 
-        embed = fluxer_patch_notes.build_patch_notes_range_embed(commits, since, now)
-        await ctx.bot.rest.send_message(ctx.channel_id, embeds=[embed])
+        embeds = fluxer_patch_notes.build_patch_notes_range_embed(commits, since, now)
+        await ctx.bot.rest.send_message(ctx.channel_id, embeds=embeds)
