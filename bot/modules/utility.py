@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from bot.bounded_cache import BoundedDict
 from bot.commands import Bot, Context
+from bot.embed_utils import chunk_lines
 from bot.permissions import is_moderator, permission_name
 from bot.timeutil import format_duration
 from common import db
@@ -16,7 +17,6 @@ CATEGORY_EMOJI = {
     "Moderation": "🛡️", "Roles": "🎭", "Info": "ℹ️",
     "Fun": "🎉", "Utility": "🔧", "General": "📎",
 }
-EMBED_FIELD_VALUE_LIMIT = 1024
 HELP_PREV_EMOJI = "⬅️"
 HELP_NEXT_EMOJI = "➡️"
 _MAX_HELP_SESSIONS = 500  # bounded: one entry per outstanding paginated !help message
@@ -34,23 +34,6 @@ class _HelpSession:
 # reactions on a very old/inactive !help message stop doing anything,
 # nothing a guild would notice in practice.
 _help_sessions: "BoundedDict[str, _HelpSession]" = BoundedDict(max_size=_MAX_HELP_SESSIONS)
-
-
-def _chunk_field_value(lines: list[str], limit: int = EMBED_FIELD_VALUE_LIMIT) -> list[str]:
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-    for line in lines:
-        added_len = len(line) + (1 if current else 0)
-        if current and current_len + added_len > limit:
-            chunks.append("\n".join(current))
-            current, current_len = [line], len(line)
-        else:
-            current.append(line)
-            current_len += added_len
-    if current:
-        chunks.append("\n".join(current))
-    return chunks
 
 
 def _visible_commands(bot: Bot, guild: dict, member: dict, author_id: str) -> list:
@@ -76,7 +59,7 @@ def _visible_commands(bot: Bot, guild: dict, member: dict, author_id: str) -> li
 
 def _build_help_pages(prefix: str, commands: list) -> list[dict]:
     """One embed page per command category, each already safe under
-    Discord/Fluxer's per-field (1024 char) limit via _chunk_field_value."""
+    Discord/Fluxer's per-field (1024 char) limit via chunk_lines."""
     by_category: dict[str, list] = {}
     for cmd in commands:
         by_category.setdefault(cmd.category, []).append(cmd)
@@ -98,7 +81,7 @@ def _build_help_pages(prefix: str, commands: list) -> list[dict]:
         fields = [
             {"name": f"{emoji} {category}" if i == 0 else f"{emoji} {category} (cont.)",
              "value": chunk, "inline": False}
-            for i, chunk in enumerate(_chunk_field_value(lines))
+            for i, chunk in enumerate(chunk_lines(lines))
         ]
         pages.append({
             "title": f"{config.bot_name} commands",

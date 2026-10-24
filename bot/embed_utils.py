@@ -56,3 +56,26 @@ def clamp_embeds(embeds: Optional[list]) -> Optional[list]:
     if not embeds:
         return embeds
     return [clamp_embed(e) for e in embeds]
+
+
+def chunk_lines(lines: list[str], limit: int = FIELD_VALUE_LIMIT) -> list[str]:
+    """Groups `lines` (each one joined by "\\n") into chunks that each fit
+    within `limit` chars, for content that's naturally splittable across
+    several embed fields instead of truncated -- !help's per-category
+    command list, Fluxer patch notes' per-theme commit list. A single
+    line longer than `limit` on its own still ends up over it; callers
+    with that risk should run it through clamp_embed/clamp_embeds too."""
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        added_len = len(line) + (1 if current else 0)
+        if current and current_len + added_len > limit:
+            chunks.append("\n".join(current))
+            current, current_len = [line], len(line)
+        else:
+            current.append(line)
+            current_len += added_len
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
