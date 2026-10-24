@@ -402,6 +402,8 @@ def _guild_to_json(row) -> dict:
         "report_tracker_channel_id": row["report_tracker_channel_id"],
         "voice_xp_cap_enabled": row["voice_xp_cap_enabled"],
         "voice_xp_cap_amount": row["voice_xp_cap_amount"],
+        "trivia_xp_cap_enabled": row["trivia_xp_cap_enabled"],
+        "trivia_xp_cap_amount": row["trivia_xp_cap_amount"],
         "fluxer_patch_notes_channel_id": row["fluxer_patch_notes_channel_id"],
         "fluxer_patch_notes_trigger_hour": row["fluxer_patch_notes_trigger_hour"],
         "fluxer_patch_notes_trigger_minute": row["fluxer_patch_notes_trigger_minute"],
@@ -582,6 +584,8 @@ class SettingsPayload(BaseModel):
     level_up_message: str = "GG {user}, you reached level {level}! 🎉"
     voice_xp_cap_enabled: bool = True
     voice_xp_cap_amount: int = 750
+    trivia_xp_cap_enabled: bool = True
+    trivia_xp_cap_amount: int = 150
     warn_timeout_at: int = 3
     warn_kick_at: int = 5
     warn_timeout_minutes: int = 60
@@ -631,6 +635,8 @@ _SETTINGS_FIELD_LABELS = {
     "level_up_message": "level-up message",
     "voice_xp_cap_enabled": "voice XP daily cap",
     "voice_xp_cap_amount": "voice XP daily cap amount",
+    "trivia_xp_cap_enabled": "trivia XP daily cap",
+    "trivia_xp_cap_amount": "trivia XP daily cap amount",
     "warn_timeout_at": "warn-timeout threshold",
     "warn_kick_at": "warn-kick threshold",
     "warn_timeout_minutes": "timeout length",
@@ -687,6 +693,7 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
     user = require_login(request)
     prefix = (payload.command_prefix or "!").strip()[:5] or "!"
     voice_xp_cap_amount = max(1, min(1_000_000, payload.voice_xp_cap_amount or 750))
+    trivia_xp_cap_amount = max(1, min(1_000_000, payload.trivia_xp_cap_amount or 150))
     patch_notes_trigger_hour = max(0, min(23, payload.fluxer_patch_notes_trigger_hour))
     patch_notes_trigger_minute = max(0, min(59, payload.fluxer_patch_notes_trigger_minute))
     guild_timezone = (payload.timezone or fluxer_patch_notes.DEFAULT_TIMEZONE_NAME).strip()
@@ -709,6 +716,8 @@ async def api_update_settings(request: Request, guild_id: str, payload: Settings
         level_up_message=payload.level_up_message or "GG {user}, you reached level {level}! 🎉",
         voice_xp_cap_enabled=payload.voice_xp_cap_enabled,
         voice_xp_cap_amount=voice_xp_cap_amount,
+        trivia_xp_cap_enabled=payload.trivia_xp_cap_enabled,
+        trivia_xp_cap_amount=trivia_xp_cap_amount,
         warn_timeout_at=payload.warn_timeout_at,
         warn_kick_at=payload.warn_kick_at,
         warn_timeout_minutes=payload.warn_timeout_minutes,

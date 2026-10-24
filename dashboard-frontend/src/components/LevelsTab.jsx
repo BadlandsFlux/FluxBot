@@ -22,6 +22,7 @@ function LevelingSettingsCard({ guildId, guild, channels, onSaved }) {
   const [form, setForm] = useState(guild);
   const [levelingOn, setLevelingOn] = useState(!!guild.leveling_enabled);
   const [voiceCapOn, setVoiceCapOn] = useState(guild.voice_xp_cap_enabled ?? true);
+  const [triviaCapOn, setTriviaCapOn] = useState(guild.trivia_xp_cap_enabled ?? true);
   const [saving, setSaving] = useState(false);
 
   function set(field, value) {
@@ -43,10 +44,13 @@ function LevelingSettingsCard({ guildId, guild, channels, onSaved }) {
         level_up_message: form.level_up_message || "GG {user}, you reached level {level}! 🎉",
         voice_xp_cap_enabled: voiceCapOn,
         voice_xp_cap_amount: Number(form.voice_xp_cap_amount) || 750,
+        trivia_xp_cap_enabled: triviaCapOn,
+        trivia_xp_cap_amount: Number(form.trivia_xp_cap_amount) || 150,
       });
       onSaved(result.guild);
       setLevelingOn(!!result.guild.leveling_enabled);
       setVoiceCapOn(result.guild.voice_xp_cap_enabled ?? true);
+      setTriviaCapOn(result.guild.trivia_xp_cap_enabled ?? true);
       flash("Leveling settings saved.");
     } catch (err) {
       flash(err.message, "error");
@@ -86,6 +90,19 @@ function LevelingSettingsCard({ guildId, guild, channels, onSaved }) {
             <p className="muted small">
               Stops someone from out-earning everyone else just by leaving a client connected to voice.
               A normal couple-hours-a-day habit never reaches the default of 750/day.
+            </p>
+            <Switch checked={triviaCapOn} onChange={setTriviaCapOn} label="Cap trivia XP per member, per day" />
+            {triviaCapOn && (
+              <label>
+                XP per day
+                <input type="number" min={1} max={100000} value={form.trivia_xp_cap_amount ?? 150}
+                       onChange={(e) => set("trivia_xp_cap_amount", e.target.value)}
+                       style={{ maxWidth: 120 }} />
+              </label>
+            )}
+            <p className="muted small">
+              Stops one member from out-earning everyone else by answering every !trivia round solo.
+              The default of 150/day is six correct answers.
             </p>
           </div>
         )}

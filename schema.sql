@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS guilds (
     report_tracker_channel_id TEXT,
     voice_xp_cap_enabled  BOOLEAN NOT NULL DEFAULT TRUE,  -- see member_voice_xp_daily below
     voice_xp_cap_amount   INTEGER NOT NULL DEFAULT 750,
+    trivia_xp_cap_enabled BOOLEAN NOT NULL DEFAULT TRUE,  -- see member_trivia_xp_daily below
+    trivia_xp_cap_amount  INTEGER NOT NULL DEFAULT 150,
     fluxer_patch_notes_channel_id TEXT,  -- see fluxer_patch_notes_log below; off until set
     fluxer_patch_notes_trigger_hour   INTEGER NOT NULL DEFAULT 0,  -- 0-23, in this guild's own timezone column below
     fluxer_patch_notes_trigger_minute INTEGER NOT NULL DEFAULT 5,  -- 0-59
@@ -184,6 +186,18 @@ CREATE TABLE IF NOT EXISTS member_voice_minutes (
 -- row, nothing to clear. Rows are small and left in place as history rather
 -- than pruned, same as guild_daily_stats above.
 CREATE TABLE IF NOT EXISTS member_voice_xp_daily (
+    guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
+    user_id         TEXT NOT NULL,
+    day             DATE NOT NULL,
+    xp_earned       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, day)
+);
+
+-- Same shape as member_voice_xp_daily above, for !trivia's own daily XP
+-- cap (guilds.trivia_xp_cap_enabled/trivia_xp_cap_amount): without one, a
+-- single member answering every round the moment it posts could out-earn
+-- chat/voice by just leaving a client open and reacting to !trivia on repeat.
+CREATE TABLE IF NOT EXISTS member_trivia_xp_daily (
     guild_id        TEXT NOT NULL REFERENCES guilds(guild_id) ON DELETE CASCADE,
     user_id         TEXT NOT NULL,
     day             DATE NOT NULL,
@@ -853,3 +867,7 @@ ALTER TABLE guilds ADD COLUMN IF NOT EXISTS fluxer_patch_notes_trigger_minute IN
 
 -- Migration for databases created before the per-guild default timezone setting existed.
 ALTER TABLE guilds ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'America/Chicago';
+
+-- Migration for databases created before the trivia XP daily cap existed.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS trivia_xp_cap_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS trivia_xp_cap_amount INTEGER NOT NULL DEFAULT 150;

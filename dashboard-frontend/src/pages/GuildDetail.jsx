@@ -603,6 +603,8 @@ function SettingsTab({ guildId, guild, roles, channels, onSaved, onWarningsClear
         level_up_message: form.level_up_message || "GG {user}, you reached level {level}! 🎉",
         voice_xp_cap_enabled: form.voice_xp_cap_enabled ?? true,
         voice_xp_cap_amount: form.voice_xp_cap_amount ?? 750,
+        trivia_xp_cap_enabled: form.trivia_xp_cap_enabled ?? true,
+        trivia_xp_cap_amount: form.trivia_xp_cap_amount ?? 150,
         warn_timeout_at: Number(form.warn_timeout_at),
         warn_kick_at: Number(form.warn_kick_at),
         warn_timeout_minutes: Number(form.warn_timeout_minutes),
