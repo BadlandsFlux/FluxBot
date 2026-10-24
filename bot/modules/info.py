@@ -4,6 +4,7 @@
     !info                (owner only — bot-level stats)
     !serverinfo
     !userinfo [@user]
+    !patchnotes          Fluxer platform patch notes since the last automated post
 
 CAVEAT: `!serverinfo` and `!userinfo` display fields (member_count,
 premium_tier, joined_at, flags/staff-rank) using the field names
@@ -19,8 +20,10 @@ from __future__ import annotations
 
 import re
 
+from bot import fluxer_patch_notes
 from bot.commands import Bot, Context
 from bot.timeutil import format_date, format_duration, snowflake_to_datetime
+from common import db
 from common.discovery import get_media_base, guild_icon_url, user_avatar_url
 
 MENTION_RE = re.compile(r"^<@!?(\d+)>$")
@@ -174,4 +177,27 @@ def register(bot: Bot) -> None:
         }
         if avatar_url:
             embed["thumbnail"] = {"url": avatar_url}
+        await ctx.bot.rest.send_message(ctx.channel_id, embeds=[embed])
+
+    @bot.command("patchnotes", category="Info",
+                 help_text="Fluxer platform patch notes since the last automated post here (or since "
+                            "the start of today, if none has posted yet). Usage: !patchnotes")
+    async def patchnotes(ctx: Context) -> None:
+        guild_cfg = await db.get_guild(ctx.guild_id)
+        tz = fluxer_patch_notes.resolve_timezone(guild_cfg["timezone"] if guild_cfg else None)
+        now = fluxer_patch_notes.now_in(tz)
+
+        last_sent = await db.get_latest_fluxer_patch_notes_log(ctx.guild_id)
+        if last_sent:
+            since = last_sent["sent_at"].astimezone(tz)
+        else:
+            since = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        try:
+            commits = await fluxer_patch_notes.fetch_commits_in_range(since, now)
+        except Exception:
+            await ctx.reply("Couldn't fetch Fluxer patch notes right now, try again in a bit.")
+            return
+
+        embed = fluxer_patch_notes.build_patch_notes_range_embed(commits, since, now)
         await ctx.bot.rest.send_message(ctx.channel_id, embeds=[embed])
