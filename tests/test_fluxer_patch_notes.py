@@ -2,14 +2,15 @@
 since that's exactly the kind of thing that's easy to get wrong with a
 naive UTC offset), the Conventional-Commits theme grouping, the embed
 builder, the per-guild dashboard setting round-trip (channel, send
-time, and default timezone), and the scheduler's per-guild gating/
-dedupe logic.
+time, and default timezone), the scheduler's per-guild gating/dedupe
+logic, and the on-demand !patchnotes command built on the same pieces.
 """
 from __future__ import annotations
 
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import bot.modules.info as info_mod
 import bot.scheduler as scheduler
 from bot import fluxer_patch_notes as patch_notes
 from bot.commands import Bot
@@ -104,6 +105,41 @@ def test_build_patch_notes_embed_singular_commit_count():
     assert embed["footer"]["text"] == "1 commit"
 
 
+# ------------------------------------------------------- range embed builder --
+def test_format_moment_strips_leading_zeroes():
+    # Jan 5 (not "Jan 05"), 6:05 AM (not "06:05 AM") -- only strftime's
+    # always-zero-padded fields (%M) should keep a leading zero.
+    dt = datetime(2026, 1, 5, 6, 5, tzinfo=CENTRAL)
+    assert patch_notes._format_moment(dt) == "Jan 5, 2026 6:05 AM CST"
+
+
+def test_format_moment_handles_noon_and_midnight():
+    assert patch_notes._format_moment(datetime(2026, 1, 5, 0, 0, tzinfo=CENTRAL)) == "Jan 5, 2026 12:00 AM CST"
+    assert patch_notes._format_moment(datetime(2026, 1, 5, 12, 0, tzinfo=CENTRAL)) == "Jan 5, 2026 12:00 PM CST"
+
+
+def test_build_patch_notes_range_embed_with_no_commits():
+    since = datetime(2026, 10, 23, 18, 5, tzinfo=CENTRAL)
+    until = datetime(2026, 10, 24, 9, 30, tzinfo=CENTRAL)
+    embed = patch_notes.build_patch_notes_range_embed([], since, until)
+    assert "No commits" in embed["description"]
+    assert embed["footer"]["text"] == "0 commits"
+    assert "Oct 23, 2026 6:05 PM" in embed["title"]
+    assert "Oct 24, 2026 9:30 AM" in embed["title"]
+
+
+def test_build_patch_notes_range_embed_groups_by_theme_in_order():
+    since = datetime(2026, 10, 23, 18, 5, tzinfo=CENTRAL)
+    until = datetime(2026, 10, 24, 9, 30, tzinfo=CENTRAL)
+    commits = [
+        {"commit": {"message": "fix(ui): a fix"}, "html_url": "https://x/1"},
+        {"commit": {"message": "feat(app): a feature"}, "html_url": "https://x/2"},
+    ]
+    embed = patch_notes.build_patch_notes_range_embed(commits, since, until)
+    assert embed["footer"]["text"] == "2 commits"
+    assert embed["description"].index("✨ Features") < embed["description"].index("🐛 Fixes")
+
+
 # ------------------------------------------------------- settings round-trip --
 async def test_fluxer_patch_notes_channel_id_is_settable(guild_id):
     await db.update_guild_settings(guild_id, fluxer_patch_notes_channel_id="chan123")
@@ -163,6 +199,23 @@ async def test_fluxer_patch_notes_log_dedupe_keeps_the_first_count(guild_id):
     await db.pool().execute(
         "DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1 AND sent_date=$2", guild_id, report_date,
     )
+
+
+async def test_get_latest_fluxer_patch_notes_log_none_when_never_sent(guild_id):
+    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1", guild_id)
+    assert await db.get_latest_fluxer_patch_notes_log(guild_id) is None
+
+
+async def test_get_latest_fluxer_patch_notes_log_returns_the_most_recent(guild_id):
+    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1", guild_id)
+    await db.record_fluxer_patch_notes_sent(guild_id, date(2026, 6, 1), 2)
+    await db.record_fluxer_patch_notes_sent(guild_id, date(2026, 6, 2), 7)
+
+    row = await db.get_latest_fluxer_patch_notes_log(guild_id)
+    assert row["sent_date"] == date(2026, 6, 2)
+    assert row["commit_count"] == 7
+
+    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1", guild_id)
 
 
 # --------------------------------------------------------- scheduler gating --
@@ -351,3 +404,117 @@ async def test_send_fluxer_patch_notes_fetches_separately_for_different_timezone
 
 async def _empty_list():
     return []
+
+
+# --------------------------------------------------------- !patchnotes command --
+async def run_patchnotes(bot, guild_id, author_id="u1"):
+    """Dispatches !patchnotes and returns (sent_embeds, replies)."""
+    sent_embeds = []
+    replies = []
+
+    async def fake_send_message(channel_id, content=None, embeds=None, **kw):
+        if embeds:
+            sent_embeds.append(embeds[0])
+        else:
+            replies.append(content)
+        return {"id": "msg1"}
+
+    async def fake_get_guild(gid):
+        return {"id": gid, "owner_id": "someone-else", "roles": []}
+
+    async def fake_get_member(gid, user_id):
+        return {"user": {"id": user_id}, "roles": []}
+
+    bot.rest.send_message = fake_send_message
+    bot.rest.get_guild = fake_get_guild
+    bot.rest.get_guild_member = fake_get_member
+
+    message = {
+        "content": "!patchnotes", "author": {"id": author_id, "username": "tester"},
+        "guild_id": guild_id, "channel_id": "chan1",
+    }
+    await bot._on_message(message)
+    return sent_embeds, replies
+
+
+async def test_patchnotes_uses_the_last_automated_send_as_since(guild_id, monkeypatch):
+    bot_obj = Bot("test-token")
+    info_mod.register(bot_obj)
+
+    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1", guild_id)
+    await db.record_fluxer_patch_notes_sent(guild_id, date(2026, 6, 1), 2)
+    log_row = await db.get_latest_fluxer_patch_notes_log(guild_id)
+
+    captured = {}
+
+    async def fake_fetch(since, until):
+        captured["since"] = since
+        captured["until"] = until
+        return []
+
+    monkeypatch.setattr(patch_notes, "fetch_commits_in_range", fake_fetch)
+    monkeypatch.setattr(patch_notes, "now_in", lambda tz: datetime(2026, 6, 2, 15, 0, tzinfo=tz))
+
+    sent_embeds, replies = await run_patchnotes(bot_obj, guild_id)
+    assert replies == []
+    assert len(sent_embeds) == 1
+    assert captured["since"] == log_row["sent_at"].astimezone(CENTRAL)
+    assert captured["until"] == datetime(2026, 6, 2, 15, 0, tzinfo=CENTRAL)
+
+    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1", guild_id)
+
+
+async def test_patchnotes_falls_back_to_start_of_today_when_never_sent(guild_id, monkeypatch):
+    bot_obj = Bot("test-token")
+    info_mod.register(bot_obj)
+    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1", guild_id)
+
+    captured = {}
+
+    async def fake_fetch(since, until):
+        captured["since"] = since
+        captured["until"] = until
+        return []
+
+    monkeypatch.setattr(patch_notes, "fetch_commits_in_range", fake_fetch)
+    monkeypatch.setattr(patch_notes, "now_in", lambda tz: datetime(2026, 6, 2, 15, 30, tzinfo=tz))
+
+    await run_patchnotes(bot_obj, guild_id)
+    assert captured["since"] == datetime(2026, 6, 2, 0, 0, tzinfo=CENTRAL)
+    assert captured["until"] == datetime(2026, 6, 2, 15, 30, tzinfo=CENTRAL)
+
+
+async def test_patchnotes_sends_the_range_embed_it_built(guild_id, monkeypatch):
+    bot_obj = Bot("test-token")
+    info_mod.register(bot_obj)
+    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1", guild_id)
+
+    commits = [{"commit": {"message": "feat(app): a feature"}, "html_url": "https://x/1"}]
+
+    async def fake_fetch(since, until):
+        return commits
+
+    monkeypatch.setattr(patch_notes, "fetch_commits_in_range", fake_fetch)
+    monkeypatch.setattr(patch_notes, "now_in", lambda tz: datetime(2026, 6, 2, 15, 30, tzinfo=tz))
+
+    sent_embeds, replies = await run_patchnotes(bot_obj, guild_id)
+    assert replies == []
+    assert len(sent_embeds) == 1
+    assert sent_embeds[0]["footer"]["text"] == "1 commit"
+    assert "[a feature](https://x/1)" in sent_embeds[0]["description"]
+
+
+async def test_patchnotes_replies_with_an_error_on_fetch_failure(guild_id, monkeypatch):
+    bot_obj = Bot("test-token")
+    info_mod.register(bot_obj)
+    await db.pool().execute("DELETE FROM fluxer_patch_notes_log WHERE guild_id=$1", guild_id)
+
+    async def fake_fetch(since, until):
+        raise RuntimeError("GitHub is down")
+
+    monkeypatch.setattr(patch_notes, "fetch_commits_in_range", fake_fetch)
+    monkeypatch.setattr(patch_notes, "now_in", lambda tz: datetime(2026, 6, 2, 15, 30, tzinfo=tz))
+
+    sent_embeds, replies = await run_patchnotes(bot_obj, guild_id)
+    assert sent_embeds == []
+    assert len(replies) == 1 and "Couldn't fetch" in replies[0]

@@ -9,6 +9,11 @@ common/db.py's fluxer_patch_notes_* functions for the dedupe/cache log
 this relies on to fetch GitHub once per (date, timezone) actually due
 in a given scheduler tick, rather than once per guild.
 
+The same building blocks (fetch_commits_in_range, build_patch_notes_
+range_embed) also back the on-demand !patchnotes command (see
+bot/modules/info.py), which covers [last automated send, now) instead
+of one fixed calendar day.
+
 The upstream repo uses Conventional Commits with PRs squash-merged
 (confirmed by hand against the real commit history), so grouping by
 theme is a plain prefix match, no summarization model needed.
@@ -70,24 +75,23 @@ def date_window_utc(report_date: date, tz: ZoneInfo) -> tuple[str, str]:
     return start.astimezone(timezone.utc).isoformat(), end.astimezone(timezone.utc).isoformat()
 
 
-async def fetch_commits_for_date(report_date: date, tz: ZoneInfo) -> list[dict]:
+async def fetch_commits_in_range(since: datetime, until: datetime) -> list[dict]:
     """Every commit on `main` whose committer date falls within
-    `report_date`'s midnight-to-midnight window in `tz`. Committer
-    date, not author date: what matters for "landed on main today" is
-    when it was actually merged, not whenever the change was first
-    authored."""
-    since, until = date_window_utc(report_date, tz)
+    [since, until) -- both tz-aware, any timezone (datetime comparison
+    normalizes to the same instant regardless). Committer date, not
+    author date: what matters for "landed on main" is when it was
+    actually merged, not whenever the change was first authored."""
     headers = {
         "User-Agent": f"{config.bot_name} (https://github.com/your-org/fluxbot, 0.1)",
         "Accept": "application/vnd.github+json",
     }
-    start = datetime(report_date.year, report_date.month, report_date.day, tzinfo=tz)
-    end = start + timedelta(days=1)
+    since_iso = since.astimezone(timezone.utc).isoformat()
+    until_iso = until.astimezone(timezone.utc).isoformat()
 
     commits: list[dict] = []
     async with aiohttp.ClientSession(headers=headers) as session:
         for page in range(1, _MAX_PAGES + 1):
-            params = {"sha": "main", "since": since, "until": until, "per_page": 100, "page": page}
+            params = {"sha": "main", "since": since_iso, "until": until_iso, "per_page": 100, "page": page}
             async with session.get(f"{_API_BASE}/commits", params=params) as resp:
                 if resp.status != 200:
                     body = await resp.text()
@@ -106,9 +110,17 @@ async def fetch_commits_for_date(report_date: date, tz: ZoneInfo) -> list[dict]:
         if not raw:
             return False
         committed_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        return start <= committed_at.astimezone(tz) < end
+        return since <= committed_at < until
 
     return [c for c in commits if _in_window(c)]
+
+
+async def fetch_commits_for_date(report_date: date, tz: ZoneInfo) -> list[dict]:
+    """Every commit on `main` whose committer date falls within
+    `report_date`'s midnight-to-midnight window in `tz`."""
+    start = datetime(report_date.year, report_date.month, report_date.day, tzinfo=tz)
+    end = start + timedelta(days=1)
+    return await fetch_commits_in_range(start, end)
 
 
 def _bucket_for(message: str) -> tuple[str, str]:
@@ -124,14 +136,13 @@ def _bucket_for(message: str) -> tuple[str, str]:
     return _BUCKET_LABELS.get(commit_type, _DEFAULT_BUCKET), rest
 
 
-def build_patch_notes_embed(commits: list[dict], report_date: date) -> dict:
-    title = f"Fluxer patch notes — {report_date.isoformat()}"
+def _build_embed(commits: list[dict], title: str, empty_description: str) -> dict:
     commits_url = f"https://github.com/{REPO}/commits/main/"
     if not commits:
         return {
             "title": title,
             "url": commits_url,
-            "description": f"No commits to {REPO}'s main branch that day.",
+            "description": empty_description,
             "color": 0x5865F2,
             "footer": {"text": "0 commits"},
         }
@@ -155,6 +166,33 @@ def build_patch_notes_embed(commits: list[dict], report_date: date) -> dict:
         "color": 0x5865F2,
         "footer": {"text": f"{count} commit{'s' if count != 1 else ''}"},
     }
+
+
+def build_patch_notes_embed(commits: list[dict], report_date: date) -> dict:
+    return _build_embed(
+        commits,
+        title=f"Fluxer patch notes — {report_date.isoformat()}",
+        empty_description=f"No commits to {REPO}'s main branch that day.",
+    )
+
+
+def _format_moment(dt: datetime) -> str:
+    # Built field by field rather than with strftime's %-d/%-I (GNU-only,
+    # not portable) or %d/%I (always zero-padded) -- this way "Jan 5" and
+    # "6:05 PM" read naturally regardless of platform.
+    hour12 = dt.hour % 12 or 12
+    return f"{dt:%b} {dt.day}, {dt.year} {hour12}:{dt.minute:02d} {dt:%p} {dt.tzname()}"
+
+
+def build_patch_notes_range_embed(commits: list[dict], since: datetime, until: datetime) -> dict:
+    """For the on-demand `!patchnotes` command: an arbitrary [since, until)
+    window rather than one calendar day, so the title spells out the
+    actual window covered instead of just a date."""
+    return _build_embed(
+        commits,
+        title=f"Fluxer patch notes — {_format_moment(since)} to {_format_moment(until)}",
+        empty_description=f"No commits to {REPO}'s main branch in that window.",
+    )
 
 
 async def generate_patch_notes(report_date: date, tz: ZoneInfo) -> tuple[dict, int]:

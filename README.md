@@ -302,6 +302,7 @@ Kick/ban/timeout/warn refuse to act on yourself, the server owner, or anyone who
 | `!avatar [@user]` | none | Show a member's avatar |
 | `!serverinfo` | none | Member count, owner, boost tier, and more |
 | `!userinfo [@user]` | none | Account age, join date, roles, staff rank |
+| `!patchnotes` | none | Fluxer platform patch notes since the last automated post here (or today so far, if none yet) |
 | `!info` | Owner only | Bot-level stats (uptime, latency, server count) |
 | `!poll "Q" "A" "B" ... [duration]` | none | Reaction poll, up to 10 options, optional auto-close with tallied results |
 | `!tag add/remove/list <name> <content>` | Manage Guild (add/remove) | Custom `!name` shortcuts |
@@ -381,7 +382,7 @@ bot/
     moderation.py       kick/ban/unban/timeout/purge/warn/warnings/modlog
     roles.py            autorole + reaction roles + welcome/goodbye messages
     fun.py              roll/coinflip/wheel/poll
-    info.py             avatar/serverinfo/userinfo/info (owner-only)
+    info.py             avatar/serverinfo/userinfo/info (owner-only)/patchnotes
     tags.py             !tag add/remove/list
     reminders.py         !remind/!reminders/!delreminder
     leveling.py          XP gain, level-up + role rewards, !rank/!leaderboard/!levelnotify

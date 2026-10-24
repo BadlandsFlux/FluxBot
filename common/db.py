@@ -1813,6 +1813,14 @@ async def get_fluxer_patch_notes_log(guild_id: str, sent_date) -> Optional[async
     )
 
 
+async def get_latest_fluxer_patch_notes_log(guild_id: str) -> Optional[asyncpg.Record]:
+    """Most recent automated send for this guild, if any -- powers
+    `!patchnotes`'s "since the last post" window (its `sent_at`)."""
+    return await pool().fetchrow(
+        "SELECT * FROM fluxer_patch_notes_log WHERE guild_id=$1 ORDER BY sent_at DESC LIMIT 1", guild_id,
+    )
+
+
 async def record_fluxer_patch_notes_sent(guild_id: str, sent_date, commit_count: int) -> None:
     # ON CONFLICT DO NOTHING, not a plain INSERT: the scheduler's own
     # dedupe check (get_fluxer_patch_notes_log before fetching/sending)
