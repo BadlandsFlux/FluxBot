@@ -90,13 +90,14 @@ def test_build_patch_notes_embed_groups_by_theme_in_order():
         {"commit": {"message": "chore: cleanup"}, "html_url": "https://x/3"},
     ]
     embed = patch_notes.build_patch_notes_embed(commits, date(2026, 10, 8))
-    desc = embed["description"]
     assert embed["footer"]["text"] == "3 commits"
+    field_names = [f["name"] for f in embed["fields"]]
     # Features before Fixes before Maintenance, regardless of input order.
-    assert desc.index("✨ Features") < desc.index("🐛 Fixes") < desc.index("🔧 Maintenance")
-    assert "[a feature](https://x/2)" in desc
-    assert "[a fix](https://x/1)" in desc
-    assert "[cleanup](https://x/3)" in desc
+    assert field_names.index("✨ Features") < field_names.index("🐛 Fixes") < field_names.index("🔧 Maintenance")
+    by_name = {f["name"]: f["value"] for f in embed["fields"]}
+    assert "[a feature](https://x/2)" in by_name["✨ Features"]
+    assert "[a fix](https://x/1)" in by_name["🐛 Fixes"]
+    assert "[cleanup](https://x/3)" in by_name["🔧 Maintenance"]
 
 
 def test_build_patch_notes_embed_singular_commit_count():
@@ -137,7 +138,32 @@ def test_build_patch_notes_range_embed_groups_by_theme_in_order():
     ]
     embed = patch_notes.build_patch_notes_range_embed(commits, since, until)
     assert embed["footer"]["text"] == "2 commits"
-    assert embed["description"].index("✨ Features") < embed["description"].index("🐛 Fixes")
+    field_names = [f["name"] for f in embed["fields"]]
+    assert field_names.index("✨ Features") < field_names.index("🐛 Fixes")
+
+
+def test_build_patch_notes_embed_overflows_a_busy_day_into_continuation_fields():
+    # Previously this many commits in one theme built a single description
+    # string that cleared Discord's 4096-char cap and got silently cut off
+    # by clamp_embeds; now it spreads across "(cont.)" fields instead, each
+    # safely under the 1024-char per-field cap.
+    commits = [
+        {"commit": {"message": f"fix(area{i}): a fairly descriptive fix description number {i}"},
+         "html_url": f"https://x/{i}"}
+        for i in range(80)
+    ]
+    embed = patch_notes.build_patch_notes_embed(commits, date(2026, 10, 8))
+    assert embed["footer"]["text"] == "80 commits"
+    fix_fields = [f for f in embed["fields"] if f["name"].startswith("🐛 Fixes")]
+    assert len(fix_fields) > 1
+    assert fix_fields[0]["name"] == "🐛 Fixes"
+    assert fix_fields[1]["name"] == "🐛 Fixes (cont.)"
+    for f in embed["fields"]:
+        assert len(f["value"]) <= 1024
+    # Every commit still shows up somewhere, just split across fields.
+    all_values = "\n".join(f["value"] for f in embed["fields"])
+    assert "[a fairly descriptive fix description number 0](https://x/0)" in all_values
+    assert "[a fairly descriptive fix description number 79](https://x/79)" in all_values
 
 
 # ------------------------------------------------------- settings round-trip --
@@ -501,7 +527,7 @@ async def test_patchnotes_sends_the_range_embed_it_built(guild_id, monkeypatch):
     assert replies == []
     assert len(sent_embeds) == 1
     assert sent_embeds[0]["footer"]["text"] == "1 commit"
-    assert "[a feature](https://x/1)" in sent_embeds[0]["description"]
+    assert "[a feature](https://x/1)" in sent_embeds[0]["fields"][0]["value"]
 
 
 async def test_patchnotes_replies_with_an_error_on_fetch_failure(guild_id, monkeypatch):

@@ -28,6 +28,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiohttp
 
+from bot.embed_utils import chunk_lines
 from common.config import config
 
 log = logging.getLogger("fluxbot.fluxer_patch_notes")
@@ -152,17 +153,25 @@ def _build_embed(commits: list[dict], title: str, empty_description: str) -> dic
         message = c.get("commit", {}).get("message", "")
         html_url = c.get("html_url", commits_url)
         label, text = _bucket_for(message)
-        buckets.setdefault(label, []).append(f"[{text}]({html_url})" if text else f"[{message}]({html_url})")
+        buckets.setdefault(label, []).append(f"• [{text}]({html_url})" if text else f"• [{message}]({html_url})")
 
-    sections = [
-        f"**{label}**\n" + "\n".join(f"• {line}" for line in buckets[label])
+    # One field per theme (or several, "label (cont.)", if that theme's
+    # own commit list alone would overflow a single field's 1024-char
+    # cap) rather than one combined description: a busy day's worth of
+    # commits easily clears description's 4096-char cap, and everything
+    # past that silently gets cut off by clamp_embeds -- fields give far
+    # more headroom, the same fix !help's command list already needed
+    # (see chunk_lines).
+    fields = [
+        {"name": label if i == 0 else f"{label} (cont.)", "value": chunk, "inline": False}
         for label in _BUCKET_ORDER if label in buckets
+        for i, chunk in enumerate(chunk_lines(buckets[label]))
     ]
     count = len(commits)
     return {
         "title": title,
         "url": commits_url,
-        "description": "\n\n".join(sections),
+        "fields": fields,
         "color": 0x5865F2,
         "footer": {"text": f"{count} commit{'s' if count != 1 else ''}"},
     }
