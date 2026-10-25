@@ -75,6 +75,7 @@ async def run_trivia(bot, guild_id, channel_id="chan1", author_id="u1", monkeypa
     sent_embeds = []
     replies = []
     added_reactions = []
+    removed_reactions = []
 
     async def fake_send_message(cid, content=None, embeds=None, **kw):
         if embeds:
@@ -86,6 +87,9 @@ async def run_trivia(bot, guild_id, channel_id="chan1", author_id="u1", monkeypa
     async def fake_add_reaction(cid, message_id, emoji):
         added_reactions.append(emoji)
 
+    async def fake_remove_user_reaction(cid, message_id, emoji, user_id):
+        removed_reactions.append((emoji, user_id))
+
     async def fake_get_guild(gid):
         return {"id": gid, "owner_id": "someone-else", "roles": []}
 
@@ -94,6 +98,7 @@ async def run_trivia(bot, guild_id, channel_id="chan1", author_id="u1", monkeypa
 
     bot.rest.send_message = fake_send_message
     bot.rest.add_reaction = fake_add_reaction
+    bot.rest.remove_user_reaction = fake_remove_user_reaction
     bot.rest.get_guild = fake_get_guild
     bot.rest.get_guild_member = fake_get_member
 
@@ -107,7 +112,7 @@ async def run_trivia(bot, guild_id, channel_id="chan1", author_id="u1", monkeypa
     }
     await bot._on_message(message)
 
-    return sent_embeds, replies, added_reactions
+    return sent_embeds, replies, added_reactions, removed_reactions
 
 
 async def _fake_fetch_none():
@@ -116,7 +121,7 @@ async def _fake_fetch_none():
 
 async def test_trivia_embed_has_countdown_and_reward_fields(guild_id, monkeypatch):
     bot = make_bot()
-    sent_embeds, replies, added_reactions = await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
+    sent_embeds, replies, added_reactions, _ = await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
 
     assert replies == []
     assert len(sent_embeds) == 1
@@ -138,10 +143,10 @@ async def test_trivia_embed_has_countdown_and_reward_fields(guild_id, monkeypatc
 
 async def test_second_trivia_in_the_same_server_is_rejected_while_one_is_open(guild_id, monkeypatch):
     bot = make_bot()
-    sent_embeds, replies, _ = await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
+    sent_embeds, replies, _, _ = await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
     assert len(sent_embeds) == 1
 
-    sent_embeds2, replies2, _ = await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
+    sent_embeds2, replies2, _, _ = await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
     assert sent_embeds2 == []
     assert len(replies2) == 1
     assert "already running" in replies2[0]
@@ -150,7 +155,7 @@ async def test_second_trivia_in_the_same_server_is_rejected_while_one_is_open(gu
 async def test_trivia_allowed_again_in_a_different_server(guild_id, second_guild_id, monkeypatch):
     bot = make_bot()
     await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
-    sent_embeds2, replies2, _ = await run_trivia(bot, second_guild_id, monkeypatch=monkeypatch)
+    sent_embeds2, replies2, _, _ = await run_trivia(bot, second_guild_id, monkeypatch=monkeypatch)
     assert len(sent_embeds2) == 1
     assert replies2 == []
 
@@ -160,9 +165,22 @@ async def dispatch_reaction(bot, **data):
         await handler(data)
 
 
-async def test_changing_your_mind_a_few_times_is_fine(guild_id, monkeypatch):
+async def test_first_pick_does_not_trigger_any_removal(guild_id, monkeypatch):
     bot = make_bot()
-    await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
+    _, _, added_reactions, removed_reactions = await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
+    seed_count = len(added_reactions)
+
+    await dispatch_reaction(bot, message_id="msg-1", channel_id="chan1", user_id="u1",
+                             emoji={"name": trivia_mod.NUMBER_EMOJI[0]})
+
+    assert removed_reactions == []
+    assert len(added_reactions) == seed_count  # no re-seed either, nothing to heal yet
+
+
+async def test_changing_your_mind_clears_the_old_reaction_and_re_seeds_it(guild_id, monkeypatch):
+    bot = make_bot()
+    _, _, added_reactions, removed_reactions = await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
+    seed_count = len(added_reactions)
 
     for emoji in (trivia_mod.NUMBER_EMOJI[0], trivia_mod.NUMBER_EMOJI[2], trivia_mod.NUMBER_EMOJI[1]):
         await dispatch_reaction(bot, message_id="msg-1", channel_id="chan1", user_id="u1",
@@ -172,10 +190,15 @@ async def test_changing_your_mind_a_few_times_is_fine(guild_id, monkeypatch):
     assert round_state["picks"]["u1"] == [trivia_mod.NUMBER_EMOJI[0], trivia_mod.NUMBER_EMOJI[2], trivia_mod.NUMBER_EMOJI[1]]
     assert "u1" not in round_state["disqualified"]
 
+    # Each of the two changes clears that one previous pick for that one
+    # member, and re-adds our own seed reaction on it right after.
+    assert removed_reactions == [(trivia_mod.NUMBER_EMOJI[0], "u1"), (trivia_mod.NUMBER_EMOJI[2], "u1")]
+    assert added_reactions[seed_count:] == [trivia_mod.NUMBER_EMOJI[0], trivia_mod.NUMBER_EMOJI[2]]
+
 
 async def test_spamming_past_the_limit_disqualifies_and_notifies_once(guild_id, monkeypatch):
     bot = make_bot()
-    await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
+    _, _, _, removed_reactions = await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
 
     notices = []
 
@@ -196,6 +219,9 @@ async def test_spamming_past_the_limit_disqualifies_and_notifies_once(guild_id, 
     assert "u1" in notices[0] and "too many times" in notices[0]
     # Picks stop accumulating once disqualified -- nothing more to score.
     assert len(round_state["picks"]["u1"]) == trivia_mod.SPAM_PICK_LIMIT + 1
+    # The disqualifying reaction itself isn't cleared -- once flagged, the
+    # round is already lost for them, no point spending more REST calls.
+    assert len(removed_reactions) == trivia_mod.SPAM_PICK_LIMIT - 1
 
 
 async def test_the_bots_own_seed_reactions_are_not_tracked_as_picks(guild_id, monkeypatch):
