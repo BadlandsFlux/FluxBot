@@ -89,21 +89,36 @@ async def _close_trivia(bot: Bot) -> None:
         try:
             options = json.loads(t["options"]) if isinstance(t["options"], str) else t["options"]
             correct_emoji = trivia_module.NUMBER_EMOJI[t["correct_index"]]
-
-            # Reacting with every option at once shouldn't count as answering
-            # correctly: fetch every option's reactors (not just the correct
-            # one) and disqualify anyone who still shows up under more than
-            # one by the time the round closes.
-            reactor_sets = []
-            for emoji in trivia_module.NUMBER_EMOJI[:len(options)]:
-                reactors = await bot.rest.get_reaction_users(t["channel_id"], t["message_id"], emoji)
-                reactor_sets.append({str(u["id"]) for u in reactors if str(u.get("id")) != bot_id})
-            hedged = set()
-            for i, users in enumerate(reactor_sets):
-                for other in reactor_sets[i + 1:]:
-                    hedged |= users & other
             correct_index = t["correct_index"]
-            winners = [uid for uid in reactor_sets[correct_index] if uid not in hedged]
+
+            round_state = trivia_module._active_trivia_rounds.pop(t["message_id"], None)
+            if round_state is not None:
+                # The normal path: score off each member's own pick history
+                # (their latest reaction wins; on_trivia_reaction in trivia.py
+                # already disqualified anyone who spammed past the limit),
+                # without asking Fluxer for the message's current reaction
+                # state at all.
+                winners = [
+                    uid for uid, picks in round_state["picks"].items()
+                    if uid not in round_state["disqualified"] and picks[-1] == correct_emoji
+                ]
+            else:
+                # Only reached if the bot restarted mid-round and lost the
+                # live pick history above -- fall back to asking Fluxer who's
+                # currently reacting with what, disqualifying anyone who
+                # still shows up under more than one option (someone who
+                # changed their mind before the restart and was never able
+                # to get a fresh pick recorded reads the same as hedging
+                # here, an acceptable tradeoff for how rare this path is).
+                reactor_sets = []
+                for emoji in trivia_module.NUMBER_EMOJI[:len(options)]:
+                    reactors = await bot.rest.get_reaction_users(t["channel_id"], t["message_id"], emoji)
+                    reactor_sets.append({str(u["id"]) for u in reactors if str(u.get("id")) != bot_id})
+                hedged = set()
+                for i, users in enumerate(reactor_sets):
+                    for other in reactor_sets[i + 1:]:
+                        hedged |= users & other
+                winners = [uid for uid in reactor_sets[correct_index] if uid not in hedged]
 
             guild_cfg = await db.get_guild(t["guild_id"])
             cap_enabled = not guild_cfg or guild_cfg["trivia_xp_cap_enabled"]

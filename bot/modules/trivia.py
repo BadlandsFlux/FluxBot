@@ -2,15 +2,16 @@
 
     !trivia    starts a random multiple-choice question, auto-closes
                 after 30s (via the scheduler) and awards a small XP
-                bonus to everyone who reacted with the correct answer
-                and nothing else -- reacting with more than one option
-                disqualifies that round for you, so hedging doesn't
-                pay off (see _close_trivia in bot/scheduler.py).
-                Only one round can be open per server at a time, and
-                a member's trivia XP is capped per day (see
-                guilds.trivia_xp_cap_enabled/trivia_xp_cap_amount on
-                the dashboard's Levels tab, on by default) so grinding
-                !trivia can't out-earn chat/voice.
+                bonus to whoever's LATEST reaction, by the time it
+                closes, is the correct answer -- changing your mind a
+                few times is fine, but spamming your reaction past
+                SPAM_PICK_LIMIT disqualifies you from that round (and
+                says so in channel). Only one round can be open per
+                server at a time, and a member's trivia XP is capped
+                per day (see guilds.trivia_xp_cap_enabled/
+                trivia_xp_cap_amount on the dashboard's Levels tab, on
+                by default) so grinding !trivia can't out-earn
+                chat/voice.
 
 Questions are pulled live from the Open Trivia DB
 (https://opentdb.com), a free, keyless, well-established public API,
@@ -64,6 +65,24 @@ OPENTDB_TIMEOUT_SECONDS = 5
 OPENTDB_MIN_INTERVAL_SECONDS = 5  # opentdb.com's own documented rate limit: 1 request per 5s per IP
 
 _last_api_call_at = 0.0
+
+# Changing your mind is fine; a 6th reaction in the same round reads as
+# spamming rather than genuinely weighing the options, and disqualifies
+# you. Deliberately not enforced by removing reactions from the message
+# (Fluxer's remove_user_reaction appears to clear the whole reaction, not
+# just that one member's -- see the PR that pulled that approach back
+# out) -- instead we track each member's own pick history ourselves and
+# score off the last one, so Discord/Fluxer's own reaction state never
+# has to be touched mid-round at all.
+SPAM_PICK_LIMIT = 5
+
+# message_id -> {"option_emoji": [...], "picks": {user_id: [emoji, ...]},
+# "disqualified": {user_id, ...}} for each still-open round. In-memory
+# only (same tradeoff as !roll/!help's own reaction sessions): a bot
+# restart mid-round loses this, so _close_trivia (scheduler.py) falls
+# back to asking Fluxer who's currently reacting with what when a round
+# it's about to close has no entry here.
+_active_trivia_rounds: dict[str, dict] = {}
 
 QUESTIONS = [
     {"q": "What's the largest planet in the solar system?", "options": ["Earth", "Jupiter", "Saturn", "Neptune"], "correct": 1},
@@ -173,14 +192,49 @@ def register(bot: Bot) -> None:
             "description": lines,
             "color": _DIFFICULTY_COLORS.get(q.get("difficulty"), _DEFAULT_COLOR),
             "fields": fields,
-            "footer": {"text": "React with your answer -- pick just one"},
+            "footer": {"text": "React with your answer -- you can change your mind, just don't spam it"},
         }
         sent = await ctx.bot.rest.send_message(ctx.channel_id, embeds=[embed])
         message_id = str(sent["id"])
-        for emoji in NUMBER_EMOJI[:len(q["options"])]:
+        option_emoji = NUMBER_EMOJI[:len(q["options"])]
+        _active_trivia_rounds[message_id] = {"option_emoji": option_emoji, "picks": {}, "disqualified": set()}
+        for emoji in option_emoji:
             try:
                 await ctx.bot.rest.add_reaction(ctx.channel_id, message_id, emoji)
             except Exception:
                 pass
 
         await db.add_trivia_question(ctx.guild_id, ctx.channel_id, message_id, q["q"], q["options"], q["correct"], close_at)
+
+    @bot.on("MESSAGE_REACTION_ADD")
+    async def on_trivia_reaction(data: dict) -> None:
+        message_id = str(data.get("message_id"))
+        round_state = _active_trivia_rounds.get(message_id)
+        if not round_state:
+            return
+
+        emoji_data = data.get("emoji", {})
+        emoji = emoji_data.get("name") if isinstance(emoji_data, dict) else emoji_data
+        if emoji not in round_state["option_emoji"]:
+            return
+
+        user_id = str(data.get("user_id"))
+        bot_user_id = (bot.gateway.user or {}).get("id")
+        if bot_user_id and user_id == str(bot_user_id):
+            return  # our own seed reactions
+
+        if user_id in round_state["disqualified"]:
+            return  # already flagged and told once; nothing more to do
+
+        picks = round_state["picks"].setdefault(user_id, [])
+        picks.append(emoji)
+        if len(picks) > SPAM_PICK_LIMIT:
+            round_state["disqualified"].add(user_id)
+            try:
+                await bot.rest.send_message(
+                    str(data.get("channel_id")),
+                    content=f"<@{user_id}> changed their answer too many times and is disqualified from this round.",
+                    allowed_mentions=bot.rest.mention_only(user_id),
+                )
+            except Exception:
+                pass
