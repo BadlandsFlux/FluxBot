@@ -1,7 +1,10 @@
 """Tests for !trivia: the shared answer-shuffle (bot/modules/trivia.py's
 _shuffle_answer), the embed's countdown/reward fields, the one-round-per
--server limit, and the per-member daily XP cap (db.add_trivia_xp_capped,
-wired into bot/scheduler.py's _close_trivia).
+-server limit, the per-member daily XP cap (db.add_trivia_xp_capped,
+wired into bot/scheduler.py's _close_trivia), and reaction-based scoring
+(changing your mind is fine, spamming past SPAM_PICK_LIMIT isn't, and a
+round whose live pick history was lost to a restart falls back to asking
+Fluxer who's currently reacting with what).
 """
 from __future__ import annotations
 
@@ -16,10 +19,10 @@ from common import db
 
 
 @pytest.fixture(autouse=True)
-def _clear_active_trivia_options():
-    trivia_mod._active_trivia_options.clear()
+def _clear_active_trivia_rounds():
+    trivia_mod._active_trivia_rounds.clear()
     yield
-    trivia_mod._active_trivia_options.clear()
+    trivia_mod._active_trivia_rounds.clear()
 
 
 # ------------------------------------------------------------- shuffling --
@@ -152,6 +155,60 @@ async def test_trivia_allowed_again_in_a_different_server(guild_id, second_guild
     assert replies2 == []
 
 
+async def dispatch_reaction(bot, **data):
+    for handler in bot.gateway._handlers.get("MESSAGE_REACTION_ADD", []):
+        await handler(data)
+
+
+async def test_changing_your_mind_a_few_times_is_fine(guild_id, monkeypatch):
+    bot = make_bot()
+    await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
+
+    for emoji in (trivia_mod.NUMBER_EMOJI[0], trivia_mod.NUMBER_EMOJI[2], trivia_mod.NUMBER_EMOJI[1]):
+        await dispatch_reaction(bot, message_id="msg-1", channel_id="chan1", user_id="u1",
+                                 emoji={"name": emoji})
+
+    round_state = trivia_mod._active_trivia_rounds["msg-1"]
+    assert round_state["picks"]["u1"] == [trivia_mod.NUMBER_EMOJI[0], trivia_mod.NUMBER_EMOJI[2], trivia_mod.NUMBER_EMOJI[1]]
+    assert "u1" not in round_state["disqualified"]
+
+
+async def test_spamming_past_the_limit_disqualifies_and_notifies_once(guild_id, monkeypatch):
+    bot = make_bot()
+    await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
+
+    notices = []
+
+    async def fake_send_message(cid, content=None, embeds=None, **kw):
+        notices.append(content)
+        return {"id": "notice"}
+
+    bot.rest.send_message = fake_send_message
+
+    for i in range(trivia_mod.SPAM_PICK_LIMIT + 3):
+        emoji = trivia_mod.NUMBER_EMOJI[i % 2]
+        await dispatch_reaction(bot, message_id="msg-1", channel_id="chan1", user_id="u1",
+                                 emoji={"name": emoji})
+
+    round_state = trivia_mod._active_trivia_rounds["msg-1"]
+    assert "u1" in round_state["disqualified"]
+    assert len(notices) == 1
+    assert "u1" in notices[0] and "too many times" in notices[0]
+    # Picks stop accumulating once disqualified -- nothing more to score.
+    assert len(round_state["picks"]["u1"]) == trivia_mod.SPAM_PICK_LIMIT + 1
+
+
+async def test_the_bots_own_seed_reactions_are_not_tracked_as_picks(guild_id, monkeypatch):
+    bot = make_bot()
+    await run_trivia(bot, guild_id, monkeypatch=monkeypatch)
+    bot.gateway.user = {"id": "bot-id"}
+
+    await dispatch_reaction(bot, message_id="msg-1", channel_id="chan1", user_id="bot-id",
+                             emoji={"name": trivia_mod.NUMBER_EMOJI[0]})
+
+    assert trivia_mod._active_trivia_rounds["msg-1"]["picks"] == {}
+
+
 # -------------------------------------------------------------- XP cap --
 
 async def test_add_trivia_xp_capped_grants_up_to_the_cap(guild_id):
@@ -237,6 +294,9 @@ async def test_close_trivia_does_not_cap_when_guild_disables_it(guild_id, monkey
 
 
 async def test_close_trivia_disqualifies_a_member_who_reacted_with_more_than_one_option(guild_id, monkeypatch):
+    # No _active_trivia_rounds entry for "msg1" here -- this exercises the
+    # restart fallback path, which has no pick history to go on and so
+    # falls back to Fluxer's own (possibly messy) reaction state.
     await _seed_due_trivia(guild_id, correct_index=1)
 
     granted_to = []
@@ -257,27 +317,61 @@ async def test_close_trivia_disqualifies_a_member_who_reacted_with_more_than_one
     assert granted_to == ["honest"]
 
 
-async def test_on_trivia_reaction_strips_a_members_other_picks(guild_id):
-    bot = Bot("test-token")
-    trivia_mod.register(bot)
-    bot.gateway.user = {"id": "bot-id"}
-
-    message_id = "msg1"
-    trivia_mod._active_trivia_options[message_id] = trivia_mod.NUMBER_EMOJI[:4]
-
-    removed = []
-
-    async def fake_remove_user_reaction(channel_id, mid, emoji, user_id):
-        removed.append((emoji, user_id))
-
-    bot.rest.remove_user_reaction = fake_remove_user_reaction
-
-    for handler in bot.gateway._handlers.get("MESSAGE_REACTION_ADD", []):
-        await handler({
-            "message_id": message_id, "channel_id": "chan1", "user_id": "u1",
-            "emoji": {"name": trivia_mod.NUMBER_EMOJI[2]},
-        })
-
-    assert set(removed) == {
-        (trivia_mod.NUMBER_EMOJI[0], "u1"), (trivia_mod.NUMBER_EMOJI[1], "u1"), (trivia_mod.NUMBER_EMOJI[3], "u1"),
+async def test_close_trivia_credits_whoevers_latest_pick_is_correct(guild_id, monkeypatch):
+    await _seed_due_trivia(guild_id, correct_index=1)
+    correct_emoji = trivia_mod.NUMBER_EMOJI[1]
+    wrong_emoji = trivia_mod.NUMBER_EMOJI[0]
+    trivia_mod._active_trivia_rounds["msg1"] = {
+        "option_emoji": trivia_mod.NUMBER_EMOJI[:4],
+        # changed their mind from wrong to correct -- should still win.
+        "picks": {"changed-mind": [wrong_emoji, correct_emoji], "stayed-wrong": [wrong_emoji]},
+        "disqualified": set(),
     }
+
+    granted_to = []
+
+    async def fake_grant_xp(bot, gid, uid, username, amount):
+        granted_to.append(uid)
+
+    monkeypatch.setattr(scheduler.leveling, "grant_xp", fake_grant_xp)
+
+    bot = make_scheduler_bot([])
+    await scheduler._close_trivia(bot)
+
+    assert granted_to == ["changed-mind"]
+
+
+async def test_close_trivia_does_not_credit_a_disqualified_spammer(guild_id, monkeypatch):
+    await _seed_due_trivia(guild_id, correct_index=1)
+    correct_emoji = trivia_mod.NUMBER_EMOJI[1]
+    trivia_mod._active_trivia_rounds["msg1"] = {
+        "option_emoji": trivia_mod.NUMBER_EMOJI[:4],
+        # "spammer"'s last pick happens to be correct, but they were already
+        # flagged for spamming -- that disqualifies the whole round for them.
+        "picks": {"spammer": [correct_emoji] * 6},
+        "disqualified": {"spammer"},
+    }
+
+    granted_to = []
+
+    async def fake_grant_xp(bot, gid, uid, username, amount):
+        granted_to.append(uid)
+
+    monkeypatch.setattr(scheduler.leveling, "grant_xp", fake_grant_xp)
+
+    bot = make_scheduler_bot([])
+    await scheduler._close_trivia(bot)
+
+    assert granted_to == []
+
+
+async def test_close_trivia_pops_the_round_state_so_it_cant_leak_into_later_rounds(guild_id):
+    await _seed_due_trivia(guild_id, correct_index=1)
+    trivia_mod._active_trivia_rounds["msg1"] = {
+        "option_emoji": trivia_mod.NUMBER_EMOJI[:4], "picks": {}, "disqualified": set(),
+    }
+
+    bot = make_scheduler_bot([])
+    await scheduler._close_trivia(bot)
+
+    assert "msg1" not in trivia_mod._active_trivia_rounds
