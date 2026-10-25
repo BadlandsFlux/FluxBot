@@ -3,15 +3,15 @@
     !trivia    starts a random multiple-choice question, auto-closes
                 after 30s (via the scheduler) and awards a small XP
                 bonus to whoever's LATEST reaction, by the time it
-                closes, is the correct answer -- changing your mind a
-                few times is fine, but spamming your reaction past
-                SPAM_PICK_LIMIT disqualifies you from that round (and
-                says so in channel). Only one round can be open per
-                server at a time, and a member's trivia XP is capped
-                per day (see guilds.trivia_xp_cap_enabled/
-                trivia_xp_cap_amount on the dashboard's Levels tab, on
-                by default) so grinding !trivia can't out-earn
-                chat/voice.
+                closes, is the correct answer -- changing your mind
+                clears your old reaction so only your current pick
+                shows, but spamming your reaction past SPAM_PICK_LIMIT
+                disqualifies you from that round (and says so in
+                channel). Only one round can be open per server at a
+                time, and a member's trivia XP is capped per day (see
+                guilds.trivia_xp_cap_enabled/trivia_xp_cap_amount on
+                the dashboard's Levels tab, on by default) so grinding
+                !trivia can't out-earn chat/voice.
 
 Questions are pulled live from the Open Trivia DB
 (https://opentdb.com), a free, keyless, well-established public API,
@@ -68,12 +68,11 @@ _last_api_call_at = 0.0
 
 # Changing your mind is fine; a 6th reaction in the same round reads as
 # spamming rather than genuinely weighing the options, and disqualifies
-# you. Deliberately not enforced by removing reactions from the message
-# (Fluxer's remove_user_reaction appears to clear the whole reaction, not
-# just that one member's -- see the PR that pulled that approach back
-# out) -- instead we track each member's own pick history ourselves and
-# score off the last one, so Discord/Fluxer's own reaction state never
-# has to be touched mid-round at all.
+# you. Scoring is always driven by our own pick history below, never by
+# asking Fluxer what's currently reacted -- on_trivia_reaction's removal
+# of a member's previous pick is purely a visual nicety on top of that,
+# and self-heals (re-seeds its own reaction right after) in case removing
+# one member's reaction ever clears the whole thing for everyone again.
 SPAM_PICK_LIMIT = 5
 
 # message_id -> {"option_emoji": [...], "picks": {user_id: [emoji, ...]},
@@ -227,7 +226,9 @@ def register(bot: Bot) -> None:
             return  # already flagged and told once; nothing more to do
 
         picks = round_state["picks"].setdefault(user_id, [])
+        previous_emoji = picks[-1] if picks else None
         picks.append(emoji)
+
         if len(picks) > SPAM_PICK_LIMIT:
             round_state["disqualified"].add(user_id)
             try:
@@ -238,3 +239,21 @@ def register(bot: Bot) -> None:
                 )
             except Exception:
                 pass
+            return
+
+        if previous_emoji and previous_emoji != emoji:
+            channel_id = str(data.get("channel_id"))
+            try:
+                await bot.rest.remove_user_reaction(channel_id, message_id, previous_emoji, user_id)
+            except Exception:
+                pass  # bot likely lacks Manage Messages; _close_trivia's own pick history still scores correctly
+            # Re-assert our own seed reaction on the emoji we just cleared:
+            # removing one member's reaction has, on this Fluxer instance,
+            # sometimes cleared the whole reaction rather than just theirs
+            # (see the PR that first found this), which would make that
+            # option's reaction vanish for everyone. Re-adding our seed is a
+            # no-op if it's still there and heals it the instant it isn't.
+            try:
+                await bot.rest.add_reaction(channel_id, message_id, previous_emoji)
+            except Exception:
+                pass  # best-effort repair; a miss here just means that option stays gone until someone else reacts to it
