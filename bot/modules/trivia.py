@@ -256,4 +256,4 @@ def register(bot: Bot) -> None:
             try:
                 await bot.rest.add_reaction(channel_id, message_id, previous_emoji)
             except Exception:
-                pass
+                pass  # best-effort repair; a miss here just means that option stays gone until someone else reacts to it
