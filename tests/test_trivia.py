@@ -7,19 +7,10 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 import bot.modules.trivia as trivia_mod
 from bot import scheduler
 from bot.commands import Bot
 from common import db
-
-
-@pytest.fixture(autouse=True)
-def _clear_active_trivia_options():
-    trivia_mod._active_trivia_options.clear()
-    yield
-    trivia_mod._active_trivia_options.clear()
 
 
 # ------------------------------------------------------------- shuffling --
@@ -255,29 +246,3 @@ async def test_close_trivia_disqualifies_a_member_who_reacted_with_more_than_one
     await scheduler._close_trivia(bot)
 
     assert granted_to == ["honest"]
-
-
-async def test_on_trivia_reaction_strips_a_members_other_picks(guild_id):
-    bot = Bot("test-token")
-    trivia_mod.register(bot)
-    bot.gateway.user = {"id": "bot-id"}
-
-    message_id = "msg1"
-    trivia_mod._active_trivia_options[message_id] = trivia_mod.NUMBER_EMOJI[:4]
-
-    removed = []
-
-    async def fake_remove_user_reaction(channel_id, mid, emoji, user_id):
-        removed.append((emoji, user_id))
-
-    bot.rest.remove_user_reaction = fake_remove_user_reaction
-
-    for handler in bot.gateway._handlers.get("MESSAGE_REACTION_ADD", []):
-        await handler({
-            "message_id": message_id, "channel_id": "chan1", "user_id": "u1",
-            "emoji": {"name": trivia_mod.NUMBER_EMOJI[2]},
-        })
-
-    assert set(removed) == {
-        (trivia_mod.NUMBER_EMOJI[0], "u1"), (trivia_mod.NUMBER_EMOJI[1], "u1"), (trivia_mod.NUMBER_EMOJI[3], "u1"),
-    }

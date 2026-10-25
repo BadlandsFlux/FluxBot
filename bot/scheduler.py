@@ -91,12 +91,9 @@ async def _close_trivia(bot: Bot) -> None:
             correct_emoji = trivia_module.NUMBER_EMOJI[t["correct_index"]]
 
             # Reacting with every option at once shouldn't count as answering
-            # correctly -- on_trivia_reaction (trivia.py) already strips a
-            # member's other reactions live as a best-effort UX nudge, but
-            # that needs Manage Messages to actually take effect, so this is
-            # the real backstop: fetch every option's reactors (not just the
-            # correct one) and disqualify anyone who still shows up under
-            # more than one by the time the round closes.
+            # correctly: fetch every option's reactors (not just the correct
+            # one) and disqualify anyone who still shows up under more than
+            # one by the time the round closes.
             reactor_sets = []
             for emoji in trivia_module.NUMBER_EMOJI[:len(options)]:
                 reactors = await bot.rest.get_reaction_users(t["channel_id"], t["message_id"], emoji)
@@ -139,7 +136,6 @@ async def _close_trivia(bot: Bot) -> None:
             )
         except Exception:
             log.warning("Failed to close trivia %s", t["id"])
-        trivia_module._active_trivia_options.pop(t["message_id"], None)
         await db.mark_trivia_closed(t["id"])
 
 
