@@ -62,6 +62,16 @@ OPENTDB_MIN_INTERVAL_SECONDS = 5  # opentdb.com's own documented rate limit: 1 r
 
 _last_api_call_at = 0.0
 
+# message_id -> set of valid option emoji for that still-open round. Lets
+# on_trivia_reaction recognize a trivia message without a DB round trip on
+# every single reaction in the server, and strip a member's other choices
+# the instant they pick a new one so reacting with every option doesn't
+# read as "answered." In-memory only (same tradeoff as !roll/!help's own
+# reaction sessions): a bot restart mid-round means that round's reactions
+# go unenforced live, but _close_trivia (scheduler.py) still disqualifies
+# anyone holding more than one reaction when it actually scores the round.
+_active_trivia_options: dict[str, list[str]] = {}
+
 QUESTIONS = [
     {"q": "What's the largest planet in the solar system?", "options": ["Earth", "Jupiter", "Saturn", "Neptune"], "correct": 1},
     {"q": "How many continents are there?", "options": ["5", "6", "7", "8"], "correct": 2},
@@ -174,10 +184,38 @@ def register(bot: Bot) -> None:
         }
         sent = await ctx.bot.rest.send_message(ctx.channel_id, embeds=[embed])
         message_id = str(sent["id"])
-        for i in range(len(q["options"])):
+        option_emoji = NUMBER_EMOJI[:len(q["options"])]
+        _active_trivia_options[message_id] = option_emoji
+        for emoji in option_emoji:
             try:
-                await ctx.bot.rest.add_reaction(ctx.channel_id, message_id, NUMBER_EMOJI[i])
+                await ctx.bot.rest.add_reaction(ctx.channel_id, message_id, emoji)
             except Exception:
                 pass
 
         await db.add_trivia_question(ctx.guild_id, ctx.channel_id, message_id, q["q"], q["options"], q["correct"], close_at)
+
+    @bot.on("MESSAGE_REACTION_ADD")
+    async def on_trivia_reaction(data: dict) -> None:
+        message_id = str(data.get("message_id"))
+        option_emoji = _active_trivia_options.get(message_id)
+        if not option_emoji:
+            return
+
+        emoji_data = data.get("emoji", {})
+        emoji = emoji_data.get("name") if isinstance(emoji_data, dict) else emoji_data
+        if emoji not in option_emoji:
+            return
+
+        user_id = str(data.get("user_id"))
+        bot_user_id = (bot.gateway.user or {}).get("id")
+        if bot_user_id and user_id == str(bot_user_id):
+            return  # our own seed reactions
+
+        channel_id = str(data.get("channel_id"))
+        for other_emoji in option_emoji:
+            if other_emoji == emoji:
+                continue
+            try:
+                await bot.rest.remove_user_reaction(channel_id, message_id, other_emoji, user_id)
+            except Exception:
+                pass  # bot likely lacks Manage Messages; _close_trivia still disqualifies hedged picks

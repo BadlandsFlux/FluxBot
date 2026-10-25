@@ -89,8 +89,24 @@ async def _close_trivia(bot: Bot) -> None:
         try:
             options = json.loads(t["options"]) if isinstance(t["options"], str) else t["options"]
             correct_emoji = trivia_module.NUMBER_EMOJI[t["correct_index"]]
-            reactors = await bot.rest.get_reaction_users(t["channel_id"], t["message_id"], correct_emoji)
-            winners = [str(u["id"]) for u in reactors if str(u.get("id")) != bot_id]
+
+            # Reacting with every option at once shouldn't count as answering
+            # correctly -- on_trivia_reaction (trivia.py) already strips a
+            # member's other reactions live as a best-effort UX nudge, but
+            # that needs Manage Messages to actually take effect, so this is
+            # the real backstop: fetch every option's reactors (not just the
+            # correct one) and disqualify anyone who still shows up under
+            # more than one by the time the round closes.
+            reactor_sets = []
+            for emoji in trivia_module.NUMBER_EMOJI[:len(options)]:
+                reactors = await bot.rest.get_reaction_users(t["channel_id"], t["message_id"], emoji)
+                reactor_sets.append({str(u["id"]) for u in reactors if str(u.get("id")) != bot_id})
+            hedged = set()
+            for i, users in enumerate(reactor_sets):
+                for other in reactor_sets[i + 1:]:
+                    hedged |= users & other
+            correct_index = t["correct_index"]
+            winners = [uid for uid in reactor_sets[correct_index] if uid not in hedged]
 
             guild_cfg = await db.get_guild(t["guild_id"])
             cap_enabled = not guild_cfg or guild_cfg["trivia_xp_cap_enabled"]
@@ -123,6 +139,7 @@ async def _close_trivia(bot: Bot) -> None:
             )
         except Exception:
             log.warning("Failed to close trivia %s", t["id"])
+        trivia_module._active_trivia_options.pop(t["message_id"], None)
         await db.mark_trivia_closed(t["id"])
 
 
