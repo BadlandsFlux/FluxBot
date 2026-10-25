@@ -7,10 +7,19 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 import bot.modules.trivia as trivia_mod
 from bot import scheduler
 from bot.commands import Bot
 from common import db
+
+
+@pytest.fixture(autouse=True)
+def _clear_active_trivia_options():
+    trivia_mod._active_trivia_options.clear()
+    yield
+    trivia_mod._active_trivia_options.clear()
 
 
 # ------------------------------------------------------------- shuffling --
@@ -165,12 +174,14 @@ async def test_add_trivia_xp_capped_zero_or_negative_proposed_is_a_noop(guild_id
     assert await db.add_trivia_xp_capped(guild_id, "u1", proposed_xp=-5, daily_cap=150) == 0
 
 
-def make_scheduler_bot(winner_ids):
+def make_scheduler_bot(winner_ids, correct_emoji=trivia_mod.NUMBER_EMOJI[1], reactions_by_emoji=None):
     bot = Bot("test-token")
     bot.gateway.user = {"id": "bot-id"}
 
     async def fake_get_reaction_users(channel_id, message_id, emoji):
-        return [{"id": uid} for uid in winner_ids]
+        if reactions_by_emoji is not None:
+            return [{"id": uid} for uid in reactions_by_emoji.get(emoji, [])]
+        return [{"id": uid} for uid in winner_ids] if emoji == correct_emoji else []
 
     async def fake_edit_message(channel_id, message_id, **kw):
         return {"id": message_id}
@@ -223,3 +234,50 @@ async def test_close_trivia_does_not_cap_when_guild_disables_it(guild_id, monkey
     await scheduler._close_trivia(bot)
 
     assert granted_calls == [trivia_mod.XP_REWARD]
+
+
+async def test_close_trivia_disqualifies_a_member_who_reacted_with_more_than_one_option(guild_id, monkeypatch):
+    await _seed_due_trivia(guild_id, correct_index=1)
+
+    granted_to = []
+
+    async def fake_grant_xp(bot, gid, uid, username, amount):
+        granted_to.append(uid)
+
+    monkeypatch.setattr(scheduler.leveling, "grant_xp", fake_grant_xp)
+
+    correct_emoji = trivia_mod.NUMBER_EMOJI[1]
+    other_emoji = trivia_mod.NUMBER_EMOJI[0]
+    # "hedger" reacted with both the correct option and another one; "honest"
+    # only reacted with the correct option.
+    reactions = {correct_emoji: ["hedger", "honest"], other_emoji: ["hedger"]}
+    bot = make_scheduler_bot([], reactions_by_emoji=reactions)
+    await scheduler._close_trivia(bot)
+
+    assert granted_to == ["honest"]
+
+
+async def test_on_trivia_reaction_strips_a_members_other_picks(guild_id):
+    bot = Bot("test-token")
+    trivia_mod.register(bot)
+    bot.gateway.user = {"id": "bot-id"}
+
+    message_id = "msg1"
+    trivia_mod._active_trivia_options[message_id] = trivia_mod.NUMBER_EMOJI[:4]
+
+    removed = []
+
+    async def fake_remove_user_reaction(channel_id, mid, emoji, user_id):
+        removed.append((emoji, user_id))
+
+    bot.rest.remove_user_reaction = fake_remove_user_reaction
+
+    for handler in bot.gateway._handlers.get("MESSAGE_REACTION_ADD", []):
+        await handler({
+            "message_id": message_id, "channel_id": "chan1", "user_id": "u1",
+            "emoji": {"name": trivia_mod.NUMBER_EMOJI[2]},
+        })
+
+    assert set(removed) == {
+        (trivia_mod.NUMBER_EMOJI[0], "u1"), (trivia_mod.NUMBER_EMOJI[1], "u1"), (trivia_mod.NUMBER_EMOJI[3], "u1"),
+    }
